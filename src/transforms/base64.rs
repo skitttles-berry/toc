@@ -1,10 +1,8 @@
-use std::fmt::Write as _;
-
 use base64::{
     DecodeError, DecodeSliceError, Engine as _, encoded_len, engine::general_purpose::STANDARD,
 };
 
-use crate::error::TransformError;
+use crate::error::{TransformError, hex_preview};
 
 pub fn encode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
     let required = encoded_len(input.len(), true).ok_or(TransformError::OutputTooLarge {
@@ -79,17 +77,10 @@ pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
     if std::str::from_utf8(&decoded).is_err() {
         return Err(TransformError::InvalidUtf8Output {
             preview_hex: hex_preview(&decoded),
+            total_bytes: decoded.len(),
         });
     }
     Ok(decoded)
-}
-
-pub(super) fn hex_preview(bytes: &[u8]) -> String {
-    let mut preview = String::with_capacity(bytes.len().min(64) * 2);
-    for byte in bytes.iter().take(64) {
-        write!(&mut preview, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    preview
 }
 
 #[cfg(test)]
@@ -140,17 +131,22 @@ mod tests {
         assert_eq!(
             error,
             TransformError::InvalidUtf8Output {
-                preview_hex: "ff".to_string()
+                preview_hex: "ff".to_string(),
+                total_bytes: 1,
             }
         );
 
         let encoded = encode(&[0xff; 65], 1024).unwrap();
-        let TransformError::InvalidUtf8Output { preview_hex } = decode(&encoded, 1024).unwrap_err()
+        let TransformError::InvalidUtf8Output {
+            preview_hex,
+            total_bytes,
+        } = decode(&encoded, 1024).unwrap_err()
         else {
             panic!("expected invalid UTF-8 output");
         };
         assert_eq!(preview_hex.len(), 128);
         assert!(preview_hex.bytes().all(|byte| byte == b'f'));
+        assert_eq!(total_bytes, 65);
     }
 
     #[test]

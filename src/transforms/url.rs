@@ -1,4 +1,4 @@
-use crate::error::TransformError;
+use crate::error::{TransformError, hex_preview};
 
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
@@ -75,7 +75,8 @@ pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
 
     if std::str::from_utf8(&output).is_err() {
         return Err(TransformError::InvalidUtf8Output {
-            preview_hex: super::base64::hex_preview(&output),
+            preview_hex: hex_preview(&output),
+            total_bytes: output.len(),
         });
     }
     Ok(output)
@@ -117,7 +118,8 @@ mod tests {
         assert_eq!(
             decode(b"%FF", 16).unwrap_err(),
             TransformError::InvalidUtf8Output {
-                preview_hex: "ff".to_string()
+                preview_hex: "ff".to_string(),
+                total_bytes: 1,
             }
         );
     }

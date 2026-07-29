@@ -9,6 +9,7 @@ pub enum TransformError {
     },
     InvalidUtf8Output {
         preview_hex: String,
+        total_bytes: usize,
     },
     InvalidJson {
         line: usize,
@@ -47,7 +48,7 @@ pub enum AppError {
     Usage(String),
     Input(InputError),
     Pipeline(PipelineError),
-    UnsafeTerminalOutput,
+    UnsafeTerminalOutput { preview: String },
     Output(std::io::ErrorKind),
     Tui(String),
     Interrupted,
@@ -60,7 +61,7 @@ impl AppError {
             Self::Usage(_)
             | Self::Input(InputError::MissingSource | InputError::ConflictingSources) => 2,
             Self::Input(_) => 3,
-            Self::Pipeline(_) | Self::UnsafeTerminalOutput => 4,
+            Self::Pipeline(_) | Self::UnsafeTerminalOutput { .. } => 4,
             Self::Output(_) => 5,
             Self::Interrupted => 130,
         }
@@ -118,6 +119,16 @@ pub fn escape_external(text: &str, max_chars: usize) -> String {
     output
 }
 
+pub(crate) fn hex_preview(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut preview = String::with_capacity(bytes.len().min(64) * 2);
+    for byte in bytes.iter().take(64) {
+        write!(&mut preview, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    preview
+}
+
 fn render_transform_error(error: &TransformError) -> String {
     match error {
         TransformError::InvalidUtf8Input => "input is not valid UTF-8".to_string(),
@@ -130,8 +141,17 @@ fn render_transform_error(error: &TransformError) -> String {
         TransformError::InvalidUrl { position } => {
             format!("invalid percent escape at byte {position}")
         }
-        TransformError::InvalidUtf8Output { preview_hex } => {
-            format!("decoded bytes are not UTF-8 (hex prefix: {preview_hex})")
+        TransformError::InvalidUtf8Output {
+            preview_hex,
+            total_bytes,
+        } => {
+            if *total_bytes > 64 {
+                format!(
+                    "decoded bytes are not UTF-8 (hex prefix: {preview_hex}; bytes omitted; total: {total_bytes} bytes)"
+                )
+            } else {
+                format!("decoded bytes are not UTF-8 (hex prefix: {preview_hex})")
+            }
         }
         TransformError::InvalidJson { line, column, kind } => {
             let reason = match kind {
@@ -180,9 +200,11 @@ pub fn render_app_error(error: &AppError) -> String {
         }
         AppError::Input(InputError::Read) => "Could not read input".to_string(),
         AppError::Pipeline(error) => render_pipeline_error(error),
-        AppError::UnsafeTerminalOutput => {
-            "Refusing to write terminal control characters; redirect stdout to preserve raw output"
-                .to_string()
+        AppError::UnsafeTerminalOutput { preview } => {
+            format!(
+                "Refusing unsafe terminal output (preview: {}); redirect stdout to preserve raw output",
+                escape_external(preview, 256)
+            )
         }
         AppError::Output(_) => "Could not write output".to_string(),
         AppError::Tui(message) => {
@@ -221,7 +243,13 @@ mod tests {
             AppError::Pipeline(PipelineError::TooManySteps { max: 32 }).exit_code(),
             4
         );
-        assert_eq!(AppError::UnsafeTerminalOutput.exit_code(), 4);
+        assert_eq!(
+            AppError::UnsafeTerminalOutput {
+                preview: String::new()
+            }
+            .exit_code(),
+            4
+        );
         assert_eq!(AppError::Output(std::io::ErrorKind::Other).exit_code(), 5);
         assert_eq!(AppError::Tui("terminal unavailable".into()).exit_code(), 1);
         assert_eq!(AppError::Interrupted.exit_code(), 130);
@@ -233,6 +261,33 @@ mod tests {
         assert_eq!(rendered, "TUI error: failed\\x0a\\x1b[2J");
         assert!(!rendered.contains('\n'));
         assert!(!rendered.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn invalid_utf8_error_reports_omission_and_total_bytes_for_both_decoders() {
+        let base64 = crate::transforms::transform_by_id("base64-decode").unwrap();
+        let encoded = (crate::transforms::transform_by_id("base64-encode")
+            .unwrap()
+            .apply)(&[0xff; 65], 1024)
+        .unwrap();
+        let source = (base64.apply)(&encoded, 1024).unwrap_err();
+        let rendered = render_pipeline_error(&PipelineError::Step {
+            step: 1,
+            transform_id: base64.id,
+            source,
+        });
+        assert!(rendered.contains("bytes omitted"));
+        assert!(rendered.contains("total: 65 bytes"));
+
+        let url = crate::transforms::transform_by_id("url-decode").unwrap();
+        let source = (url.apply)("%FF".repeat(65).as_bytes(), 1024).unwrap_err();
+        let rendered = render_pipeline_error(&PipelineError::Step {
+            step: 1,
+            transform_id: url.id,
+            source,
+        });
+        assert!(rendered.contains("bytes omitted"));
+        assert!(rendered.contains("total: 65 bytes"));
     }
 
     #[test]

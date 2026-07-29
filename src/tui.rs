@@ -215,8 +215,8 @@ impl App {
         textarea.set_wrap_mode(WrapMode::WordOrGlyph);
         textarea.set_cursor_line_style(Style::default());
         if no_color {
-            textarea.set_cursor_style(Style::default());
-            textarea.set_selection_style(Style::default());
+            textarea.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+            textarea.set_selection_style(Style::default().add_modifier(Modifier::REVERSED));
         } else {
             textarea.set_cursor_style(
                 Style::default()
@@ -1268,6 +1268,7 @@ mod tests {
         id: "test-latest-only",
         display_name: "Test latest only",
         description: "Test-only blocking transform",
+        behavior: "test-only blocking transform",
         accepts_binary: true,
         apply: block_latest_only,
     };
@@ -1276,6 +1277,7 @@ mod tests {
         id: "test-drop",
         display_name: "Test drop",
         description: "Test-only blocking transform",
+        behavior: "test-only blocking transform",
         accepts_binary: true,
         apply: block_during_drop,
     };
@@ -1399,6 +1401,14 @@ mod tests {
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(now(), true);
+        assert_eq!(
+            app.textarea.cursor_style(),
+            Style::default().add_modifier(Modifier::REVERSED)
+        );
+        assert_eq!(
+            app.textarea.selection_style(),
+            Style::default().add_modifier(Modifier::REVERSED)
+        );
         app.open_picker();
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
@@ -1407,9 +1417,12 @@ mod tests {
         assert!(screen.contains("Idle"));
         assert!(screen.contains("0 enabled"));
         assert!(screen.contains("Add transform"));
-        assert!(buffer.content().iter().all(|cell| {
-            cell.fg == Color::Reset && cell.bg == Color::Reset && cell.modifier == Modifier::empty()
-        }));
+        assert!(
+            buffer
+                .content()
+                .iter()
+                .all(|cell| { cell.fg == Color::Reset && cell.bg == Color::Reset })
+        );
     }
 
     #[test]

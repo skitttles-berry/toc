@@ -10,7 +10,7 @@ use clap::{
 };
 
 use crate::{
-    error::{AppError, InputError},
+    error::{AppError, InputError, escape_external, hex_preview},
     transforms::{TransformDefinition, transform_by_id, transforms},
 };
 
@@ -71,9 +71,18 @@ pub fn write_result(
     result: &[u8],
 ) -> Result<(), AppError> {
     if stdout_is_terminal {
-        let text = std::str::from_utf8(result).map_err(|_| AppError::UnsafeTerminalOutput)?;
-        if crate::error::contains_dangerous_control(text) {
-            return Err(AppError::UnsafeTerminalOutput);
+        match std::str::from_utf8(result) {
+            Ok(text) if crate::error::contains_dangerous_control(text) => {
+                return Err(AppError::UnsafeTerminalOutput {
+                    preview: escape_external(text, 64),
+                });
+            }
+            Err(_) => {
+                return Err(AppError::UnsafeTerminalOutput {
+                    preview: format!("hex prefix: {}", hex_preview(result)),
+                });
+            }
+            _ => {}
         }
     }
     match writer.write_all(result).and_then(|()| writer.flush()) {
@@ -116,6 +125,7 @@ pub fn command() -> Command {
     let mut command = Command::new("doop")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Local text transformations")
+        .after_help("Transform help: doop <transform-id> --help")
         .disable_help_subcommand(true)
         .arg(
             Arg::new("list")
@@ -131,14 +141,18 @@ pub fn command() -> Command {
         );
 
     for transform in transforms() {
+        let input_help = if transform.accepts_binary {
+            "Input: arbitrary bytes."
+        } else {
+            "Input: UTF-8 text."
+        };
         command = command.subcommand(
             Command::new(transform.id)
                 .about(transform.description)
-                .after_help(if transform.accepts_binary {
-                    "Input: arbitrary bytes. Use exactly one of stdin or --input PATH."
-                } else {
-                    "Input: UTF-8 text. Use exactly one of stdin or --input PATH."
-                })
+                .after_help(format!(
+                    "{input_help} Use exactly one of stdin or --input PATH.\nBehavior: {}.",
+                    transform.behavior
+                ))
                 .arg(
                     Arg::new("input")
                         .long("input")
@@ -262,19 +276,22 @@ mod tests {
     fn terminal_output_refuses_escape_but_pipe_output_preserves_it() {
         let result = b"x\x1b[2J";
         let mut terminal = Vec::new();
-        assert!(matches!(
-            write_result(&mut terminal, true, result),
-            Err(AppError::UnsafeTerminalOutput)
-        ));
+        let error = write_result(&mut terminal, true, result).unwrap_err();
+        let rendered = crate::error::render_app_error(&error);
+        assert!(matches!(error, AppError::UnsafeTerminalOutput { .. }));
+        assert!(rendered.contains("x\\x1b[2J"));
+        assert!(rendered.contains("redirect stdout"));
+        assert!(!rendered.contains('\u{1b}'));
         assert!(terminal.is_empty());
         assert!(matches!(
             write_result(&mut terminal, true, "\u{85}".as_bytes()),
-            Err(AppError::UnsafeTerminalOutput)
+            Err(AppError::UnsafeTerminalOutput { .. })
         ));
-        assert!(matches!(
-            write_result(&mut terminal, true, b"\x9b"),
-            Err(AppError::UnsafeTerminalOutput)
-        ));
+        let error = write_result(&mut terminal, true, b"\x9b").unwrap_err();
+        let rendered = crate::error::render_app_error(&error);
+        assert!(matches!(error, AppError::UnsafeTerminalOutput { .. }));
+        assert!(rendered.contains("hex prefix: 9b"));
+        assert!(rendered.contains("redirect stdout"));
         assert!(terminal.is_empty());
 
         let mut pipe = Vec::new();
@@ -356,6 +373,7 @@ mod tests {
         assert_eq!(exit_code, 0);
         assert!(text.contains("Usage:"));
         assert!(text.contains("tui"));
+        assert!(text.contains("doop <transform-id> --help"));
     }
 
     #[test]
@@ -435,6 +453,31 @@ mod tests {
             parse_from(["doop", "--list"]),
             ParseOutcome::Run(Invocation::List)
         ));
+    }
+
+    #[test]
+    fn transform_help_describes_input_and_fixed_behavior() {
+        for (id, expected) in [
+            ("base64-encode", "padded RFC 4648 Base64"),
+            ("base64-decode", "ASCII whitespace"),
+            ("url-encode", "uppercase %HH"),
+            ("url-decode", "leaves plus signs unchanged"),
+            ("format-json", "two-space indentation"),
+            ("minify-json", "outside strings"),
+        ] {
+            let ParseOutcome::Print {
+                text,
+                stderr,
+                exit_code,
+            } = parse_from(["doop", id, "--help"])
+            else {
+                panic!("expected transform help");
+            };
+            assert!(!stderr);
+            assert_eq!(exit_code, 0);
+            assert!(text.contains("Use exactly one of stdin or --input PATH."));
+            assert!(text.contains(expected), "{id} help was: {text}");
+        }
     }
 
     #[test]
