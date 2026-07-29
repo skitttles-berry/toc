@@ -1,4 +1,7 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::{
+    ffi::{OsStr, OsString},
+    path::PathBuf,
+};
 
 use clap::{
     Arg, ArgAction, Command, builder::PossibleValuesParser, error::ErrorKind, value_parser,
@@ -77,6 +80,13 @@ where
     T: Into<OsString> + Clone,
 {
     let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+    if args.len() > 2 && args[1].as_os_str() == OsStr::new("tui") {
+        return ParseOutcome::Print {
+            text: "error: tui does not accept trailing arguments\n".to_owned(),
+            stderr: true,
+            exit_code: 2,
+        };
+    }
     if args.len() == 1 {
         let mut command = command();
         return ParseOutcome::Print {
@@ -170,6 +180,19 @@ mod tests {
             parse_from(["doop", "tui"]),
             ParseOutcome::Run(Invocation::Tui)
         ));
+        let ParseOutcome::Print {
+            text,
+            stderr,
+            exit_code,
+        } = parse_from(["doop", "tui", "--"])
+        else {
+            panic!("expected tui trailing token rejection");
+        };
+        assert!(stderr);
+        assert_eq!(exit_code, 2);
+        assert!(!text.is_empty());
+        assert!(text.contains("does not accept trailing arguments"));
+        assert!(!text.contains('\x1b'));
         for args in [
             vec!["doop", "tui", "--help"],
             vec!["doop", "tui", "format-json"],
