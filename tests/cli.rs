@@ -58,6 +58,14 @@ fn help_version_and_list_are_successful_english_output() {
 }
 
 #[test]
+fn version_reports_v0_2_0() {
+    let output = run(&["--version"], b"");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, b"doop 0.2.0\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn list_cannot_be_combined_with_transform_or_tui() {
     for args in [
         &["--list", "format-json", "--input", "data.json"][..],

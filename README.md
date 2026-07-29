@@ -17,15 +17,17 @@ cargo install --locked --path .
 printf 'hello' | doop base64-encode
 doop base64-encode --input input.txt
 printf '%s' '%7B%22a%22%3A1%7D' | doop url-decode --then format-json
+printf '%s' '48 65 6c 6c 6f' | doop hex-decode
+printf 'hello' | doop hex-encode --then hex-decode
 doop --list
 doop --help
 ```
 
 변환 명령은 `base64-encode`, `base64-decode`, `url-encode`,
-`url-decode`, `format-json`, `minify-json`입니다. `run`이나
-`transform` 상위 명령 없이 변환 명령을 직접 실행합니다. 파이프 입력과
-`--input PATH` 중 정확히 하나만 사용해야 합니다. 성공 결과에는
-임의의 끝 줄바꿈을 추가하지 않습니다.
+`url-decode`, `format-json`, `minify-json`, `hex-encode`,
+`hex-decode`입니다. `run`이나 `transform` 상위 명령 없이 변환 명령을
+직접 실행합니다. 파이프 입력과 `--input PATH` 중 정확히 하나만 사용해야
+합니다. 성공 결과에는 임의의 끝 줄바꿈을 추가하지 않습니다.
 
 민감한 입력은 셸 인자에 직접 넣지 마십시오. 인자는 셸 기록과 프로세스
 목록에 남을 수 있습니다. 기록에 값이 남지 않는 대화형 파이프를 사용하거나,
@@ -137,7 +139,7 @@ cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
 iterations=500, unconditional=27.937084ms, dirty=55.75µs, redraws=1
 ```
 
-자동 완성과 배포 패키지는 v0.1 범위에 포함하지 않습니다.
+자동 완성과 배포 패키지는 v0.2 범위에 포함하지 않습니다.
 GitHub Actions와 다른 CI 설정은 사용하지 않습니다.
 
 ## 라이선스
