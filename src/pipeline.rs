@@ -119,4 +119,13 @@ mod tests {
             })
         ));
     }
+
+    #[test]
+    fn chains_url_decode_into_base64_encode() {
+        let steps = [step("url-decode", true), step("base64-encode", true)];
+        assert_eq!(
+            execute(b"hello%20world".to_vec(), &steps, 1024).unwrap(),
+            b"aGVsbG8gd29ybGQ="
+        );
+    }
 }

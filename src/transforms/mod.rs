@@ -1,4 +1,5 @@
 mod base64;
+mod url;
 
 use crate::error::TransformError;
 
@@ -27,6 +28,20 @@ static TRANSFORMS: &[TransformDefinition] = &[
         description: "Decode padded RFC 4648 Base64 into UTF-8 text",
         accepts_binary: false,
         apply: base64::decode,
+    },
+    TransformDefinition {
+        id: "url-encode",
+        display_name: "URL Encode",
+        description: "Encode UTF-8 text as an RFC 3986 URL component",
+        accepts_binary: false,
+        apply: url::encode,
+    },
+    TransformDefinition {
+        id: "url-decode",
+        display_name: "URL Decode",
+        description: "Decode an RFC 3986 URL component into UTF-8 text",
+        accepts_binary: false,
+        apply: url::decode,
     },
 ];
 

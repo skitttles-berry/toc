@@ -84,7 +84,7 @@ pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
     Ok(decoded)
 }
 
-pub fn hex_preview(bytes: &[u8]) -> String {
+pub(super) fn hex_preview(bytes: &[u8]) -> String {
     let mut preview = String::with_capacity(bytes.len().min(64) * 2);
     for byte in bytes.iter().take(64) {
         write!(&mut preview, "{byte:02x}").expect("writing to String cannot fail");
