@@ -608,6 +608,19 @@ impl App {
             }
             _ => None,
         };
+        let yank = matches!(key.code, KeyCode::Char('y'))
+            && modifiers.contains(KeyModifiers::CONTROL)
+            && !modifiers.contains(KeyModifiers::ALT);
+        if yank {
+            let text = self.textarea.yank_text();
+            if !self.can_insert(
+                text.len(),
+                text.bytes().filter(|byte| *byte == b'\n').count(),
+            ) {
+                self.reject_input();
+                return;
+            }
+        }
         if let Some((bytes, lines)) = input_growth
             && !self.can_insert(bytes, lines)
         {
@@ -2002,6 +2015,38 @@ mod tests {
 
         assert_eq!((app.input_text(), app.generation), before);
         assert!(matches!(app.preview, PreviewState::Debouncing { .. }));
+        assert_eq!(app.status.as_deref(), Some("Input limit reached"));
+    }
+
+    #[test]
+    fn yank_past_byte_limit_preserves_input_state() {
+        let start = now();
+        let mut app = App::new_with_input_limit(start, true, 4);
+        assert!(app.insert_paste("1234", start));
+        app.textarea.select_all();
+        key(&mut app, KeyCode::Char('x'), KeyModifiers::CONTROL, start);
+        key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE, start);
+        let before = (app.input_text(), app.generation);
+
+        key(&mut app, KeyCode::Char('y'), KeyModifiers::CONTROL, start);
+
+        assert_eq!((app.input_text(), app.generation), before);
+        assert_eq!(app.status.as_deref(), Some("Input limit reached"));
+    }
+
+    #[test]
+    fn yank_past_line_limit_preserves_input_state() {
+        let start = now();
+        let mut app = App::new_with_input_limits(start, true, 8, 2);
+        assert!(app.insert_paste("a\nb", start));
+        app.textarea.select_all();
+        key(&mut app, KeyCode::Char('x'), KeyModifiers::CONTROL, start);
+        key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
+        let before = (app.input_text(), app.generation);
+
+        key(&mut app, KeyCode::Char('y'), KeyModifiers::CONTROL, start);
+
+        assert_eq!((app.input_text(), app.generation), before);
         assert_eq!(app.status.as_deref(), Some("Input limit reached"));
     }
 
