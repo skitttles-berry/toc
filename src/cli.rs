@@ -1,13 +1,18 @@
 use std::{
     ffi::{OsStr, OsString},
-    path::PathBuf,
+    fs::File,
+    io::{self, Read, Write},
+    path::{Path, PathBuf},
 };
 
 use clap::{
     Arg, ArgAction, Command, builder::PossibleValuesParser, error::ErrorKind, value_parser,
 };
 
-use crate::transforms::{TransformDefinition, transform_by_id, transforms};
+use crate::{
+    error::{AppError, InputError},
+    transforms::{TransformDefinition, transform_by_id, transforms},
+};
 
 pub enum Invocation {
     List,
@@ -26,6 +31,84 @@ pub enum ParseOutcome {
         stderr: bool,
         exit_code: i32,
     },
+}
+
+pub fn read_limited(reader: &mut dyn Read, limit: usize) -> Result<Vec<u8>, InputError> {
+    let mut bytes = Vec::new();
+    let read_limit = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
+    reader
+        .take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|_| InputError::Read)?;
+    if bytes.len() > limit {
+        return Err(InputError::TooLarge { limit });
+    }
+    Ok(bytes)
+}
+
+pub fn read_input(
+    path: Option<&Path>,
+    stdin: &mut dyn Read,
+    stdin_is_terminal: bool,
+    limit: usize,
+) -> Result<Vec<u8>, InputError> {
+    match (path, stdin_is_terminal) {
+        (Some(_), false) => Err(InputError::ConflictingSources),
+        (None, true) => Err(InputError::MissingSource),
+        (Some(path), true) => {
+            let mut file = File::open(path).map_err(|_| InputError::OpenFile {
+                path: path.to_string_lossy().into_owned(),
+            })?;
+            read_limited(&mut file, limit)
+        }
+        (None, false) => read_limited(stdin, limit),
+    }
+}
+
+pub fn write_result(
+    writer: &mut dyn Write,
+    stdout_is_terminal: bool,
+    result: &[u8],
+) -> Result<(), AppError> {
+    if stdout_is_terminal {
+        let text = std::str::from_utf8(result).map_err(|_| AppError::UnsafeTerminalOutput)?;
+        if crate::error::contains_dangerous_control(text) {
+            return Err(AppError::UnsafeTerminalOutput);
+        }
+    }
+    match writer.write_all(result) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(AppError::Output(error.kind())),
+    }
+}
+
+pub fn run_transform(
+    first: &'static TransformDefinition,
+    then: &[&'static TransformDefinition],
+    path: Option<&Path>,
+    stdin: &mut dyn Read,
+    stdin_is_terminal: bool,
+    stdout: &mut dyn Write,
+    stdout_is_terminal: bool,
+) -> Result<(), AppError> {
+    let input = read_input(path, stdin, stdin_is_terminal, crate::CLI_INPUT_LIMIT)
+        .map_err(AppError::Input)?;
+    let mut steps = Vec::with_capacity(then.len().saturating_add(1));
+    steps.push(crate::pipeline::TransformStep {
+        definition: first,
+        enabled: true,
+    });
+    steps.extend(
+        then.iter()
+            .map(|definition| crate::pipeline::TransformStep {
+                definition,
+                enabled: true,
+            }),
+    );
+    let result = crate::pipeline::execute(input, &steps, crate::CLI_OUTPUT_LIMIT)
+        .map_err(AppError::Pipeline)?;
+    write_result(stdout, stdout_is_terminal, &result)
 }
 
 pub fn command() -> Command {
@@ -135,6 +218,112 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn requires_exactly_one_input_source() {
+        let mut stdin = std::io::Cursor::new(b"pipe");
+        assert!(matches!(
+            read_input(Some(std::path::Path::new("x")), &mut stdin, false, 64),
+            Err(InputError::ConflictingSources)
+        ));
+        assert!(matches!(
+            read_input(None, &mut stdin, true, 64),
+            Err(InputError::MissingSource)
+        ));
+    }
+
+    #[test]
+    fn reads_only_limit_plus_one_byte() {
+        let mut input = std::io::Cursor::new(b"123456789");
+        assert_eq!(
+            read_limited(&mut input, 4).unwrap_err(),
+            InputError::TooLarge { limit: 4 }
+        );
+        assert_eq!(input.position(), 5);
+    }
+
+    #[test]
+    fn maximum_limit_does_not_overflow() {
+        let mut input = std::io::Cursor::new(b"x");
+        assert_eq!(read_limited(&mut input, usize::MAX).unwrap(), b"x");
+    }
+
+    #[test]
+    fn reads_file_when_stdin_is_a_terminal() {
+        let path = std::env::temp_dir().join(format!("doop-input-{}", std::process::id()));
+        std::fs::write(&path, b"file").unwrap();
+        let mut stdin = std::io::Cursor::new(Vec::<u8>::new());
+        let result = read_input(Some(&path), &mut stdin, true, 64).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(result, b"file");
+    }
+
+    #[test]
+    fn terminal_output_refuses_escape_but_pipe_output_preserves_it() {
+        let result = b"x\x1b[2J";
+        let mut terminal = Vec::new();
+        assert!(matches!(
+            write_result(&mut terminal, true, result),
+            Err(AppError::UnsafeTerminalOutput)
+        ));
+        assert!(terminal.is_empty());
+        assert!(matches!(
+            write_result(&mut terminal, true, "\u{85}".as_bytes()),
+            Err(AppError::UnsafeTerminalOutput)
+        ));
+        assert!(matches!(
+            write_result(&mut terminal, true, b"\x9b"),
+            Err(AppError::UnsafeTerminalOutput)
+        ));
+        assert!(terminal.is_empty());
+
+        let mut pipe = Vec::new();
+        write_result(&mut pipe, false, result).unwrap();
+        assert_eq!(pipe, result);
+    }
+
+    struct FailingWriter(std::io::ErrorKind);
+
+    impl std::io::Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(self.0))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn broken_pipe_is_success_but_other_output_failure_is_code_five() {
+        write_result(
+            &mut FailingWriter(std::io::ErrorKind::BrokenPipe),
+            false,
+            b"x",
+        )
+        .unwrap();
+        let error =
+            write_result(&mut FailingWriter(std::io::ErrorKind::Other), false, b"x").unwrap_err();
+        assert_eq!(error.exit_code(), 5);
+    }
+
+    #[test]
+    fn failed_pipeline_writes_no_stdout() {
+        let mut stdin = std::io::Cursor::new(b"!");
+        let mut stdout = Vec::new();
+        let error = run_transform(
+            crate::transforms::transform_by_id("base64-decode").unwrap(),
+            &[],
+            None,
+            &mut stdin,
+            false,
+            &mut stdout,
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(error.exit_code(), 4);
+        assert!(stdout.is_empty());
+    }
 
     #[test]
     fn no_arguments_prints_root_help_to_stdout_with_success() {
