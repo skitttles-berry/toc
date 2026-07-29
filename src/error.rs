@@ -7,6 +7,12 @@ pub enum TransformError {
     InvalidUrl {
         position: usize,
     },
+    InvalidHex {
+        position: usize,
+    },
+    OddHexDigitCount {
+        digits: usize,
+    },
     InvalidUtf8Output {
         preview_hex: String,
         total_bytes: usize,
@@ -140,6 +146,12 @@ fn render_transform_error(error: &TransformError) -> String {
         TransformError::InvalidBase64 { position: None } => "invalid Base64 padding".to_string(),
         TransformError::InvalidUrl { position } => {
             format!("invalid percent escape at byte {position}")
+        }
+        TransformError::InvalidHex { position } => {
+            format!("invalid hex character at byte {position}")
+        }
+        TransformError::OddHexDigitCount { digits } => {
+            format!("hex input has an odd number of digits: {digits}")
         }
         TransformError::InvalidUtf8Output {
             preview_hex,
@@ -307,6 +319,26 @@ mod tests {
                 },
             }),
             "step 2 (format-json) failed: duplicate JSON object key at line 1, column 4"
+        );
+    }
+
+    #[test]
+    fn renders_hex_format_errors_with_exact_positions_and_counts() {
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 2,
+                transform_id: "hex-decode",
+                source: TransformError::InvalidHex { position: 7 },
+            }),
+            "step 2 (hex-decode) failed: invalid hex character at byte 7"
+        );
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 1,
+                transform_id: "hex-decode",
+                source: TransformError::OddHexDigitCount { digits: 3 },
+            }),
+            "step 1 (hex-decode) failed: hex input has an odd number of digits: 3"
         );
     }
 

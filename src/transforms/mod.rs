@@ -1,4 +1,5 @@
 mod base64;
+mod hex;
 mod json;
 mod url;
 
