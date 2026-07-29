@@ -82,6 +82,8 @@ fn check_depth(input: &[u8]) -> Result<(), TransformError> {
     let mut depth: usize = 0;
     let mut in_string = false;
     let mut escaped = false;
+    let mut line = 1;
+    let mut column = 1;
 
     for &byte in input {
         if in_string {
@@ -99,8 +101,8 @@ fn check_depth(input: &[u8]) -> Result<(), TransformError> {
                     depth += 1;
                     if depth > 128 {
                         return Err(TransformError::InvalidJson {
-                            line: 0,
-                            column: 0,
+                            line,
+                            column,
                             kind: JsonErrorKind::DepthExceeded,
                         });
                     }
@@ -108,6 +110,13 @@ fn check_depth(input: &[u8]) -> Result<(), TransformError> {
                 b'}' | b']' => depth = depth.saturating_sub(1),
                 _ => {}
             }
+        }
+
+        if byte == b'\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
         }
     }
     Ok(())
@@ -365,17 +374,46 @@ mod tests {
     }
 
     #[test]
-    fn permits_depth_128_and_rejects_depth_129() {
+    fn permits_depth_128_and_reports_the_129th_opening_bracket_position() {
         let depth_128 = format!("{}0{}", "[".repeat(128), "]".repeat(128));
-        let depth_129 = format!("{}0{}", "[".repeat(129), "]".repeat(129));
+        let depth_129 = format!("[\n{}0{}", "[".repeat(128), "]".repeat(129));
         assert!(minify(depth_128.as_bytes(), 1024).is_ok());
-        assert!(matches!(
-            minify(depth_129.as_bytes(), 1024),
-            Err(TransformError::InvalidJson {
+        assert_eq!(
+            minify(depth_129.as_bytes(), 1024).unwrap_err(),
+            TransformError::InvalidJson {
+                line: 2,
+                column: 128,
                 kind: JsonErrorKind::DepthExceeded,
-                ..
-            })
-        ));
+            }
+        );
+    }
+
+    #[test]
+    fn ignores_opening_brackets_in_escaped_strings_when_locating_depth_errors() {
+        let input = format!(r#"{{"\"[":{}0{}}}"#, "[".repeat(128), "]".repeat(128));
+
+        assert_eq!(
+            minify(input.as_bytes(), 1024).unwrap_err(),
+            TransformError::InvalidJson {
+                line: 1,
+                column: 135,
+                kind: JsonErrorKind::DepthExceeded,
+            }
+        );
+    }
+
+    #[test]
+    fn counts_crlf_as_one_newline_when_locating_depth_errors() {
+        let input = format!("[\r\n{}0{}", "[".repeat(128), "]".repeat(129));
+
+        assert_eq!(
+            minify(input.as_bytes(), 1024).unwrap_err(),
+            TransformError::InvalidJson {
+                line: 2,
+                column: 128,
+                kind: JsonErrorKind::DepthExceeded,
+            }
+        );
     }
 
     #[test]
