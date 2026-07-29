@@ -191,6 +191,20 @@ cargo build --manifest-path "$smoke_root/Cargo.toml" >/dev/null
 actual=$(printf 'hello' | "$smoke_bin" base64-encode)
 assert_eq 'aGVsbG8=' "$actual" "pipe input"
 
+actual=$(printf '4869' | "$smoke_bin" hex-decode)
+assert_eq 'Hi' "$actual" "hex decode pipe input"
+
+actual=$(printf 'Hi' | "$smoke_bin" hex-encode)
+assert_eq '4869' "$actual" "hex encode pipe input"
+
+printf '\xffA' >"$smoke_input"
+pty_run '
+    "$DOOP_SMOKE_BIN" hex-encode --input "$DOOP_SMOKE_INPUT" >"$DOOP_SMOKE_OUTPUT"
+' \
+    >/dev/null </dev/null
+actual=$(<"$smoke_output")
+assert_eq 'ff41' "$actual" "hex encode binary file input"
+
 actual=$(
     printf '%s' '%7B%22a%22%3A1%7D' |
         "$smoke_bin" url-decode --then format-json

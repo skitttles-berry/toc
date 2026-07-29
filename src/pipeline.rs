@@ -128,4 +128,35 @@ mod tests {
             b"aGVsbG8gd29ybGQ="
         );
     }
+
+    #[test]
+    fn hex_transforms_share_binary_and_text_pipeline_rules() {
+        let encoded = execute(vec![0x00, 0xff, b'A'], &[step("hex-encode", true)], 6).unwrap();
+        assert_eq!(encoded, b"00ff41");
+
+        let round_trip = execute(
+            b"hello".to_vec(),
+            &[step("hex-encode", true), step("hex-decode", true)],
+            1024,
+        )
+        .unwrap();
+        assert_eq!(round_trip, b"hello");
+    }
+
+    #[test]
+    fn hex_failure_preserves_one_based_step_and_transform_id() {
+        assert_eq!(
+            execute(
+                b"0x".to_vec(),
+                &[step("url-decode", true), step("hex-decode", true)],
+                1024,
+            )
+            .unwrap_err(),
+            PipelineError::Step {
+                step: 2,
+                transform_id: "hex-decode",
+                source: TransformError::InvalidHex { position: 1 },
+            }
+        );
+    }
 }

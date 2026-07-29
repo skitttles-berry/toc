@@ -108,6 +108,72 @@ fn thirty_three_step_chain_is_pipeline_error() {
 }
 
 #[test]
+fn hex_cli_handles_binary_input_whitespace_chains_and_atomic_errors() {
+    let output = run(&["hex-encode"], &[0x00, 0xff, b'A']);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, b"00ff41");
+    assert!(output.stderr.is_empty());
+
+    let output = run(&["hex-decode"], b"48 65\n6C6c6F");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, b"Hello");
+    assert!(output.stderr.is_empty());
+
+    let output = run(&["hex-encode", "--then", "hex-decode"], "한글".as_bytes());
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, "한글".as_bytes());
+
+    for (input, expected) in [
+        (
+            &b"0x"[..],
+            "step 1 (hex-decode) failed: invalid hex character at byte 1\n",
+        ),
+        (
+            &b"0 a f"[..],
+            "step 1 (hex-decode) failed: hex input has an odd number of digits: 3\n",
+        ),
+    ] {
+        let output = run(&["hex-decode"], input);
+        assert_eq!(output.status.code(), Some(4));
+        assert!(output.stdout.is_empty());
+        assert_eq!(String::from_utf8(output.stderr).unwrap(), expected);
+    }
+
+    let invalid_utf8 = "ff".repeat(65);
+    let output = run(&["hex-decode"], invalid_utf8.as_bytes());
+    assert_eq!(output.status.code(), Some(4));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(&"ff".repeat(64)));
+    assert!(stderr.contains("bytes omitted"));
+    assert!(stderr.contains("total: 65 bytes"));
+}
+
+#[test]
+fn list_exposes_the_exact_eight_public_transform_ids() {
+    let output = run(&["--list"], b"");
+    assert_eq!(output.status.code(), Some(0));
+    let ids: std::collections::HashSet<_> = std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| line.split('\t').next().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        std::collections::HashSet::from([
+            "base64-encode",
+            "base64-decode",
+            "url-encode",
+            "url-decode",
+            "format-json",
+            "minify-json",
+            "hex-encode",
+            "hex-decode",
+        ])
+    );
+}
+
+#[test]
 fn tui_has_explicit_temporary_code_one_path() {
     let output = run(&["tui"], b"");
     assert_eq!(output.status.code(), Some(1));

@@ -66,6 +66,22 @@ static TRANSFORMS: &[TransformDefinition] = &[
         accepts_binary: false,
         apply: json::minify,
     },
+    TransformDefinition {
+        id: "hex-encode",
+        display_name: "Hex Encode",
+        description: "Encode bytes as lowercase hexadecimal",
+        behavior: "lowercase hexadecimal with two digits per byte and no prefix, separators, or trailing newline",
+        accepts_binary: true,
+        apply: hex::encode,
+    },
+    TransformDefinition {
+        id: "hex-decode",
+        display_name: "Hex Decode",
+        description: "Decode hexadecimal text into UTF-8",
+        behavior: "ignores ASCII space, tab, CR, and LF; accepts mixed-case digits; returns only valid UTF-8",
+        accepts_binary: false,
+        apply: hex::decode,
+    },
 ];
 
 pub fn transforms() -> &'static [TransformDefinition] {
@@ -89,24 +105,28 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_exact_public_ids_once() {
+    fn registry_has_exact_public_ids_once_without_order_contract() {
         let ids: Vec<_> = transforms().iter().map(|transform| transform.id).collect();
+        let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
+        assert_eq!(ids.len(), 8);
         assert_eq!(
-            ids,
-            [
+            unique,
+            std::collections::HashSet::from([
                 "base64-encode",
                 "base64-decode",
                 "url-encode",
                 "url-decode",
                 "format-json",
                 "minify-json",
-            ]
+                "hex-encode",
+                "hex-decode",
+            ])
         );
-        let unique: std::collections::HashSet<_> = ids.iter().collect();
-        assert_eq!(unique.len(), 6);
         assert!(!ids.contains(&"tui"));
         assert!(transforms().iter().all(|transform| {
             !transform.display_name.is_empty() && !transform.description.is_empty()
         }));
+        assert!(transform_by_id("hex-encode").unwrap().accepts_binary);
+        assert!(!transform_by_id("hex-decode").unwrap().accepts_binary);
     }
 }

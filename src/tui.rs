@@ -1735,6 +1735,25 @@ mod tests {
     }
 
     #[test]
+    fn picker_exposes_both_hex_transforms_from_the_shared_registry() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.open_picker();
+        for character in "hex".chars() {
+            app.picker_insert(character);
+        }
+        assert_eq!(
+            app.filtered_transforms()
+                .iter()
+                .map(|transform| transform.id)
+                .collect::<Vec<_>>(),
+            ["hex-encode", "hex-decode"]
+        );
+        app.confirm_picker(start);
+        assert_eq!(app.steps[0].definition.id, "hex-encode");
+    }
+
+    #[test]
     fn global_focus_and_picker_keys_do_not_edit_input() {
         let start = now();
         let mut app = App::new(start, true);

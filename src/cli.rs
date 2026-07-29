@@ -482,6 +482,35 @@ mod tests {
     }
 
     #[test]
+    fn hex_help_comes_from_registry_binary_and_behavior_metadata() {
+        for (id, input_help, behavior) in [
+            (
+                "hex-encode",
+                "Input: arbitrary bytes.",
+                "lowercase hexadecimal",
+            ),
+            (
+                "hex-decode",
+                "Input: UTF-8 text.",
+                "ASCII space, tab, CR, and LF",
+            ),
+        ] {
+            let ParseOutcome::Print {
+                text,
+                stderr,
+                exit_code,
+            } = parse_from(["doop", id, "--help"])
+            else {
+                panic!("expected transform help");
+            };
+            assert!(!stderr);
+            assert_eq!(exit_code, 0);
+            assert!(text.contains(input_help), "{id} help was: {text}");
+            assert!(text.contains(behavior), "{id} help was: {text}");
+        }
+    }
+
+    #[test]
     fn has_no_run_transform_chain_script_or_doctor_command() {
         for name in ["run", "transform", "chain", "script", "doctor"] {
             assert!(matches!(
