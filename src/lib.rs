@@ -1,4 +1,5 @@
 pub mod error;
+pub mod pipeline;
 pub mod transforms;
 
 pub const CLI_INPUT_LIMIT: usize = 64 * 1024 * 1024;

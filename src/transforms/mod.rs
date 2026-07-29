@@ -13,13 +13,22 @@ pub struct TransformDefinition {
     pub apply: TransformFn,
 }
 
-static TRANSFORMS: &[TransformDefinition] = &[TransformDefinition {
-    id: "base64-encode",
-    display_name: "Base64 Encode",
-    description: "Encode bytes using padded RFC 4648 Base64",
-    accepts_binary: true,
-    apply: base64::encode,
-}];
+static TRANSFORMS: &[TransformDefinition] = &[
+    TransformDefinition {
+        id: "base64-encode",
+        display_name: "Base64 Encode",
+        description: "Encode bytes using padded RFC 4648 Base64",
+        accepts_binary: true,
+        apply: base64::encode,
+    },
+    TransformDefinition {
+        id: "base64-decode",
+        display_name: "Base64 Decode",
+        description: "Decode padded RFC 4648 Base64 into UTF-8 text",
+        accepts_binary: false,
+        apply: base64::decode,
+    },
+];
 
 pub fn transforms() -> &'static [TransformDefinition] {
     TRANSFORMS

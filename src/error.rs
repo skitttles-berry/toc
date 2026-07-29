@@ -20,6 +20,18 @@ pub enum TransformError {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PipelineError {
+    TooManySteps {
+        max: usize,
+    },
+    Step {
+        step: usize,
+        transform_id: &'static str,
+        source: TransformError,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JsonErrorKind {
     Syntax,
