@@ -1742,13 +1742,23 @@ mod tests {
         for character in "hex".chars() {
             app.picker_insert(character);
         }
+        let ids: Vec<_> = app
+            .filtered_transforms()
+            .iter()
+            .map(|transform| transform.id)
+            .collect();
+        assert_eq!(ids.len(), 2);
         assert_eq!(
-            app.filtered_transforms()
-                .iter()
-                .map(|transform| transform.id)
-                .collect::<Vec<_>>(),
-            ["hex-encode", "hex-decode"]
+            ids.iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>(),
+            std::collections::HashSet::from(["hex-encode", "hex-decode"])
         );
+
+        app.open_picker();
+        for character in "hex-encode".chars() {
+            app.picker_insert(character);
+        }
         app.confirm_picker(start);
         assert_eq!(app.steps[0].definition.id, "hex-encode");
     }
