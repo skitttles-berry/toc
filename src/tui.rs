@@ -22,7 +22,8 @@ use ratatui::{
     widgets::{Block, Clear, List, ListItem, Paragraph},
 };
 use tui_textarea::{TextArea, WrapMode};
-use unicode_width::UnicodeWidthChar as _;
+use unicode_segmentation::UnicodeSegmentation as _;
+use unicode_width::UnicodeWidthStr as _;
 
 use crate::{
     MAX_STEPS, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT, TUI_OUTPUT_LIMIT, TUI_UNDO_HISTORY_LIMIT,
@@ -32,6 +33,7 @@ use crate::{
 };
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
+const VISIBLE_TEXT_BYTE_BUDGET: usize = 4 * 1024;
 
 pub fn check_terminal_entry(
     stdin_is_terminal: bool,
@@ -814,32 +816,47 @@ fn visible_safe_text(
     rows: usize,
     columns: usize,
 ) -> String {
-    use std::fmt::Write as _;
-
     let mut output = String::new();
+    let mut remaining = VISIBLE_TEXT_BYTE_BUDGET;
     for row in 0..rows {
         let Some(line) = document.line(first_line + row) else {
             break;
         };
         if row > 0 {
+            if remaining == 0 {
+                break;
+            }
             output.push('\n');
+            remaining -= 1;
         }
+        let mut prefix_end = line.len().min(remaining);
+        while !line.is_char_boundary(prefix_end) {
+            prefix_end -= 1;
+        }
+        let truncated = prefix_end < line.len();
+        let prefix = &line[..prefix_end];
         let mut used = 0;
-        for character in line.chars() {
-            let width = if crate::error::is_dangerous_control(character) {
-                4
-            } else {
-                character.width().unwrap_or(1)
-            };
+        for (offset, grapheme) in prefix.grapheme_indices(true) {
+            if truncated && offset + grapheme.len() == prefix.len() {
+                // ponytail: bounded prefixes may omit their last grapheme; use a cached grapheme index for complete display.
+                remaining = 0;
+                break;
+            }
+            let dangerous = grapheme.chars().any(crate::error::is_dangerous_control);
+            let escaped = dangerous
+                .then(|| crate::error::escape_controls(grapheme, grapheme.chars().count()));
+            let rendered = escaped.as_deref().unwrap_or(grapheme);
+            let cost = grapheme.len().max(rendered.len());
+            if cost > remaining {
+                remaining = 0;
+                break;
+            }
+            remaining -= cost;
+            let width = rendered.width();
             if used + width > columns {
                 break;
             }
-            if width == 4 {
-                write!(&mut output, "\\x{:02x}", character as u32)
-                    .expect("writing to String cannot fail");
-            } else {
-                output.push(character);
-            }
+            output.push_str(rendered);
             used += width;
         }
     }
@@ -1894,6 +1911,27 @@ mod tests {
         assert_eq!(visible_safe_text(&document, 0, 1, 1), "");
         assert_eq!(visible_safe_text(&document, 0, 1, 2), "界");
         assert_eq!(visible_safe_text(&document, 1, 1, 1), "e\u{301}");
+    }
+
+    #[test]
+    fn preview_preserves_emoji_zwj_grapheme_when_it_fits() {
+        let document = PreviewDocument::new("👩‍💻x".to_string());
+
+        assert_eq!(visible_safe_text(&document, 0, 1, 1), "");
+        assert_eq!(visible_safe_text(&document, 0, 1, 2), "👩‍💻");
+    }
+
+    #[test]
+    fn preview_bounds_zero_width_grapheme_output() {
+        let combining_mark = '\u{301}';
+        let repeats = (TUI_INPUT_LIMIT - 1) / combining_mark.len_utf8();
+        let document =
+            PreviewDocument::new(format!("e{}", combining_mark.to_string().repeat(repeats)));
+
+        let visible = visible_safe_text(&document, 0, 1, 1);
+
+        assert!(document.raw.len() > 4_096);
+        assert!(visible.len() <= 4_096);
     }
 
     #[test]
