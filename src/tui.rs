@@ -1,12 +1,21 @@
 use std::{
+    io::{self, Write as _},
     sync::{Arc, Condvar, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::{
+    cursor::{Hide, Show},
+    event::{
+        DisableBracketedPaste, EnableBracketedPaste, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    },
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
 use ratatui::{
-    Frame,
+    Frame, Terminal,
+    backend::CrosstermBackend,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -16,12 +25,81 @@ use tui_textarea::{TextArea, WrapMode};
 
 use crate::{
     MAX_STEPS, TUI_INPUT_LIMIT, TUI_OUTPUT_LIMIT,
-    error::PipelineError,
+    error::{AppError, PipelineError},
     pipeline::{TransformStep, execute},
     transforms::{TransformDefinition, transform_by_id, transforms},
 };
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
+
+pub fn check_terminal_entry(
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+) -> Result<(), AppError> {
+    if stdin_is_terminal && stdout_is_terminal {
+        Ok(())
+    } else {
+        Err(AppError::Tui(
+            "doop tui requires terminal stdin and stdout".to_string(),
+        ))
+    }
+}
+
+struct TerminalSession {
+    raw: bool,
+    alternate: bool,
+    paste: bool,
+    cursor_hidden: bool,
+}
+
+impl TerminalSession {
+    fn enter() -> Result<Self, AppError> {
+        let mut session = Self {
+            raw: false,
+            alternate: false,
+            paste: false,
+            cursor_hidden: false,
+        };
+        enable_raw_mode().map_err(|error| AppError::Tui(error.to_string()))?;
+        session.raw = true;
+
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen).map_err(|error| AppError::Tui(error.to_string()))?;
+        session.alternate = true;
+        execute!(stdout, EnableBracketedPaste).map_err(|error| AppError::Tui(error.to_string()))?;
+        session.paste = true;
+        execute!(stdout, Hide).map_err(|error| AppError::Tui(error.to_string()))?;
+        session.cursor_hidden = true;
+        Ok(session)
+    }
+
+    fn restore(&mut self) {
+        let mut stdout = io::stdout();
+        if self.cursor_hidden {
+            let _ = execute!(stdout, Show);
+            self.cursor_hidden = false;
+        }
+        if self.paste {
+            let _ = execute!(stdout, DisableBracketedPaste);
+            self.paste = false;
+        }
+        if self.alternate {
+            let _ = execute!(stdout, LeaveAlternateScreen);
+            self.alternate = false;
+        }
+        if self.raw {
+            let _ = disable_raw_mode();
+            self.raw = false;
+        }
+        let _ = stdout.flush();
+    }
+}
+
+impl Drop for TerminalSession {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pane {
@@ -350,6 +428,11 @@ impl App {
             self.modal = Some(Modal::QuitConfirm);
             Vec::new()
         }
+    }
+
+    pub fn force_interrupt(&mut self) -> Vec<Effect> {
+        self.modal = None;
+        vec![Effect::Quit(130)]
     }
 
     fn tick(&mut self, now: Instant) -> Vec<Effect> {
@@ -1013,6 +1096,121 @@ impl Drop for PreviewWorker {
     }
 }
 
+fn set_clipboard_text(
+    clipboard: &mut Option<arboard::Clipboard>,
+    text: &str,
+) -> Result<(), String> {
+    if clipboard.is_none() {
+        *clipboard =
+            Some(arboard::Clipboard::new().map_err(|_| "Clipboard unavailable".to_string())?);
+    }
+    let Some(clipboard) = clipboard.as_mut() else {
+        return Err("Clipboard unavailable".to_string());
+    };
+    clipboard
+        .set_text(text.to_string())
+        .map_err(|_| "Clipboard unavailable".to_string())
+}
+
+fn run_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    worker: &PreviewWorker,
+    clipboard: &mut Option<arboard::Clipboard>,
+) -> Result<i32, AppError> {
+    loop {
+        let mut effects = Vec::new();
+        if crossterm::event::poll(Duration::from_millis(50))
+            .map_err(|error| AppError::Tui(error.to_string()))?
+        {
+            let event =
+                crossterm::event::read().map_err(|error| AppError::Tui(error.to_string()))?;
+            match event {
+                crossterm::event::Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        effects.extend(app.force_interrupt());
+                    } else {
+                        effects.extend(app.handle_event(AppEvent::Key(key, Instant::now())));
+                    }
+                }
+                crossterm::event::Event::Paste(text) => {
+                    effects.extend(app.handle_event(AppEvent::Paste(text, Instant::now())));
+                }
+                crossterm::event::Event::Resize(_, _) => {}
+                _ => {}
+            }
+        }
+
+        while let Some(result) = worker.try_recv() {
+            effects.extend(app.handle_event(AppEvent::PreviewFinished(result)));
+        }
+        effects.extend(app.handle_event(AppEvent::Tick(Instant::now())));
+
+        for effect in effects {
+            match effect {
+                Effect::Submit(job) => worker.submit(job),
+                Effect::Copy(text) => {
+                    let result = set_clipboard_text(clipboard, &text);
+                    let _ = app.handle_event(AppEvent::ClipboardFinished(result));
+                }
+                Effect::Quit(code) => return Ok(code),
+            }
+        }
+
+        terminal
+            .draw(|frame| render(frame, app))
+            .map_err(|error| AppError::Tui(error.to_string()))?;
+    }
+}
+
+fn best_effort_restore_terminal() {
+    let mut stdout = io::stdout();
+    let _ = execute!(stdout, Show, DisableBracketedPaste, LeaveAlternateScreen);
+    let _ = disable_raw_mode();
+    let _ = stdout.flush();
+}
+
+pub fn run() -> Result<i32, AppError> {
+    let mut session = TerminalSession::enter()?;
+    let ui_thread = thread::current().id();
+    let previous_hook = Arc::new(Mutex::new(Some(std::panic::take_hook())));
+    let hook_state = Arc::clone(&previous_hook);
+    std::panic::set_hook(Box::new(move |information| {
+        if thread::current().id() == ui_thread {
+            best_effort_restore_terminal();
+        } else if let Ok(hook) = hook_state.lock()
+            && let Some(previous) = hook.as_ref()
+        {
+            previous(information);
+        }
+    }));
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let backend = CrosstermBackend::new(io::stdout());
+        let mut terminal =
+            Terminal::new(backend).map_err(|error| AppError::Tui(error.to_string()))?;
+        let mut app = App::new(Instant::now(), std::env::var_os("NO_COLOR").is_some());
+        let worker = PreviewWorker::new();
+        let mut clipboard = None;
+        run_loop(&mut terminal, &mut app, &worker, &mut clipboard)
+    }));
+
+    session.restore();
+    let _temporary_hook = std::panic::take_hook();
+    if let Ok(mut hook) = previous_hook.lock()
+        && let Some(previous) = hook.take()
+    {
+        std::panic::set_hook(previous);
+    }
+
+    match result {
+        Ok(result) => result,
+        Err(_) => Err(AppError::Tui("TUI stopped unexpectedly".to_string())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1109,6 +1307,17 @@ mod tests {
 
     fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, now: Instant) -> Vec<Effect> {
         app.handle_event(AppEvent::Key(KeyEvent::new(code, modifiers), now))
+    }
+
+    #[test]
+    fn tui_requires_both_standard_streams_to_be_terminals() {
+        assert!(check_terminal_entry(true, true).is_ok());
+        let error = check_terminal_entry(false, true).unwrap_err();
+        assert_eq!(
+            crate::error::render_app_error(&error),
+            "TUI error: doop tui requires terminal stdin and stdout"
+        );
+        assert!(check_terminal_entry(true, false).is_err());
     }
 
     #[test]
@@ -1363,6 +1572,17 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_c_returns_130_without_quit_confirmation() {
+        let mut app = App::new(Instant::now(), true);
+        app.insert_paste("unsaved", Instant::now());
+        assert!(app.request_quit().is_empty());
+        assert!(matches!(app.modal, Some(Modal::QuitConfirm)));
+        let effects = app.force_interrupt();
+        assert!(matches!(effects.as_slice(), [Effect::Quit(130)]));
+        assert!(!matches!(app.modal, Some(Modal::QuitConfirm)));
+    }
+
+    #[test]
     fn preview_escapes_only_visible_dangerous_controls() {
         let document = PreviewDocument::new("safe\u{1b}[2J\nnext".to_string());
         assert_eq!(visible_safe_text(&document, 0, 1, 12), "safe\\x1b[2J");
@@ -1463,6 +1683,23 @@ mod tests {
         assert!(!screen.contains('\n'));
         assert!(!screen.contains('\u{1b}'));
         assert!(screen.contains("\\x0a\\x1b[2J"));
+    }
+
+    #[test]
+    fn clipboard_failure_preserves_ready_preview() {
+        let mut app = App::new(Instant::now(), true);
+        app.preview = PreviewState::Ready {
+            generation: 1,
+            document: PreviewDocument::new("result".to_string()),
+        };
+        app.handle_event(AppEvent::ClipboardFinished(Err(
+            "Clipboard unavailable".to_string()
+        )));
+        let PreviewState::Ready { document, .. } = &app.preview else {
+            panic!("expected ready preview");
+        };
+        assert_eq!(&*document.raw, "result");
+        assert_eq!(app.status.as_deref(), Some("Clipboard unavailable"));
     }
 
     #[test]

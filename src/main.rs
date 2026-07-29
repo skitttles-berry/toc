@@ -68,7 +68,12 @@ fn run() -> Result<(), AppError> {
             )
         }
         ParseOutcome::Run(Invocation::Tui) => {
-            Err(AppError::Tui("TUI is not available yet".to_string()))
+            doop::tui::check_terminal_entry(io::stdin().is_terminal(), io::stdout().is_terminal())?;
+            match doop::tui::run()? {
+                0 => Ok(()),
+                130 => Err(AppError::Interrupted),
+                code => Err(AppError::Tui(format!("TUI exited with code {code}"))),
+            }
         }
     }
 }
