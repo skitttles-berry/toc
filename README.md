@@ -38,8 +38,8 @@ unset DOOP_INPUT
 
 (
   secret_file=$(mktemp "${TMPDIR:-/tmp}/doop-secret.XXXXXX")
-  chmod 600 "$secret_file"
   trap 'rm -f -- "$secret_file"' EXIT
+  chmod 600 "$secret_file" || exit
   "${EDITOR:-vi}" "$secret_file"
   doop format-json --input "$secret_file"
 )
