@@ -8,5 +8,6 @@ description = "Local text transformations for the command line and terminal"
 
 [dependencies]
 base64 = { version = "0.23.0", default-features = false, features = ["std"] }
+clap = { version = "4.6.4", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions"] }
 serde = "1.0.229"
 serde_json = { version = "1.0.151", features = ["arbitrary_precision", "unbounded_depth"] }
