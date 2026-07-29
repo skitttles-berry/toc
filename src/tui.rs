@@ -24,7 +24,7 @@ use ratatui::{
 use tui_textarea::{TextArea, WrapMode};
 
 use crate::{
-    MAX_STEPS, TUI_INPUT_LIMIT, TUI_OUTPUT_LIMIT,
+    MAX_STEPS, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT, TUI_OUTPUT_LIMIT, TUI_UNDO_HISTORY_LIMIT,
     error::{AppError, PipelineError},
     pipeline::{TransformStep, execute},
     transforms::{TransformDefinition, transform_by_id, transforms},
@@ -203,15 +203,27 @@ pub struct App {
     pub preview_scroll: usize,
     pub no_color: bool,
     input_limit: usize,
+    input_line_limit: usize,
 }
 
 impl App {
     pub fn new(now: Instant, no_color: bool) -> Self {
-        Self::new_with_input_limit(now, no_color, TUI_INPUT_LIMIT)
+        Self::new_with_input_limits(now, no_color, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT)
     }
 
-    fn new_with_input_limit(_: Instant, no_color: bool, input_limit: usize) -> Self {
+    #[cfg(test)]
+    fn new_with_input_limit(now: Instant, no_color: bool, input_limit: usize) -> Self {
+        Self::new_with_input_limits(now, no_color, input_limit, TUI_INPUT_LINE_LIMIT)
+    }
+
+    fn new_with_input_limits(
+        _: Instant,
+        no_color: bool,
+        input_limit: usize,
+        input_line_limit: usize,
+    ) -> Self {
         let mut textarea = TextArea::default();
+        textarea.set_max_histories(TUI_UNDO_HISTORY_LIMIT);
         textarea.set_wrap_mode(WrapMode::WordOrGlyph);
         textarea.set_cursor_line_style(Style::default());
         if no_color {
@@ -238,6 +250,7 @@ impl App {
             preview_scroll: 0,
             no_color,
             input_limit,
+            input_line_limit,
         }
     }
 
@@ -272,6 +285,31 @@ impl App {
         byte_offset(end).saturating_sub(byte_offset(start))
     }
 
+    fn selected_line_count(&self) -> usize {
+        self.textarea
+            .selection_range()
+            .map_or(0, |(start, end)| end.0.saturating_sub(start.0))
+    }
+
+    fn can_insert(&self, bytes: usize, lines: usize) -> bool {
+        let retained_bytes = self.input_len().saturating_sub(self.selected_input_len());
+        let retained_lines = self
+            .textarea
+            .lines()
+            .len()
+            .saturating_sub(self.selected_line_count());
+        retained_bytes
+            .checked_add(bytes)
+            .is_some_and(|length| length <= self.input_limit)
+            && retained_lines
+                .checked_add(lines)
+                .is_some_and(|count| count <= self.input_line_limit)
+    }
+
+    fn reject_input(&mut self) {
+        self.status = Some("Input limit reached".to_string());
+    }
+
     fn changed(&mut self, now: Instant) {
         self.generation = self.generation.wrapping_add(1);
         self.preview = PreviewState::Debouncing {
@@ -284,21 +322,18 @@ impl App {
         let retained = self.input_len().saturating_sub(self.selected_input_len());
         let remaining = self.input_limit.saturating_sub(retained);
         if text.len() > remaining.saturating_mul(2) {
-            self.status = Some("Input limit reached".to_string());
+            self.reject_input();
             return false;
         }
         let (normalized, replaced) = normalize_paste(text);
-        if normalized.len() > remaining {
-            self.status = Some("Input limit reached".to_string());
+        if !self.can_insert(
+            normalized.len(),
+            normalized.bytes().filter(|byte| *byte == b'\n').count(),
+        ) {
+            self.reject_input();
             return false;
         }
-        let before = self.textarea.clone();
         let modified = self.textarea.insert_str(normalized);
-        if modified && self.input_len() > self.input_limit {
-            self.textarea = before;
-            self.status = Some("Input limit reached".to_string());
-            return false;
-        }
         if modified {
             self.status = (replaced > 0).then(|| format!("{replaced} control characters replaced"));
             self.changed(now);
@@ -552,14 +587,35 @@ impl App {
             self.insert_paste(&character.to_string(), now);
             return;
         }
-        let before = self.textarea.clone();
-        if self.textarea.input(key) {
-            if self.input_len() > self.input_limit {
-                self.textarea = before;
-                self.status = Some("Input limit reached".to_string());
-            } else {
-                self.changed(now);
+        let modifiers = key.modifiers;
+        let input_growth = match key.code {
+            KeyCode::Enter => Some((1, 1)),
+            KeyCode::Char('\n' | '\r')
+                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Some((1, 1))
             }
+            KeyCode::Char('m')
+                if modifiers.contains(KeyModifiers::CONTROL)
+                    && !modifiers.contains(KeyModifiers::ALT) =>
+            {
+                Some((1, 1))
+            }
+            KeyCode::Char(character)
+                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Some((character.len_utf8(), 0))
+            }
+            _ => None,
+        };
+        if let Some((bytes, lines)) = input_growth
+            && !self.can_insert(bytes, lines)
+        {
+            self.reject_input();
+            return;
+        }
+        if self.textarea.input(key) {
+            self.changed(now);
         }
     }
 
@@ -1907,6 +1963,46 @@ mod tests {
         assert!(app.insert_paste("1234", start));
         assert!(!app.insert_paste("5", start));
         assert_eq!(app.input_text(), "1234");
+    }
+
+    #[test]
+    fn tui_input_resources_use_fixed_limits() {
+        let app = App::new(now(), true);
+
+        assert_eq!(TUI_INPUT_LIMIT, 1024 * 1024);
+        assert_eq!(TUI_INPUT_LINE_LIMIT, 65_536);
+        assert_eq!(TUI_UNDO_HISTORY_LIMIT, 8);
+        assert_eq!(app.textarea.max_histories(), TUI_UNDO_HISTORY_LIMIT);
+    }
+
+    #[test]
+    fn paste_past_line_limit_preserves_input_and_preview_state() {
+        let start = now();
+        let mut app = App::new_with_input_limits(start, true, 8, 2);
+        assert!(app.insert_paste("a\nb", start));
+        let before = (app.input_text(), app.generation);
+
+        assert!(!app.insert_paste("\nc", start));
+        assert_eq!((app.input_text(), app.generation), before);
+        assert!(matches!(app.preview, PreviewState::Debouncing { .. }));
+        assert_eq!(app.status.as_deref(), Some("Input limit reached"));
+    }
+
+    #[test]
+    fn enter_past_line_limit_preserves_input_and_preview_state() {
+        let start = now();
+        let mut app = App::new_with_input_limits(start, true, 8, 1);
+        assert!(app.insert_paste("a", start));
+        let before = (app.input_text(), app.generation);
+
+        app.handle_event(AppEvent::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            start,
+        ));
+
+        assert_eq!((app.input_text(), app.generation), before);
+        assert!(matches!(app.preview, PreviewState::Debouncing { .. }));
+        assert_eq!(app.status.as_deref(), Some("Input limit reached"));
     }
 
     #[test]
