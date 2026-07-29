@@ -45,6 +45,15 @@ pub fn check_terminal_entry(
     }
 }
 
+fn execute_tracked<W: io::Write, C: crossterm::Command>(
+    writer: &mut W,
+    active: &mut bool,
+    command: C,
+) -> io::Result<()> {
+    *active = true;
+    execute!(writer, command)
+}
+
 struct TerminalSession {
     raw: bool,
     alternate: bool,
@@ -64,12 +73,12 @@ impl TerminalSession {
         session.raw = true;
 
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen).map_err(|error| AppError::Tui(error.to_string()))?;
-        session.alternate = true;
-        execute!(stdout, EnableBracketedPaste).map_err(|error| AppError::Tui(error.to_string()))?;
-        session.paste = true;
-        execute!(stdout, Hide).map_err(|error| AppError::Tui(error.to_string()))?;
-        session.cursor_hidden = true;
+        execute_tracked(&mut stdout, &mut session.alternate, EnterAlternateScreen)
+            .map_err(|error| AppError::Tui(error.to_string()))?;
+        execute_tracked(&mut stdout, &mut session.paste, EnableBracketedPaste)
+            .map_err(|error| AppError::Tui(error.to_string()))?;
+        execute_tracked(&mut stdout, &mut session.cursor_hidden, Hide)
+            .map_err(|error| AppError::Tui(error.to_string()))?;
         Ok(session)
     }
 
@@ -1307,6 +1316,37 @@ mod tests {
 
     fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, now: Instant) -> Vec<Effect> {
         app.handle_event(AppEvent::Key(KeyEvent::new(code, modifiers), now))
+    }
+
+    #[derive(Default)]
+    struct FlushFailWriter {
+        bytes: Vec<u8>,
+        flushes: usize,
+    }
+
+    impl std::io::Write for FlushFailWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Err(io::Error::other("flush failed"))
+        }
+    }
+
+    #[test]
+    fn tracked_command_marks_state_when_flush_fails_after_write() {
+        let mut writer = FlushFailWriter::default();
+        let mut active = false;
+
+        let result = execute_tracked(&mut writer, &mut active, EnterAlternateScreen);
+
+        assert!(result.is_err());
+        assert_eq!(writer.bytes, b"\x1b[?1049h");
+        assert_eq!(writer.flushes, 1);
+        assert!(active);
     }
 
     #[test]
