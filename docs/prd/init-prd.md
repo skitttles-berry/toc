@@ -631,6 +631,8 @@ doop/
 | `ratatui` | 화면 배치와 렌더링 |
 | `crossterm` | 터미널 이벤트, raw mode, bracketed paste |
 | `tui-textarea-2` | 여러 줄 입력 편집 |
+| `unicode-segmentation` | 확장 그래핌 경계 |
+| `unicode-width` | 터미널 셀 폭 |
 | `arboard` | 운영체제 클립보드 |
 | `base64` | 표준 Base64 |
 | `serde`, `serde_json` | 엄격한 JSON 문법과 중복 키 검증 |
