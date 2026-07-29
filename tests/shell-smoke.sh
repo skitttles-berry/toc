@@ -28,6 +28,7 @@ trap 'exit 1' HUP INT TERM
 smoke_input="$smoke_tmp/input.txt"
 smoke_output="$smoke_tmp/output.txt"
 smoke_error="$smoke_tmp/error.txt"
+smoke_input_marker="paste-smoke-$$"
 smoke_os=$(uname -s)
 
 if [ -n "${BASH_VERSION:-}" ]; then
@@ -78,6 +79,24 @@ tui_run() {
                 timeout { exit $timeout_code }
             }
         }
+        proc confirm_discard {} {
+            global spawn_id timeout
+            set previous_timeout $timeout
+            set timeout 1
+            for {set attempt 0} {$attempt < 3} {incr attempt} {
+                send -- "\021"
+                expect {
+                    -exact "Discard" {
+                        set timeout $previous_timeout
+                        return
+                    }
+                    eof { exit 97 }
+                    timeout {}
+                }
+            }
+            set timeout $previous_timeout
+            exit 98
+        }
         proc smoke {} {
             global env spawn_id spawn_out
             log_user 0
@@ -105,14 +124,13 @@ tui_run() {
 
             set mode $env(DOOP_SMOKE_TUI_MODE)
             if {$mode eq "normal"} {
-                send -- "\033\[200~paste-smoke\033\[201~"
-                expect_exact "paste-smoke" 93 94
+                send -- "\033\[200~$env(DOOP_SMOKE_INPUT_MARKER)\033\[201~"
+                expect_exact $env(DOOP_SMOKE_INPUT_MARKER) 93 94
                 stty rows 5 columns 30 < $replica
                 expect_exact "Increase" 95 96
                 stty rows 24 columns 120 < $replica
-                expect_exact "Input" 109 110
-                send -- "\021"
-                expect_exact "Discard" 97 98
+                expect_exact $env(DOOP_SMOKE_INPUT_MARKER) 109 110
+                confirm_discard
                 send -- "y"
             } elseif {$mode eq "interrupt"} {
                 send -- "\003"
@@ -187,6 +205,7 @@ export DOOP_SMOKE_BIN="$smoke_bin"
 export DOOP_SMOKE_INPUT="$smoke_input"
 export DOOP_SMOKE_OUTPUT="$smoke_output"
 export DOOP_SMOKE_ERROR="$smoke_error"
+export DOOP_SMOKE_INPUT_MARKER="$smoke_input_marker"
 pty_run '
     case "$DOOP_SMOKE_SHELL_KIND" in
         bash) [ -n "${BASH_VERSION:-}" ] || exit 88 ;;
