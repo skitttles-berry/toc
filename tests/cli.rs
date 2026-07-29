@@ -58,6 +58,19 @@ fn help_version_and_list_are_successful_english_output() {
 }
 
 #[test]
+fn list_cannot_be_combined_with_transform_or_tui() {
+    for args in [
+        &["--list", "format-json", "--input", "data.json"][..],
+        &["--list", "tui"][..],
+    ] {
+        let output = run(args, b"");
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert!(!output.stderr.is_empty());
+    }
+}
+
+#[test]
 fn unknown_transform_is_single_usage_error_without_stdout() {
     let output = run(&["unknown-transform"], b"");
     assert_eq!(output.status.code(), Some(2));

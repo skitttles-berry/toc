@@ -127,6 +127,7 @@ pub fn command() -> Command {
         .about("Local text transformations")
         .after_help("Transform help: doop <transform-id> --help")
         .disable_help_subcommand(true)
+        .args_conflicts_with_subcommands(true)
         .arg(
             Arg::new("list")
                 .long("list")
