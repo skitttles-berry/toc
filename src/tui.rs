@@ -132,6 +132,28 @@ impl App {
             + self.textarea.lines().len().saturating_sub(1)
     }
 
+    fn selected_input_len(&self) -> usize {
+        let Some((start, end)) = self.textarea.selection_range() else {
+            return 0;
+        };
+        let lines = self.textarea.lines();
+        let byte_offset = |(row, column): (usize, usize)| {
+            let preceding = lines.iter().take(row).fold(0usize, |total, line| {
+                total.saturating_add(line.len()).saturating_add(1)
+            });
+            let within_line = lines
+                .get(row)
+                .map(|line| {
+                    line.char_indices()
+                        .nth(column)
+                        .map_or(line.len(), |(index, _)| index)
+                })
+                .unwrap_or(0);
+            preceding.saturating_add(within_line)
+        };
+        byte_offset(end).saturating_sub(byte_offset(start))
+    }
+
     fn changed(&mut self, now: Instant) {
         self.generation = self.generation.wrapping_add(1);
         self.preview = PreviewState::Debouncing {
@@ -141,7 +163,8 @@ impl App {
     }
 
     pub fn insert_paste(&mut self, text: &str, now: Instant) -> bool {
-        let remaining = self.input_limit.saturating_sub(self.input_len());
+        let retained = self.input_len().saturating_sub(self.selected_input_len());
+        let remaining = self.input_limit.saturating_sub(retained);
         if text.len() > remaining.saturating_mul(2) {
             self.status = Some("Input limit reached".to_string());
             return false;
@@ -151,9 +174,10 @@ impl App {
             self.status = Some("Input limit reached".to_string());
             return false;
         }
+        let before = self.textarea.clone();
         let modified = self.textarea.insert_str(normalized);
         if modified && self.input_len() > self.input_limit {
-            self.textarea.undo();
+            self.textarea = before;
             self.status = Some("Input limit reached".to_string());
             return false;
         }
@@ -271,9 +295,10 @@ impl App {
                 Vec::new()
             }
             AppEvent::Key(key, now) if self.modal.is_none() && self.focus == Pane::Input => {
+                let before = self.textarea.clone();
                 if self.textarea.input(key) {
                     if self.input_len() > self.input_limit {
-                        self.textarea.undo();
+                        self.textarea = before;
                         self.status = Some("Input limit reached".to_string());
                     } else {
                         self.changed(now);
@@ -385,6 +410,71 @@ impl Drop for PreviewWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Barrier, OnceLock};
+
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    use crate::{error::TransformError, transforms::TransformDefinition};
+
+    struct BlockingTransformControl {
+        started: mpsc::Sender<Vec<u8>>,
+        release: Arc<Barrier>,
+    }
+
+    static LATEST_ONLY_CONTROL: OnceLock<BlockingTransformControl> = OnceLock::new();
+    static DROP_CONTROL: OnceLock<BlockingTransformControl> = OnceLock::new();
+
+    fn block(
+        control: &OnceLock<BlockingTransformControl>,
+        input: &[u8],
+    ) -> Result<Vec<u8>, TransformError> {
+        let control = control.get().expect("blocking transform configured");
+        control
+            .started
+            .send(input.to_vec())
+            .expect("blocking transform observer available");
+        control.release.wait();
+        Ok(input.to_vec())
+    }
+
+    fn block_latest_only(input: &[u8], _: usize) -> Result<Vec<u8>, TransformError> {
+        block(&LATEST_ONLY_CONTROL, input)
+    }
+
+    fn block_during_drop(input: &[u8], _: usize) -> Result<Vec<u8>, TransformError> {
+        block(&DROP_CONTROL, input)
+    }
+
+    static LATEST_ONLY_TRANSFORM: TransformDefinition = TransformDefinition {
+        id: "test-latest-only",
+        display_name: "Test latest only",
+        description: "Test-only blocking transform",
+        accepts_binary: true,
+        apply: block_latest_only,
+    };
+
+    static DROP_TRANSFORM: TransformDefinition = TransformDefinition {
+        id: "test-drop",
+        display_name: "Test drop",
+        description: "Test-only blocking transform",
+        accepts_binary: true,
+        apply: block_during_drop,
+    };
+
+    fn blocking_job(
+        generation: u64,
+        input: &[u8],
+        definition: &'static TransformDefinition,
+    ) -> PreviewJob {
+        PreviewJob {
+            generation,
+            input: input.to_vec(),
+            steps: vec![TransformStep {
+                definition,
+                enabled: true,
+            }],
+        }
+    }
 
     fn now() -> Instant {
         Instant::now()
@@ -517,6 +607,66 @@ mod tests {
     }
 
     #[test]
+    fn rejected_key_replacement_restores_text_cursor_and_selection() {
+        let start = now();
+        let mut app = App::new_with_input_limit(start, true, 4);
+        assert!(app.insert_paste("xxxx", start));
+        app.handle_event(AppEvent::Key(
+            KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT),
+            start,
+        ));
+        let before = (
+            app.input_text(),
+            app.textarea.cursor(),
+            app.textarea.selection_range(),
+        );
+
+        app.handle_event(AppEvent::Key(
+            KeyEvent::new(KeyCode::Char('é'), KeyModifiers::NONE),
+            start,
+        ));
+
+        assert_eq!(
+            (
+                app.input_text(),
+                app.textarea.cursor(),
+                app.textarea.selection_range(),
+            ),
+            before
+        );
+        assert_eq!(app.status.as_deref(), Some("Input limit reached"));
+    }
+
+    #[test]
+    fn paste_can_replace_selected_multibyte_text_with_fewer_bytes() {
+        let start = now();
+        let mut app = App::new_with_input_limit(start, true, 4);
+        assert!(app.insert_paste("abé", start));
+        app.handle_event(AppEvent::Key(
+            KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT),
+            start,
+        ));
+
+        assert!(app.insert_paste("x", start));
+        assert_eq!(app.input_text(), "abx");
+    }
+
+    #[test]
+    fn paste_capacity_includes_newlines_inside_multiline_selection() {
+        let start = now();
+        let mut app = App::new_with_input_limit(start, true, 3);
+        assert!(app.insert_paste("a\nb", start));
+        app.handle_event(AppEvent::Key(
+            KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT),
+            start,
+        ));
+        assert_eq!(app.textarea.selection_range(), Some(((0, 1), (1, 1))));
+
+        assert!(app.insert_paste("é", start));
+        assert_eq!(app.input_text(), "aé");
+    }
+
+    #[test]
     fn worker_returns_a_bounded_pipeline_result() {
         let worker = PreviewWorker::new();
         worker.submit(PreviewJob {
@@ -530,5 +680,93 @@ mod tests {
         let result = worker.results.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(result.generation, 7);
         assert_eq!(result.result.unwrap(), b"Zm9v");
+    }
+
+    #[test]
+    fn worker_runs_current_job_and_only_the_latest_pending_job() {
+        let (started_sender, started) = mpsc::channel();
+        let release = Arc::new(Barrier::new(2));
+        assert!(
+            LATEST_ONLY_CONTROL
+                .set(BlockingTransformControl {
+                    started: started_sender,
+                    release: Arc::clone(&release),
+                })
+                .is_ok()
+        );
+        let worker = PreviewWorker::new();
+
+        worker.submit(blocking_job(1, b"first", &LATEST_ONLY_TRANSFORM));
+        assert_eq!(
+            started.recv_timeout(Duration::from_secs(1)).unwrap(),
+            b"first"
+        );
+        worker.submit(blocking_job(2, b"middle", &LATEST_ONLY_TRANSFORM));
+        worker.submit(blocking_job(3, b"last", &LATEST_ONLY_TRANSFORM));
+        release.wait();
+
+        let first = worker.results.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(first.generation, 1);
+        assert_eq!(first.result.unwrap(), b"first");
+        assert_eq!(
+            started.recv_timeout(Duration::from_secs(1)).unwrap(),
+            b"last"
+        );
+        release.wait();
+
+        let last = worker.results.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(last.generation, 3);
+        assert_eq!(last.result.unwrap(), b"last");
+        assert!(matches!(
+            worker.results.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        assert!(matches!(started.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn dropping_running_worker_does_not_wait_and_worker_exits_after_release() {
+        let (started_sender, started) = mpsc::channel();
+        let release = Arc::new(Barrier::new(2));
+        assert!(
+            DROP_CONTROL
+                .set(BlockingTransformControl {
+                    started: started_sender,
+                    release: Arc::clone(&release),
+                })
+                .is_ok()
+        );
+        let mut worker = PreviewWorker::new();
+        let (dummy_sender, dummy_results) = mpsc::channel();
+        let results = std::mem::replace(&mut worker.results, dummy_results);
+        drop(dummy_sender);
+
+        worker.submit(blocking_job(1, b"running", &DROP_TRANSFORM));
+        assert_eq!(
+            started.recv_timeout(Duration::from_secs(1)).unwrap(),
+            b"running"
+        );
+        let (drop_sender, drop_returned) = mpsc::channel();
+        thread::spawn(move || {
+            drop(worker);
+            drop_sender.send(()).expect("drop observer available");
+        });
+
+        let returned_before_release = drop_returned.recv_timeout(Duration::from_secs(1)).is_ok();
+        release.wait();
+        if !returned_before_release {
+            drop_returned
+                .recv_timeout(Duration::from_secs(1))
+                .expect("drop returns after transform release");
+        }
+        assert!(returned_before_release);
+
+        let result = results.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(result.generation, 1);
+        assert_eq!(result.result.unwrap(), b"running");
+        assert!(matches!(
+            results.recv_timeout(Duration::from_secs(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
     }
 }
