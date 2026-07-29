@@ -1,4 +1,5 @@
 mod base64;
+mod json;
 mod url;
 
 use crate::error::TransformError;
@@ -25,23 +26,37 @@ static TRANSFORMS: &[TransformDefinition] = &[
     TransformDefinition {
         id: "base64-decode",
         display_name: "Base64 Decode",
-        description: "Decode padded RFC 4648 Base64 into UTF-8 text",
+        description: "Decode canonical padded Base64 into UTF-8 text",
         accepts_binary: false,
         apply: base64::decode,
     },
     TransformDefinition {
         id: "url-encode",
         display_name: "URL Encode",
-        description: "Encode UTF-8 text as an RFC 3986 URL component",
+        description: "Percent-encode UTF-8 as an RFC 3986 component",
         accepts_binary: false,
         apply: url::encode,
     },
     TransformDefinition {
         id: "url-decode",
         display_name: "URL Decode",
-        description: "Decode an RFC 3986 URL component into UTF-8 text",
+        description: "Decode percent escapes into UTF-8 without changing plus signs",
         accepts_binary: false,
         apply: url::decode,
+    },
+    TransformDefinition {
+        id: "format-json",
+        display_name: "JSON Prettify",
+        description: "Indent strict JSON while preserving keys and value tokens",
+        accepts_binary: false,
+        apply: json::format,
+    },
+    TransformDefinition {
+        id: "minify-json",
+        display_name: "JSON Minify",
+        description: "Remove structural JSON whitespace while preserving tokens",
+        accepts_binary: false,
+        apply: json::minify,
     },
 ];
 
@@ -63,5 +78,27 @@ mod tests {
         assert_eq!(transform.display_name, "Base64 Encode");
         assert!(transform.accepts_binary);
         assert!(!transform.description.is_empty());
+    }
+
+    #[test]
+    fn registry_has_exact_public_ids_once() {
+        let ids: Vec<_> = transforms().iter().map(|transform| transform.id).collect();
+        assert_eq!(
+            ids,
+            [
+                "base64-encode",
+                "base64-decode",
+                "url-encode",
+                "url-decode",
+                "format-json",
+                "minify-json",
+            ]
+        );
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), 6);
+        assert!(!ids.contains(&"tui"));
+        assert!(transforms().iter().all(|transform| {
+            !transform.display_name.is_empty() && !transform.description.is_empty()
+        }));
     }
 }
