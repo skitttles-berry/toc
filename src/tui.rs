@@ -15,13 +15,14 @@ use crossterm::{
 };
 use ratatui::{
     Frame, Terminal,
-    backend::CrosstermBackend,
+    backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Clear, List, ListItem, Paragraph},
 };
 use tui_textarea::{TextArea, WrapMode};
+use unicode_width::UnicodeWidthChar as _;
 
 use crate::{
     MAX_STEPS, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT, TUI_OUTPUT_LIMIT, TUI_UNDO_HISTORY_LIMIT,
@@ -183,6 +184,7 @@ pub enum AppEvent {
     Tick(Instant),
     PreviewFinished(PreviewResult),
     ClipboardFinished(Result<(), String>),
+    Resize,
 }
 
 pub enum Effect {
@@ -204,6 +206,7 @@ pub struct App {
     pub no_color: bool,
     input_limit: usize,
     input_line_limit: usize,
+    dirty: bool,
 }
 
 impl App {
@@ -251,6 +254,7 @@ impl App {
             no_color,
             input_limit,
             input_line_limit,
+            dirty: true,
         }
     }
 
@@ -306,8 +310,23 @@ impl App {
                 .is_some_and(|count| count <= self.input_line_limit)
     }
 
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    fn take_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
+    }
+
+    fn set_status(&mut self, status: Option<String>) {
+        if self.status != status {
+            self.status = status;
+            self.mark_dirty();
+        }
+    }
+
     fn reject_input(&mut self) {
-        self.status = Some("Input limit reached".to_string());
+        self.set_status(Some("Input limit reached".to_string()));
     }
 
     fn changed(&mut self, now: Instant) {
@@ -316,6 +335,7 @@ impl App {
             deadline: now + DEBOUNCE,
         };
         self.preview_scroll = 0;
+        self.mark_dirty();
     }
 
     pub fn insert_paste(&mut self, text: &str, now: Instant) -> bool {
@@ -335,7 +355,9 @@ impl App {
         }
         let modified = self.textarea.insert_str(normalized);
         if modified {
-            self.status = (replaced > 0).then(|| format!("{replaced} control characters replaced"));
+            self.set_status(
+                (replaced > 0).then(|| format!("{replaced} control characters replaced")),
+            );
             self.changed(now);
         }
         modified
@@ -343,7 +365,7 @@ impl App {
 
     pub fn add_transform(&mut self, id: &str, now: Instant) -> bool {
         if self.steps.len() == MAX_STEPS {
-            self.status = Some("Chain limit reached".to_string());
+            self.set_status(Some("Chain limit reached".to_string()));
             return false;
         }
         let Some(definition) = transform_by_id(id) else {
@@ -395,12 +417,14 @@ impl App {
             query: String::new(),
             selected: 0,
         });
+        self.mark_dirty();
     }
 
     pub fn picker_insert(&mut self, character: char) {
         if let Some(Modal::TransformPicker { query, selected }) = &mut self.modal {
             query.push(character);
             *selected = 0;
+            self.mark_dirty();
         }
     }
 
@@ -429,6 +453,7 @@ impl App {
             .get(selected)
             .map(|transform| transform.id);
         self.modal = None;
+        self.mark_dirty();
         if let Some(id) = id {
             self.add_transform(id, now);
         }
@@ -446,6 +471,7 @@ impl App {
         };
         if unsafe_raw {
             self.modal = Some(Modal::UnsafeCopyConfirm);
+            self.mark_dirty();
             Vec::new()
         } else {
             vec![Effect::Copy(raw)]
@@ -457,6 +483,7 @@ impl App {
             return Vec::new();
         }
         self.modal = None;
+        self.mark_dirty();
         match &self.preview {
             PreviewState::Ready { document, .. } => {
                 vec![Effect::Copy(Arc::clone(&document.raw))]
@@ -470,12 +497,14 @@ impl App {
             vec![Effect::Quit(0)]
         } else {
             self.modal = Some(Modal::QuitConfirm);
+            self.mark_dirty();
             Vec::new()
         }
     }
 
     pub fn force_interrupt(&mut self) -> Vec<Effect> {
         self.modal = None;
+        self.mark_dirty();
         vec![Effect::Quit(130)]
     }
 
@@ -488,6 +517,7 @@ impl App {
         }
         let generation = self.generation;
         self.preview = PreviewState::Running { generation };
+        self.mark_dirty();
         vec![Effect::Submit(PreviewJob {
             generation,
             input: self.input_text().into_bytes(),
@@ -515,6 +545,7 @@ impl App {
                 message: crate::error::render_pipeline_error(&error),
             },
         };
+        self.mark_dirty();
     }
 
     fn rotate_focus(&mut self, backwards: bool) {
@@ -523,6 +554,7 @@ impl App {
             (Pane::Preview, false) | (Pane::Input, true) => Pane::Chain,
             (Pane::Chain, false) | (Pane::Preview, true) => Pane::Input,
         };
+        self.mark_dirty();
     }
 
     fn handle_modal_key(&mut self, key: KeyEvent, now: Instant) -> Vec<Effect> {
@@ -530,24 +562,43 @@ impl App {
             Some(Modal::TransformPicker { .. }) => {
                 let filtered_len = self.filtered_transforms().len();
                 match (key.code, key.modifiers) {
-                    (KeyCode::Esc, _) => self.modal = None,
+                    (KeyCode::Esc, _) => {
+                        self.modal = None;
+                        self.mark_dirty();
+                    }
                     (KeyCode::Enter, _) => self.confirm_picker(now),
                     (KeyCode::Backspace, _) => {
+                        let mut changed = false;
                         if let Some(Modal::TransformPicker { query, selected }) = &mut self.modal {
-                            query.pop();
+                            changed = query.pop().is_some() || *selected != 0;
                             *selected = 0;
+                        }
+                        if changed {
+                            self.mark_dirty();
                         }
                     }
                     (KeyCode::Up, _) => {
+                        let mut changed = false;
                         if let Some(Modal::TransformPicker { selected, .. }) = &mut self.modal {
-                            *selected = selected.saturating_sub(1);
+                            let next = selected.saturating_sub(1);
+                            changed = *selected != next;
+                            *selected = next;
+                        }
+                        if changed {
+                            self.mark_dirty();
                         }
                     }
                     (KeyCode::Down, _) => {
+                        let mut changed = false;
                         if let Some(Modal::TransformPicker { selected, .. }) = &mut self.modal {
-                            *selected = selected
+                            let next = selected
                                 .saturating_add(1)
                                 .min(filtered_len.saturating_sub(1));
+                            changed = *selected != next;
+                            *selected = next;
+                        }
+                        if changed {
+                            self.mark_dirty();
                         }
                     }
                     (KeyCode::Char(character), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
@@ -561,6 +612,7 @@ impl App {
                 KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.confirm_unsafe_copy(),
                 KeyCode::Esc | KeyCode::Char('n' | 'N') => {
                     self.modal = None;
+                    self.mark_dirty();
                     Vec::new()
                 }
                 _ => Vec::new(),
@@ -568,10 +620,12 @@ impl App {
             Some(Modal::QuitConfirm) => match key.code {
                 KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
                     self.modal = None;
+                    self.mark_dirty();
                     vec![Effect::Quit(0)]
                 }
                 KeyCode::Esc | KeyCode::Char('n' | 'N') => {
                     self.modal = None;
+                    self.mark_dirty();
                     Vec::new()
                 }
                 _ => Vec::new(),
@@ -627,8 +681,11 @@ impl App {
             self.reject_input();
             return;
         }
+        let before = (self.textarea.cursor(), self.textarea.selection_range());
         if self.textarea.input(key) {
             self.changed(now);
+        } else if before != (self.textarea.cursor(), self.textarea.selection_range()) {
+            self.mark_dirty();
         }
     }
 
@@ -638,6 +695,7 @@ impl App {
             _ => 0,
         };
         let last_line = line_count.saturating_sub(1);
+        let before = self.preview_scroll;
         match key.code {
             KeyCode::Enter => return self.request_copy(),
             KeyCode::Up => self.preview_scroll = self.preview_scroll.saturating_sub(1),
@@ -649,6 +707,9 @@ impl App {
                 self.preview_scroll = self.preview_scroll.saturating_add(10).min(last_line);
             }
             _ => {}
+        }
+        if self.preview_scroll != before {
+            self.mark_dirty();
         }
         Vec::new()
     }
@@ -662,13 +723,21 @@ impl App {
                 self.move_selected(1, now);
             }
             (KeyCode::Up, _) => {
-                self.selected_step = self.selected_step.saturating_sub(1);
+                let next = self.selected_step.saturating_sub(1);
+                if self.selected_step != next {
+                    self.selected_step = next;
+                    self.mark_dirty();
+                }
             }
             (KeyCode::Down, _) => {
-                self.selected_step = self
+                let next = self
                     .selected_step
                     .saturating_add(1)
                     .min(self.steps.len().saturating_sub(1));
+                if self.selected_step != next {
+                    self.selected_step = next;
+                    self.mark_dirty();
+                }
             }
             (KeyCode::Char(' '), _) => self.toggle_selected(now),
             (KeyCode::Delete, _) => self.delete_selected(now),
@@ -724,13 +793,17 @@ impl App {
             }
             AppEvent::Paste(_, _) => Vec::new(),
             AppEvent::ClipboardFinished(result) => {
-                self.status = Some(match result {
+                self.set_status(Some(match result {
                     Ok(()) => "Copied".to_string(),
                     Err(message) => crate::error::escape_external(&message, 512),
-                });
+                }));
                 Vec::new()
             }
             AppEvent::Key(key, now) => self.handle_key(key, now),
+            AppEvent::Resize => {
+                self.mark_dirty();
+                Vec::new()
+            }
         }
     }
 }
@@ -756,7 +829,7 @@ fn visible_safe_text(
             let width = if crate::error::is_dangerous_control(character) {
                 4
             } else {
-                1
+                character.width().unwrap_or(1)
             };
             if used + width > columns {
                 break;
@@ -910,14 +983,21 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect, narrow: bool) {
     } else {
         format!("Focus: {}", pane_label(app.focus))
     };
-    let mut text = format!(
+    let help = format!(
         "{location} | {} | {enabled} enabled | Ctrl+P add | Ctrl+Q quit",
         preview_label(&app.preview)
     );
-    if let Some(message) = &app.status {
-        text.push_str(" | ");
-        text.push_str(&crate::error::escape_external(message, area.width as usize));
-    }
+    let text = match &app.status {
+        Some(message) if narrow => format!(
+            "{} | {help}",
+            crate::error::escape_external(message, area.width as usize)
+        ),
+        Some(message) => format!(
+            "{help} | {}",
+            crate::error::escape_external(message, area.width as usize)
+        ),
+        None => help,
+    };
     let style = if app.no_color {
         Style::default()
     } else {
@@ -1078,6 +1158,16 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
     render_modal(frame, app);
 }
 
+fn draw_if_dirty<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<bool, AppError> {
+    if !app.take_dirty() {
+        return Ok(false);
+    }
+    terminal
+        .draw(|frame| render(frame, app))
+        .map_err(|error| AppError::Tui(error.to_string()))?;
+    Ok(true)
+}
+
 pub fn normalize_paste(input: &str) -> (String, usize) {
     use std::fmt::Write as _;
 
@@ -1197,6 +1287,7 @@ fn run_loop(
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> Result<i32, AppError> {
     loop {
+        draw_if_dirty(terminal, app)?;
         let mut effects = Vec::new();
         if crossterm::event::poll(Duration::from_millis(50))
             .map_err(|error| AppError::Tui(error.to_string()))?
@@ -1216,7 +1307,9 @@ fn run_loop(
                 crossterm::event::Event::Paste(text) => {
                     effects.extend(app.handle_event(AppEvent::Paste(text, Instant::now())));
                 }
-                crossterm::event::Event::Resize(_, _) => {}
+                crossterm::event::Event::Resize(_, _) => {
+                    effects.extend(app.handle_event(AppEvent::Resize));
+                }
                 _ => {}
             }
         }
@@ -1236,10 +1329,6 @@ fn run_loop(
                 Effect::Quit(code) => return Ok(code),
             }
         }
-
-        terminal
-            .draw(|frame| render(frame, app))
-            .map_err(|error| AppError::Tui(error.to_string()))?;
     }
 }
 
@@ -1389,6 +1478,74 @@ mod tests {
         app.handle_event(AppEvent::Key(KeyEvent::new(code, modifiers), now))
     }
 
+    #[test]
+    fn redraws_initial_and_changed_state_but_not_idle_polls() {
+        let start = now();
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(start, true);
+
+        assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
+        assert!(!draw_if_dirty(&mut terminal, &mut app).unwrap());
+
+        app.handle_event(AppEvent::Tick(start + Duration::from_millis(1)));
+        assert!(!draw_if_dirty(&mut terminal, &mut app).unwrap());
+
+        key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE, start);
+        assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
+
+        key(&mut app, KeyCode::Tab, KeyModifiers::NONE, start);
+        assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
+
+        app.handle_event(AppEvent::Tick(start + DEBOUNCE));
+        assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
+
+        app.handle_event(AppEvent::PreviewFinished(PreviewResult {
+            generation: 1,
+            result: Ok(b"x".to_vec()),
+        }));
+        assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
+
+        app.handle_event(AppEvent::ClipboardFinished(Err(
+            "Clipboard unavailable".to_string()
+        )));
+        assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
+
+        app.handle_event(AppEvent::Resize);
+        assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
+    }
+
+    #[test]
+    #[ignore = "release-only rendering measurement"]
+    fn dirty_redraw_release_measurement() {
+        const ITERATIONS: usize = 500;
+
+        let baseline_backend = TestBackend::new(80, 20);
+        let mut baseline_terminal = Terminal::new(baseline_backend).unwrap();
+        let mut baseline_app = App::new(now(), true);
+        let baseline_start = Instant::now();
+        for _ in 0..ITERATIONS {
+            baseline_terminal
+                .draw(|frame| render(frame, &mut baseline_app))
+                .unwrap();
+        }
+        let baseline = baseline_start.elapsed();
+
+        let dirty_backend = TestBackend::new(80, 20);
+        let mut dirty_terminal = Terminal::new(dirty_backend).unwrap();
+        let mut dirty_app = App::new(now(), true);
+        let dirty_start = Instant::now();
+        let mut redraws = 0;
+        for _ in 0..ITERATIONS {
+            redraws += usize::from(draw_if_dirty(&mut dirty_terminal, &mut dirty_app).unwrap());
+        }
+        let dirty = dirty_start.elapsed();
+
+        eprintln!(
+            "dirty redraw release measurement: iterations={ITERATIONS}, unconditional={baseline:?}, dirty={dirty:?}, redraws={redraws}"
+        );
+    }
+
     #[derive(Default)]
     struct FlushFailWriter {
         bytes: Vec<u8>,
@@ -1455,6 +1612,24 @@ mod tests {
         let screen = rendered(119, 30, Pane::Preview);
         assert!(screen.contains("[Preview]"));
         assert_eq!(screen.matches("Chain").count(), 1);
+    }
+
+    #[test]
+    fn narrow_status_prioritizes_clipboard_failure_over_help() {
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(now(), true);
+        app.handle_event(AppEvent::ClipboardFinished(Err(
+            "Clipboard unavailable".to_string()
+        )));
+
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+        let status: String = terminal.backend().buffer().content()[60 * 11..]
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(status.starts_with("Clipboard unavailable | [Input]"));
     }
 
     #[test]
@@ -1710,6 +1885,15 @@ mod tests {
         assert_eq!(visible_safe_text(&document, 0, 1, 12), "safe\\x1b[2J");
         assert_eq!(visible_safe_text(&document, 1, 1, 12), "next");
         assert_eq!(&*document.raw, "safe\u{1b}[2J\nnext");
+    }
+
+    #[test]
+    fn preview_clips_wide_and_combining_text_by_terminal_cell_width() {
+        let document = PreviewDocument::new("界a\ne\u{301}x".to_string());
+
+        assert_eq!(visible_safe_text(&document, 0, 1, 1), "");
+        assert_eq!(visible_safe_text(&document, 0, 1, 2), "界");
+        assert_eq!(visible_safe_text(&document, 1, 1, 1), "e\u{301}");
     }
 
     #[test]

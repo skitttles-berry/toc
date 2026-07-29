@@ -31,6 +31,9 @@ doop --help
 
 터미널에서 `doop tui`를 실행합니다. TUI는 빈 Input과 빈 Chain으로
 시작하며 Preview 결과가 Input을 덮어쓰지 않습니다.
+화면은 최초 표시와 입력·상태·작업 결과·터미널 크기 변경 때만 다시 그립니다.
+미리보기는 넓은 문자와 결합 문자의 터미널 셀 폭에 맞춰 자르며,
+좁은 상태줄에서는 클립보드 오류를 일반 도움말보다 먼저 표시합니다.
 
 - `Ctrl+P`: 변환 추가
 - `Tab`, `Shift+Tab`: 영역 이동
@@ -45,9 +48,13 @@ doop --help
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
+cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
 bash tests/shell-smoke.sh
 zsh tests/shell-smoke.sh
 ```
+
+릴리스 렌더링 측정은 시간 합격 기준 없이 무조건 렌더 기준과 변경 기반
+렌더링 경로의 실제 측정값만 출력합니다.
 
 | 환경 | 상태 |
 |---|---|
