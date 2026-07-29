@@ -76,7 +76,7 @@ pub fn write_result(
             return Err(AppError::UnsafeTerminalOutput);
         }
     }
-    match writer.write_all(result) {
+    match writer.write_all(result).and_then(|()| writer.flush()) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         Err(error) => Err(AppError::Output(error.kind())),
@@ -305,6 +305,23 @@ mod tests {
         let error =
             write_result(&mut FailingWriter(std::io::ErrorKind::Other), false, b"x").unwrap_err();
         assert_eq!(error.exit_code(), 5);
+    }
+
+    #[test]
+    fn buffered_flush_failure_is_output_error_with_code_five() {
+        let mut writer = std::io::BufWriter::new(FailingWriter(std::io::ErrorKind::Other));
+        let error = write_result(&mut writer, false, b"x").unwrap_err();
+        assert!(matches!(
+            &error,
+            AppError::Output(std::io::ErrorKind::Other)
+        ));
+        assert_eq!(error.exit_code(), 5);
+    }
+
+    #[test]
+    fn buffered_flush_broken_pipe_is_success() {
+        let mut writer = std::io::BufWriter::new(FailingWriter(std::io::ErrorKind::BrokenPipe));
+        write_result(&mut writer, false, b"x").unwrap();
     }
 
     #[test]
