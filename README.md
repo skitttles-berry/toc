@@ -36,8 +36,13 @@ IFS= read -r -s DOOP_INPUT
 printf '%s' "$DOOP_INPUT" | doop base64-encode
 unset DOOP_INPUT
 
-(umask 077; some-local-command > secret.txt)
-doop format-json --input secret.txt
+(
+  secret_file=$(mktemp "${TMPDIR:-/tmp}/doop-secret.XXXXXX")
+  chmod 600 "$secret_file"
+  trap 'rm -f -- "$secret_file"' EXIT
+  "${EDITOR:-vi}" "$secret_file"
+  doop format-json --input "$secret_file"
+)
 ```
 
 ## TUI

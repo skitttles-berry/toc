@@ -8,7 +8,23 @@ case "$smoke_target_dir" in
     *) smoke_target_dir="$PWD/$smoke_target_dir" ;;
 esac
 smoke_bin="$smoke_target_dir/debug/doop"
+
+smoke_tmp=
+smoke_input=
+smoke_output=
+smoke_error=
+cleanup() {
+    if [ -n "$smoke_tmp" ] && [ -d "$smoke_tmp" ]; then
+        [ -z "$smoke_input" ] || rm -f -- "$smoke_input"
+        [ -z "$smoke_output" ] || rm -f -- "$smoke_output"
+        [ -z "$smoke_error" ] || rm -f -- "$smoke_error"
+        rmdir -- "$smoke_tmp"
+    fi
+}
+
 smoke_tmp=$(mktemp -d "${TMPDIR:-/tmp}/doop-smoke.XXXXXX")
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 smoke_input="$smoke_tmp/input.txt"
 smoke_output="$smoke_tmp/output.txt"
 smoke_error="$smoke_tmp/error.txt"
@@ -23,15 +39,6 @@ else
     exit 1
 fi
 smoke_shell=$(command -v "$smoke_shell_kind")
-
-cleanup() {
-    if [ -d "$smoke_tmp" ]; then
-        rm -f -- "$smoke_input" "$smoke_output" "$smoke_error"
-        rmdir -- "$smoke_tmp"
-    fi
-}
-trap cleanup EXIT
-trap 'exit 1' HUP INT TERM
 
 fail() {
     printf 'shell smoke failed: %s\n' "$1" >&2
