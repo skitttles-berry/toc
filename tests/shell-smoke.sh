@@ -185,6 +185,11 @@ command -v expect >/dev/null 2>&1 || fail "expect command is required"
 export CARGO_TARGET_DIR="$smoke_target_dir"
 export DOOP_SMOKE_SHELL="$smoke_shell"
 export DOOP_SMOKE_SHELL_KIND="$smoke_shell_kind"
+export DOOP_SMOKE_BIN="$smoke_bin"
+export DOOP_SMOKE_INPUT="$smoke_input"
+export DOOP_SMOKE_OUTPUT="$smoke_output"
+export DOOP_SMOKE_ERROR="$smoke_error"
+export DOOP_SMOKE_INPUT_MARKER="$smoke_input_marker"
 cargo build --manifest-path "$smoke_root/Cargo.toml" >/dev/null
 [ -x "$smoke_bin" ] || fail "cargo did not create the expected binary"
 
@@ -215,11 +220,6 @@ expected='{
 assert_eq "$expected" "$actual" "transform chain"
 
 printf 'file' >"$smoke_input"
-export DOOP_SMOKE_BIN="$smoke_bin"
-export DOOP_SMOKE_INPUT="$smoke_input"
-export DOOP_SMOKE_OUTPUT="$smoke_output"
-export DOOP_SMOKE_ERROR="$smoke_error"
-export DOOP_SMOKE_INPUT_MARKER="$smoke_input_marker"
 pty_run '
     case "$DOOP_SMOKE_SHELL_KIND" in
         bash) [ -n "${BASH_VERSION:-}" ] || exit 88 ;;
