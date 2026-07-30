@@ -155,47 +155,48 @@ pub(crate) fn execute_report(
                 })
             };
 
-            match result {
-                Ok(_) if is_cancelled() => {
-                    traces.push(StepTrace {
-                        step: step_number,
-                        transform_id: step.definition.id,
-                        input_bytes: Some(input_bytes),
-                        output_bytes: None,
-                        elapsed: None,
-                        status: StepStatus::Cancelled,
-                        error: None,
-                    });
-                    outcome = Some(ExecutionOutcome::Cancelled);
-                }
-                Ok(output) => {
-                    let output_bytes = output.len();
-                    traces.push(StepTrace {
-                        step: step_number,
-                        transform_id: step.definition.id,
-                        input_bytes: Some(input_bytes),
-                        output_bytes: Some(output_bytes),
-                        elapsed: Some(started.elapsed()),
-                        status: StepStatus::Succeeded,
-                        error: None,
-                    });
-                    input = output;
-                }
-                Err(error) => {
-                    traces.push(StepTrace {
-                        step: step_number,
-                        transform_id: step.definition.id,
-                        input_bytes: Some(input_bytes),
-                        output_bytes: None,
-                        elapsed: None,
-                        status: StepStatus::Failed,
-                        error: Some(error.clone()),
-                    });
-                    outcome = Some(ExecutionOutcome::Failed(PipelineError::Step {
-                        step: step_number,
-                        transform_id: step.definition.id,
-                        source: error,
-                    }));
+            if is_cancelled() {
+                traces.push(StepTrace {
+                    step: step_number,
+                    transform_id: step.definition.id,
+                    input_bytes: Some(input_bytes),
+                    output_bytes: None,
+                    elapsed: None,
+                    status: StepStatus::Cancelled,
+                    error: None,
+                });
+                outcome = Some(ExecutionOutcome::Cancelled);
+            } else {
+                match result {
+                    Ok(output) => {
+                        let output_bytes = output.len();
+                        traces.push(StepTrace {
+                            step: step_number,
+                            transform_id: step.definition.id,
+                            input_bytes: Some(input_bytes),
+                            output_bytes: Some(output_bytes),
+                            elapsed: Some(started.elapsed()),
+                            status: StepStatus::Succeeded,
+                            error: None,
+                        });
+                        input = output;
+                    }
+                    Err(error) => {
+                        traces.push(StepTrace {
+                            step: step_number,
+                            transform_id: step.definition.id,
+                            input_bytes: Some(input_bytes),
+                            output_bytes: None,
+                            elapsed: None,
+                            status: StepStatus::Failed,
+                            error: Some(error.clone()),
+                        });
+                        outcome = Some(ExecutionOutcome::Failed(PipelineError::Step {
+                            step: step_number,
+                            transform_id: step.definition.id,
+                            source: error,
+                        }));
+                    }
                 }
             }
         }
@@ -541,6 +542,30 @@ mod tests {
         assert_eq!(after.outcome, ExecutionOutcome::Cancelled);
         assert_eq!(after.traces[0].status, StepStatus::Cancelled);
         assert_eq!(after.traces[1].status, StepStatus::NotExecuted);
+    }
+
+    #[test]
+    fn cancellation_after_a_failed_step_takes_precedence_over_failure() {
+        let steps = [step("base64-decode", true), step("hex-encode", true)];
+        let checks = std::cell::Cell::new(0);
+        let report = execute_report(
+            request(
+                b"!",
+                &steps,
+                ExecutionPolicy::AllowBinary,
+                ExecutionTarget::Final,
+            ),
+            || {
+                let check = checks.get();
+                checks.set(check + 1);
+                check == 1
+            },
+        );
+
+        assert_eq!(report.outcome, ExecutionOutcome::Cancelled);
+        assert_eq!(report.traces[0].status, StepStatus::Cancelled);
+        assert_eq!(report.traces[0].error, None);
+        assert_eq!(report.traces[1].status, StepStatus::NotExecuted);
     }
 
     #[test]
