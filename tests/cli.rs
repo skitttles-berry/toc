@@ -96,6 +96,18 @@ fn help_version_and_list_are_successful_english_output() {
         assert!(output.stderr.is_empty());
         assert!(!output.stdout.is_empty());
         assert!(output.stdout.is_ascii());
+        if args.is_empty() || args == ["--help"] {
+            let help = std::str::from_utf8(&output.stdout).unwrap();
+            for token in [
+                "Usage: doop [OPTIONS]",
+                "Commands:",
+                "tui",
+                "--list",
+                "Transform help: doop <transform-id> --help",
+            ] {
+                assert!(help.contains(token), "{args:?}: {token}");
+            }
+        }
     }
 }
 
@@ -194,8 +206,13 @@ fn hex_cli_handles_binary_input_whitespace_chains_and_atomic_errors() {
 fn list_exposes_the_exact_eight_public_transform_ids() {
     let output = run(&["--list"], b"");
     assert_eq!(output.status.code(), Some(0));
-    let ids: std::collections::HashSet<_> = std::str::from_utf8(&output.stdout)
-        .unwrap()
+    let list = std::str::from_utf8(&output.stdout).unwrap();
+    assert_eq!(
+        list.lines().count(),
+        8,
+        "--list must have eight rows even without a trailing newline"
+    );
+    let ids: std::collections::HashSet<_> = list
         .lines()
         .map(|line| line.split('\t').next().unwrap())
         .collect();
@@ -219,5 +236,26 @@ fn tui_has_explicit_temporary_code_one_path() {
     let output = run(&["tui"], b"");
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(!output.stderr.is_empty());
+    assert_eq!(
+        output.stderr,
+        b"TUI error: doop tui requires terminal stdin and stdout\n"
+    );
+}
+
+#[test]
+fn tui_rejects_additional_arguments() {
+    for args in [
+        &["tui", "--help"][..],
+        &["tui", "format-json"][..],
+        &["tui", "--input", "data.txt"][..],
+    ] {
+        let output = run(args, b"");
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert!(!output.stderr.contains(&b'\x1b'), "{args:?}");
+        assert_eq!(
+            output.stderr, b"error: tui does not accept trailing arguments\\x0a\n",
+            "{args:?}"
+        );
+    }
 }
