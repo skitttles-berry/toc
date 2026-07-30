@@ -67,6 +67,23 @@ fn decoders_report_the_same_bounded_invalid_utf8_details() {
 }
 
 #[test]
+fn decoders_keep_non_utf8_output_as_pipeline_errors() {
+    for (transform, input) in [
+        ("base64-decode", &b"/w=="[..]),
+        ("url-decode", b"%FF"),
+        ("hex-decode", b"ff"),
+    ] {
+        let output = run(&[transform], input);
+        assert_eq!(output.status.code(), Some(4), "{transform}");
+        assert!(output.stdout.is_empty(), "{transform}");
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            format!("step 1 ({transform}) failed: decoded bytes are not UTF-8 (hex prefix: ff)\n"),
+        );
+    }
+}
+
+#[test]
 fn help_version_and_list_are_successful_english_output() {
     for args in [
         &[][..],

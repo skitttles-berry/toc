@@ -1,4 +1,4 @@
-use crate::error::{TransformError, invalid_utf8_output};
+use crate::error::TransformError;
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
@@ -80,9 +80,6 @@ pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
     debug_assert!(high.is_none());
     debug_assert_eq!(output.len(), required);
 
-    if std::str::from_utf8(&output).is_err() {
-        return Err(invalid_utf8_output(&output));
-    }
     Ok(output)
 }
 
@@ -140,22 +137,16 @@ mod tests {
     }
 
     #[test]
-    fn checks_decode_limit_and_reuses_bounded_utf8_preview() {
+    fn checks_decode_limit_before_allocation() {
         assert_eq!(decode(b"41", 1).unwrap(), b"A");
         assert_eq!(
             decode(b"4142", 1).unwrap_err(),
             TransformError::OutputTooLarge { limit: 1 }
         );
+    }
 
-        let encoded = "ff".repeat(65);
-        let TransformError::InvalidUtf8Output {
-            preview_hex,
-            total_bytes,
-        } = decode(encoded.as_bytes(), 65).unwrap_err()
-        else {
-            panic!("expected invalid UTF-8 output");
-        };
-        assert_eq!(preview_hex, "ff".repeat(64));
-        assert_eq!(total_bytes, 65);
+    #[test]
+    fn decode_returns_non_utf8_bytes_for_pipeline_policy() {
+        assert_eq!(decode(b"ff", 1024).unwrap(), vec![0xff]);
     }
 }

@@ -280,28 +280,29 @@ mod tests {
     }
 
     #[test]
-    fn invalid_utf8_error_reports_omission_and_total_bytes_for_both_decoders() {
+    fn pipeline_invalid_utf8_error_reports_omission_and_total_bytes_for_both_decoders() {
         let base64 = crate::transforms::transform_by_id("base64-decode").unwrap();
         let encoded = (crate::transforms::transform_by_id("base64-encode")
             .unwrap()
             .apply)(&[0xff; 65], 1024)
         .unwrap();
-        let source = (base64.apply)(&encoded, 1024).unwrap_err();
-        let rendered = render_pipeline_error(&PipelineError::Step {
-            step: 1,
-            transform_id: base64.id,
-            source,
-        });
+        let steps = [crate::pipeline::TransformStep {
+            definition: base64,
+            enabled: true,
+        }];
+        let rendered =
+            render_pipeline_error(&crate::pipeline::execute(encoded, &steps, 1024).unwrap_err());
         assert!(rendered.contains("bytes omitted"));
         assert!(rendered.contains("total: 65 bytes"));
 
         let url = crate::transforms::transform_by_id("url-decode").unwrap();
-        let source = (url.apply)("%FF".repeat(65).as_bytes(), 1024).unwrap_err();
-        let rendered = render_pipeline_error(&PipelineError::Step {
-            step: 1,
-            transform_id: url.id,
-            source,
-        });
+        let steps = [crate::pipeline::TransformStep {
+            definition: url,
+            enabled: true,
+        }];
+        let rendered = render_pipeline_error(
+            &crate::pipeline::execute("%FF".repeat(65).into_bytes(), &steps, 1024).unwrap_err(),
+        );
         assert!(rendered.contains("bytes omitted"));
         assert!(rendered.contains("total: 65 bytes"));
     }

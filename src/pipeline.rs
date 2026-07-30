@@ -1,6 +1,8 @@
+use std::time::{Duration, Instant};
+
 use crate::{
     MAX_STEPS,
-    error::{PipelineError, TransformError},
+    error::{PipelineError, TransformError, invalid_utf8_output},
     transforms::TransformDefinition,
 };
 
@@ -10,44 +12,225 @@ pub struct TransformStep {
     pub enabled: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExecutionPolicy {
+    StrictText,
+    #[allow(dead_code)] // Used by the TUI execution path added in the next task.
+    AllowBinary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExecutionTarget {
+    Final,
+    #[allow(dead_code)] // Used by selected-stage TUI execution in the next task.
+    Step(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ExecutionOutcome {
+    Success(Vec<u8>),
+    Failed(PipelineError),
+    Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StepStatus {
+    Succeeded,
+    Disabled,
+    Failed,
+    NotExecuted,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StepTrace {
+    pub step: usize,
+    pub transform_id: &'static str,
+    pub input_bytes: Option<usize>,
+    pub output_bytes: Option<usize>,
+    pub elapsed: Option<Duration>,
+    pub status: StepStatus,
+    pub error: Option<TransformError>,
+}
+
+pub(crate) struct ExecutionRequest<'a> {
+    pub request_id: u64,
+    pub input: Vec<u8>,
+    pub steps: &'a [TransformStep],
+    pub output_limit: usize,
+    pub policy: ExecutionPolicy,
+    pub target: ExecutionTarget,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExecutionReport {
+    pub request_id: u64,
+    pub target: ExecutionTarget,
+    pub outcome: ExecutionOutcome,
+    pub traces: Vec<StepTrace>,
+}
+
+pub(crate) fn execute_report(
+    request: ExecutionRequest<'_>,
+    is_cancelled: impl Fn() -> bool,
+) -> ExecutionReport {
+    let ExecutionRequest {
+        request_id,
+        mut input,
+        steps,
+        output_limit,
+        policy,
+        target,
+    } = request;
+    if steps.len() > MAX_STEPS {
+        return ExecutionReport {
+            request_id,
+            target,
+            outcome: ExecutionOutcome::Failed(PipelineError::TooManySteps { max: MAX_STEPS }),
+            traces: Vec::new(),
+        };
+    }
+
+    let target_len = match target {
+        ExecutionTarget::Final => steps.len(),
+        ExecutionTarget::Step(index) => {
+            index.checked_add(1).unwrap_or(steps.len()).min(steps.len())
+        }
+    };
+    let mut traces = Vec::with_capacity(steps.len());
+    let mut outcome = None;
+
+    for (index, step) in steps.iter().enumerate() {
+        let step_number = index + 1;
+        if outcome.is_some() || index >= target_len {
+            traces.push(StepTrace {
+                step: step_number,
+                transform_id: step.definition.id,
+                input_bytes: None,
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::NotExecuted,
+                error: None,
+            });
+        } else if is_cancelled() {
+            traces.push(StepTrace {
+                step: step_number,
+                transform_id: step.definition.id,
+                input_bytes: Some(input.len()),
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::Cancelled,
+                error: None,
+            });
+            outcome = Some(ExecutionOutcome::Cancelled);
+        } else if !step.enabled {
+            traces.push(StepTrace {
+                step: step_number,
+                transform_id: step.definition.id,
+                input_bytes: Some(input.len()),
+                output_bytes: Some(input.len()),
+                elapsed: None,
+                status: StepStatus::Disabled,
+                error: None,
+            });
+        } else {
+            let input_bytes = input.len();
+            let started = Instant::now();
+            let result = if !step.definition.accepts_binary && std::str::from_utf8(&input).is_err()
+            {
+                Err(TransformError::InvalidUtf8Input)
+            } else {
+                (step.definition.apply)(&input, output_limit).and_then(|output| {
+                    if output.len() > output_limit {
+                        Err(TransformError::OutputTooLarge {
+                            limit: output_limit,
+                        })
+                    } else if policy == ExecutionPolicy::StrictText
+                        && std::str::from_utf8(&output).is_err()
+                    {
+                        Err(invalid_utf8_output(&output))
+                    } else {
+                        Ok(output)
+                    }
+                })
+            };
+
+            match result {
+                Ok(_) if is_cancelled() => {
+                    traces.push(StepTrace {
+                        step: step_number,
+                        transform_id: step.definition.id,
+                        input_bytes: Some(input_bytes),
+                        output_bytes: None,
+                        elapsed: None,
+                        status: StepStatus::Cancelled,
+                        error: None,
+                    });
+                    outcome = Some(ExecutionOutcome::Cancelled);
+                }
+                Ok(output) => {
+                    let output_bytes = output.len();
+                    traces.push(StepTrace {
+                        step: step_number,
+                        transform_id: step.definition.id,
+                        input_bytes: Some(input_bytes),
+                        output_bytes: Some(output_bytes),
+                        elapsed: Some(started.elapsed()),
+                        status: StepStatus::Succeeded,
+                        error: None,
+                    });
+                    input = output;
+                }
+                Err(error) => {
+                    traces.push(StepTrace {
+                        step: step_number,
+                        transform_id: step.definition.id,
+                        input_bytes: Some(input_bytes),
+                        output_bytes: None,
+                        elapsed: None,
+                        status: StepStatus::Failed,
+                        error: Some(error.clone()),
+                    });
+                    outcome = Some(ExecutionOutcome::Failed(PipelineError::Step {
+                        step: step_number,
+                        transform_id: step.definition.id,
+                        source: error,
+                    }));
+                }
+            }
+        }
+    }
+
+    ExecutionReport {
+        request_id,
+        target,
+        outcome: outcome.unwrap_or_else(|| ExecutionOutcome::Success(input)),
+        traces,
+    }
+}
+
 pub fn execute(
-    mut input: Vec<u8>,
+    input: Vec<u8>,
     steps: &[TransformStep],
     output_limit: usize,
 ) -> Result<Vec<u8>, PipelineError> {
-    if steps.len() > MAX_STEPS {
-        return Err(PipelineError::TooManySteps { max: MAX_STEPS });
+    match execute_report(
+        ExecutionRequest {
+            request_id: 0,
+            input,
+            steps,
+            output_limit,
+            policy: ExecutionPolicy::StrictText,
+            target: ExecutionTarget::Final,
+        },
+        || false,
+    )
+    .outcome
+    {
+        ExecutionOutcome::Success(output) => Ok(output),
+        ExecutionOutcome::Failed(error) => Err(error),
+        ExecutionOutcome::Cancelled => unreachable!("strict synchronous execution cannot cancel"),
     }
-
-    for (index, step) in steps.iter().enumerate() {
-        if !step.enabled {
-            continue;
-        }
-        if !step.definition.accepts_binary && std::str::from_utf8(&input).is_err() {
-            return Err(PipelineError::Step {
-                step: index + 1,
-                transform_id: step.definition.id,
-                source: TransformError::InvalidUtf8Input,
-            });
-        }
-        input = (step.definition.apply)(&input, output_limit).map_err(|source| {
-            PipelineError::Step {
-                step: index + 1,
-                transform_id: step.definition.id,
-                source,
-            }
-        })?;
-        if input.len() > output_limit {
-            return Err(PipelineError::Step {
-                step: index + 1,
-                transform_id: step.definition.id,
-                source: TransformError::OutputTooLarge {
-                    limit: output_limit,
-                },
-            });
-        }
-    }
-    Ok(input)
 }
 
 #[cfg(test)]
@@ -158,5 +341,256 @@ mod tests {
                 source: TransformError::InvalidHex { position: 1 },
             }
         );
+    }
+
+    fn request<'a>(
+        input: &[u8],
+        steps: &'a [TransformStep],
+        policy: ExecutionPolicy,
+        target: ExecutionTarget,
+    ) -> ExecutionRequest<'a> {
+        ExecutionRequest {
+            request_id: 7,
+            input: input.to_vec(),
+            steps,
+            output_limit: 1024,
+            policy,
+            target,
+        }
+    }
+
+    #[test]
+    fn allow_binary_preserves_decoder_bytes_but_public_execute_stays_strict() {
+        let steps = [step("base64-decode", true)];
+        let report = execute_report(
+            ExecutionRequest {
+                request_id: 7,
+                input: b"/w==".to_vec(),
+                steps: &steps,
+                output_limit: 1024,
+                policy: ExecutionPolicy::AllowBinary,
+                target: ExecutionTarget::Final,
+            },
+            || false,
+        );
+
+        assert_eq!(report.request_id, 7);
+        assert_eq!(report.outcome, ExecutionOutcome::Success(vec![0xff]));
+        assert!(matches!(
+            execute(b"/w==".to_vec(), &steps, 1024),
+            Err(PipelineError::Step {
+                step: 1,
+                transform_id: "base64-decode",
+                source: TransformError::InvalidUtf8Output { .. },
+            })
+        ));
+    }
+
+    #[test]
+    fn allow_binary_chains_decoder_bytes_into_binary_encoder() {
+        let steps = [step("base64-decode", true), step("hex-encode", true)];
+        let report = execute_report(
+            request(
+                b"/w==",
+                &steps,
+                ExecutionPolicy::AllowBinary,
+                ExecutionTarget::Final,
+            ),
+            || false,
+        );
+
+        assert_eq!(report.outcome, ExecutionOutcome::Success(b"ff".to_vec()));
+        assert!(
+            report
+                .traces
+                .iter()
+                .all(|trace| trace.status == StepStatus::Succeeded)
+        );
+    }
+
+    #[test]
+    fn binary_output_stops_at_text_only_step() {
+        let steps = [step("base64-decode", true), step("url-encode", true)];
+        let report = execute_report(
+            request(
+                b"/w==",
+                &steps,
+                ExecutionPolicy::AllowBinary,
+                ExecutionTarget::Final,
+            ),
+            || false,
+        );
+
+        assert_eq!(
+            report.outcome,
+            ExecutionOutcome::Failed(PipelineError::Step {
+                step: 2,
+                transform_id: "url-encode",
+                source: TransformError::InvalidUtf8Input,
+            })
+        );
+        assert_eq!(report.traces[1].status, StepStatus::Failed);
+        assert_eq!(
+            report.traces[1].error,
+            Some(TransformError::InvalidUtf8Input)
+        );
+    }
+
+    #[test]
+    fn disabled_step_keeps_known_sizes_without_elapsed_time() {
+        let steps = [step("base64-encode", false)];
+        let report = execute_report(
+            request(
+                b"hello",
+                &steps,
+                ExecutionPolicy::AllowBinary,
+                ExecutionTarget::Final,
+            ),
+            || false,
+        );
+
+        assert_eq!(report.outcome, ExecutionOutcome::Success(b"hello".to_vec()));
+        assert_eq!(report.traces[0].status, StepStatus::Disabled);
+        assert_eq!(report.traces[0].input_bytes, Some(5));
+        assert_eq!(report.traces[0].output_bytes, Some(5));
+        assert_eq!(report.traces[0].elapsed, None);
+    }
+
+    #[test]
+    fn selected_disabled_stage_marks_later_steps_not_executed() {
+        let steps = [
+            step("base64-encode", true),
+            step("base64-decode", false),
+            step("hex-encode", true),
+        ];
+        let report = execute_report(
+            request(
+                b"hi",
+                &steps,
+                ExecutionPolicy::AllowBinary,
+                ExecutionTarget::Step(1),
+            ),
+            || false,
+        );
+
+        assert_eq!(report.outcome, ExecutionOutcome::Success(b"aGk=".to_vec()));
+        assert_eq!(
+            report
+                .traces
+                .iter()
+                .map(|trace| trace.status)
+                .collect::<Vec<_>>(),
+            vec![
+                StepStatus::Succeeded,
+                StepStatus::Disabled,
+                StepStatus::NotExecuted
+            ]
+        );
+        assert_eq!(report.traces[1].input_bytes, Some(4));
+        assert_eq!(report.traces[1].output_bytes, Some(4));
+        assert_eq!(report.traces[2].input_bytes, None);
+    }
+
+    #[test]
+    fn failed_step_marks_later_steps_not_executed() {
+        let steps = [step("base64-decode", true), step("hex-encode", true)];
+        let report = execute_report(
+            request(
+                b"!",
+                &steps,
+                ExecutionPolicy::AllowBinary,
+                ExecutionTarget::Final,
+            ),
+            || false,
+        );
+
+        assert_eq!(report.traces[0].status, StepStatus::Failed);
+        assert_eq!(report.traces[1].status, StepStatus::NotExecuted);
+    }
+
+    #[test]
+    fn cancellation_before_or_after_a_step_never_runs_later_steps() {
+        let steps = [step("base64-encode", true), step("hex-encode", true)];
+        let before = execute_report(
+            request(
+                b"x",
+                &steps,
+                ExecutionPolicy::AllowBinary,
+                ExecutionTarget::Final,
+            ),
+            || true,
+        );
+        assert_eq!(before.outcome, ExecutionOutcome::Cancelled);
+        assert_eq!(before.traces[0].status, StepStatus::Cancelled);
+        assert_eq!(before.traces[1].status, StepStatus::NotExecuted);
+
+        let checks = std::cell::Cell::new(0);
+        let after = execute_report(
+            request(
+                b"x",
+                &steps,
+                ExecutionPolicy::AllowBinary,
+                ExecutionTarget::Final,
+            ),
+            || {
+                let check = checks.get();
+                checks.set(check + 1);
+                check == 1
+            },
+        );
+        assert_eq!(after.outcome, ExecutionOutcome::Cancelled);
+        assert_eq!(after.traces[0].status, StepStatus::Cancelled);
+        assert_eq!(after.traces[1].status, StepStatus::NotExecuted);
+    }
+
+    #[test]
+    fn empty_pipeline_returns_original_bytes_and_empty_trace() {
+        let report = execute_report(
+            request(
+                b"hello",
+                &[],
+                ExecutionPolicy::AllowBinary,
+                ExecutionTarget::Final,
+            ),
+            || false,
+        );
+        assert_eq!(report.outcome, ExecutionOutcome::Success(b"hello".to_vec()));
+        assert!(report.traces.is_empty());
+    }
+
+    #[test]
+    fn step_limit_and_output_limit_match_under_both_policies() {
+        for policy in [ExecutionPolicy::StrictText, ExecutionPolicy::AllowBinary] {
+            let allowed = vec![step("base64-encode", false); 32];
+            let report = execute_report(
+                request(b"x", &allowed, policy, ExecutionTarget::Final),
+                || false,
+            );
+            assert_eq!(report.outcome, ExecutionOutcome::Success(b"x".to_vec()));
+
+            let too_many = vec![step("base64-encode", false); 33];
+            let report = execute_report(
+                request(b"x", &too_many, policy, ExecutionTarget::Final),
+                || false,
+            );
+            assert_eq!(
+                report.outcome,
+                ExecutionOutcome::Failed(PipelineError::TooManySteps { max: 32 })
+            );
+            assert!(report.traces.is_empty());
+
+            let limited = [step("base64-encode", true)];
+            let mut limited_request = request(b"foo", &limited, policy, ExecutionTarget::Final);
+            limited_request.output_limit = 3;
+            let report = execute_report(limited_request, || false);
+            assert_eq!(
+                report.outcome,
+                ExecutionOutcome::Failed(PipelineError::Step {
+                    step: 1,
+                    transform_id: "base64-encode",
+                    source: TransformError::OutputTooLarge { limit: 3 },
+                })
+            );
+        }
     }
 }

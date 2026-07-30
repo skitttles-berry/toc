@@ -2,7 +2,7 @@ use base64::{
     DecodeError, DecodeSliceError, Engine as _, encoded_len, engine::general_purpose::STANDARD,
 };
 
-use crate::error::{TransformError, invalid_utf8_output};
+use crate::error::TransformError;
 
 pub fn encode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
     let required = encoded_len(input.len(), true).ok_or(TransformError::OutputTooLarge {
@@ -74,9 +74,6 @@ pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
             }
         })?;
     decoded.truncate(written);
-    if std::str::from_utf8(&decoded).is_err() {
-        return Err(invalid_utf8_output(&decoded));
-    }
     Ok(decoded)
 }
 
@@ -123,27 +120,8 @@ mod tests {
     }
 
     #[test]
-    fn invalid_utf8_result_has_at_most_64_preview_bytes() {
-        let error = decode(b"/w==", 16).unwrap_err();
-        assert_eq!(
-            error,
-            TransformError::InvalidUtf8Output {
-                preview_hex: "ff".to_string(),
-                total_bytes: 1,
-            }
-        );
-
-        let encoded = encode(&[0xff; 65], 1024).unwrap();
-        let TransformError::InvalidUtf8Output {
-            preview_hex,
-            total_bytes,
-        } = decode(&encoded, 1024).unwrap_err()
-        else {
-            panic!("expected invalid UTF-8 output");
-        };
-        assert_eq!(preview_hex.len(), 128);
-        assert!(preview_hex.bytes().all(|byte| byte == b'f'));
-        assert_eq!(total_bytes, 65);
+    fn decode_returns_non_utf8_bytes_for_pipeline_policy() {
+        assert_eq!(decode(b"/w==", 1024).unwrap(), vec![0xff]);
     }
 
     #[test]

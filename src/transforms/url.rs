@@ -1,4 +1,4 @@
-use crate::error::{TransformError, invalid_utf8_output};
+use crate::error::TransformError;
 
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
@@ -73,9 +73,6 @@ pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
         index += 3;
     }
 
-    if std::str::from_utf8(&output).is_err() {
-        return Err(invalid_utf8_output(&output));
-    }
     Ok(output)
 }
 
@@ -111,14 +108,8 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_non_utf8_result_without_lossy_conversion() {
-        assert_eq!(
-            decode(b"%FF", 16).unwrap_err(),
-            TransformError::InvalidUtf8Output {
-                preview_hex: "ff".to_string(),
-                total_bytes: 1,
-            }
-        );
+    fn decode_returns_non_utf8_bytes_for_pipeline_policy() {
+        assert_eq!(decode(b"%FF", 1024).unwrap(), vec![0xff]);
     }
 
     #[test]
