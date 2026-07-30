@@ -47,7 +47,7 @@
 - Consume: owned input bytes, immutable transform steps, output limit, request ID, policy, target and a cancellation predicate
 - Produce: final or selected-stage bytes, safe Pipeline error or cancellation, and one metadata-only trace per configured step
 
-- [ ] Add failing decoder tests that prove syntax-valid non-UTF-8 values become raw bytes before Pipeline policy is applied:
+- [x] Add failing decoder tests that prove syntax-valid non-UTF-8 values become raw bytes before Pipeline policy is applied:
 
 ```rust
 #[test]
@@ -58,7 +58,7 @@ fn decode_returns_non_utf8_bytes_for_pipeline_policy() {
 
 Add the equivalent `%FF -> [0xff]` URL test and `ff -> [0xff]` Hex test. Keep all malformed-input offset and pre-allocation output-limit tests unchanged.
 
-- [ ] Add failing Pipeline tests for both policies and the current public wrapper:
+- [x] Add failing Pipeline tests for both policies and the current public wrapper:
 
 ```rust
 #[test]
@@ -92,7 +92,7 @@ fn allow_binary_preserves_decoder_bytes_but_public_execute_stays_strict() {
 }
 ```
 
-- [ ] Add failing report tests covering all approved execution boundaries:
+- [x] Add failing report tests covering all approved execution boundaries:
 
   - `/w== -> base64-decode -> hex-encode` succeeds as `ff` under `AllowBinary`.
   - `/w== -> base64-decode -> url-encode` fails at step 2 with `InvalidUtf8Input`.
@@ -104,7 +104,7 @@ fn allow_binary_preserves_decoder_bytes_but_public_execute_stays_strict() {
   - 32 steps succeed and 33 steps fail identically under both policies.
   - output limits are identical under both policies.
 
-- [ ] Run the focused tests and confirm they fail because the new report types do not exist and the decoders still reject non-UTF-8 output:
+- [x] Run the focused tests and confirm they fail because the new report types do not exist and the decoders still reject non-UTF-8 output:
 
 ```bash
 cargo test pipeline::tests -- --nocapture
@@ -115,7 +115,7 @@ cargo test transforms::hex::tests::decode_returns_non_utf8_bytes_for_pipeline_po
 
 Expected result: compilation or assertions fail before implementation.
 
-- [ ] Add the following crate-private model to `src/pipeline.rs`. `ExecutionTarget::Step` is zero-based internally; `StepTrace::step` remains one-based for display and errors:
+- [x] Add the following crate-private model to `src/pipeline.rs`. `ExecutionTarget::Step` is zero-based internally; `StepTrace::step` remains one-based for display and errors:
 
 ```rust
 use std::time::{Duration, Instant};
@@ -177,7 +177,7 @@ pub(crate) struct ExecutionReport {
 }
 ```
 
-- [ ] Implement `execute_report` with one loop and no policy-specific transform registry:
+- [x] Implement `execute_report` with one loop and no policy-specific transform registry:
 
   1. Reject more than `MAX_STEPS` before executing and return an empty Trace.
   2. Calculate the inclusive target boundary with checked `index + 1`, clamped to `steps.len()`.
@@ -189,9 +189,9 @@ pub(crate) struct ExecutionReport {
   8. On success, record sizes and `Instant::elapsed`; on failure, record only the safe `TransformError`.
   9. For a selected-stage target, append `NotExecuted` rows for all later configured steps.
 
-- [ ] Change Base64, URL and Hex decoder success paths to return validated raw bytes. Remove only their final `std::str::from_utf8` checks; keep input UTF-8 validation, malformed-input positions, canonicality checks, checked allocation and output-limit order.
+- [x] Change Base64, URL and Hex decoder success paths to return validated raw bytes. Remove only their final `std::str::from_utf8` checks; keep input UTF-8 validation, malformed-input positions, canonicality checks, checked allocation and output-limit order.
 
-- [ ] Make the public `execute` a strict compatibility wrapper:
+- [x] Make the public `execute` a strict compatibility wrapper:
 
 ```rust
 pub fn execute(
@@ -219,9 +219,9 @@ pub fn execute(
 }
 ```
 
-- [ ] Move the old decoder-unit `InvalidUtf8Output` assertions to Pipeline and CLI boundaries. Assert Base64 `/w==`, URL `%FF` and Hex `ff` still produce exit code `4`, empty stdout and the existing bounded preview. Do not change registry descriptions or CLI help text.
+- [x] Move the old decoder-unit `InvalidUtf8Output` assertions to Pipeline and CLI boundaries. Assert Base64 `/w==`, URL `%FF` and Hex `ff` still produce exit code `4`, empty stdout and the existing bounded preview. Do not change registry descriptions or CLI help text.
 
-- [ ] Run focused and full regression checks:
+- [x] Run focused and full regression checks:
 
 ```bash
 cargo test pipeline::tests -- --nocapture
@@ -232,7 +232,7 @@ cargo test --all-targets --all-features
 
 Expected result: all tests pass and public CLI output remains byte-for-byte unchanged.
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add src/pipeline.rs src/error.rs src/transforms/base64.rs src/transforms/url.rs src/transforms/hex.rs tests/cli.rs
@@ -260,7 +260,7 @@ git commit -m "feat(pipeline): 바이트 실행 보고서"
 - Move to `render.rs`: style, layout, panel, status, modal and `draw_if_dirty`
 - Move to `views.rs`: `PreviewDocument` and current safe visible-text calculation
 
-- [ ] Record the behavior-preserving baseline:
+- [x] Record the behavior-preserving baseline:
 
 ```bash
 cargo test tui::tests
@@ -269,7 +269,7 @@ cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
 
 Expected result: all current TUI tests pass and the release test reports one dirty redraw.
 
-- [ ] Add only these module declarations and narrow re-exports in `src/tui.rs`:
+- [x] Add only these module declarations and narrow re-exports in `src/tui.rs`:
 
 ```rust
 mod render;
@@ -282,7 +282,7 @@ use state::{App, AppEvent, Effect};
 use worker::PreviewWorker;
 ```
 
-- [ ] Move existing items without changing field names, branches, key behavior, rendering strings or test expectations:
+- [x] Move existing items without changing field names, branches, key behavior, rendering strings or test expectations:
 
   - `state.rs`: current lines 117-800 중 `PreviewDocument`를 제외한 상태·입력 처리와 `normalize_paste`.
   - `views.rs`: current `PreviewDocument`, line starts and `visible_safe_text`.
@@ -290,9 +290,9 @@ use worker::PreviewWorker;
   - `worker.rs`: current lines 1199-1270.
   - `tui.rs`: current lines 1-115, clipboard function, event loop, restore and `run`.
 
-- [ ] Use `pub(super)` only where sibling TUI modules require access. Do not add traits, builders, controllers, generic UI components or a separate crate.
+- [x] Use `pub(super)` only where sibling TUI modules require access. Do not add traits, builders, controllers, generic UI components or a separate crate.
 
-- [ ] Move tests next to the responsibility they exercise:
+- [x] Move tests next to the responsibility they exercise:
 
   - terminal entry, command tracking, panic and full event-loop tests stay in `tui.rs`;
   - App editing, limits, modal and state-transition tests move to `state.rs`;
@@ -300,7 +300,7 @@ use worker::PreviewWorker;
   - viewport safety tests move to `views.rs`;
   - TestBackend layout, colors and dirty-render tests move to `render.rs`.
 
-- [ ] Run format and the same baseline tests:
+- [x] Run format and the same baseline tests:
 
 ```bash
 cargo fmt --all
@@ -311,7 +311,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 Expected result: no observable behavior or test count is lost.
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add src/tui.rs src/tui
@@ -335,7 +335,7 @@ git commit -m "refactor(tui): 책임별 모듈 분리"
 - Consume: immutable Artifact bytes, current byte or row offset, viewport rows and columns
 - Produce: at most 4 KiB of terminal-safe visible text and the next/previous bounded scroll offsets
 
-- [ ] Add failing tests for Smart selection:
+- [x] Add failing tests for Smart selection:
 
 ```rust
 #[test]
@@ -352,18 +352,18 @@ fn smart_uses_trace_for_failure_text_for_utf8_and_hex_for_binary() {
 }
 ```
 
-- [ ] Add failing Text tests covering valid Unicode boundaries, tab/newline preservation, ESC, OSC 52, NUL, every C0/C1 control class, a single line longer than 4 KiB and newline-dense 64 MiB metadata behavior. The tests must assert both bytes inspected and output string length never exceed 4 KiB; do not allocate a line-offset vector.
+- [x] Add failing Text tests covering valid Unicode boundaries, tab/newline preservation, ESC, OSC 52, NUL, every C0/C1 control class, a single line longer than 4 KiB and newline-dense 64 MiB metadata behavior. The tests must assert both bytes inspected and output string length never exceed 4 KiB; do not allocate a line-offset vector.
 
-- [ ] Add failing Hex tests for exactly 16 bytes per row, the extra gap after byte 7, uppercase byte/offset display, printable ASCII range `0x20..=0x7e`, dot replacement, offset overflow handling and viewport-only generation:
+- [x] Add failing Hex tests for exactly 16 bytes per row, the extra gap after byte 7, uppercase byte/offset display, printable ASCII range `0x20..=0x7e`, dot replacement, offset overflow handling and viewport-only generation:
 
 ```text
 00000000  00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  |................|
 00000010  20 41 FF                                         | A.|
 ```
 
-- [ ] Add failing Trace tests for `OK`, `OFF`, `ERROR`, `NOT RUN`, `CANCELLED`, one-based step number, input/output sizes, optional elapsed time and sanitized bounded error. Assert no input or output body appears.
+- [x] Add failing Trace tests for `OK`, `OFF`, `ERROR`, `NOT RUN`, `CANCELLED`, one-based step number, input/output sizes, optional elapsed time and sanitized bounded error. Assert no input or output body appears.
 
-- [ ] Add a byte-owning Artifact that does not pre-index all lines. Do not remove `PreviewDocument` in this task because Task 2’s App and renderer still depend on it:
+- [x] Add a byte-owning Artifact that does not pre-index all lines. Do not remove `PreviewDocument` in this task because Task 2’s App and renderer still depend on it:
 
 ```rust
 #[derive(Clone, Debug)]
@@ -391,7 +391,7 @@ impl Artifact {
 }
 ```
 
-- [ ] Define the explicit and effective View modes:
+- [x] Define the explicit and effective View modes:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -421,11 +421,11 @@ pub(super) struct TextWindow {
 
 `effective_view` selects Trace on failure, Text for valid UTF-8 and Hex for binary only when the configured mode is Smart. An explicitly pinned incompatible Text view returns `Unavailable` with `Switch to Hex view`; it never silently changes the configured mode.
 
-- [ ] Reuse the existing grapheme-width and control escaping logic inside `render_text_window`, but start from a UTF-8 boundary at the current byte offset and stop when either the viewport is full, 4 KiB of input has been inspected or 4 KiB of escaped output has been produced. Return bounded next/previous byte offsets; never scan the whole result to move one page.
+- [x] Reuse the existing grapheme-width and control escaping logic inside `render_text_window`, but start from a UTF-8 boundary at the current byte offset and stop when either the viewport is full, 4 KiB of input has been inspected or 4 KiB of escaped output has been produced. Return bounded next/previous byte offsets; never scan the whole result to move one page.
 
-- [ ] Implement Hex with checked `row_offset * 16` and only the visible rows. Implement Trace from at most 32 `StepTrace` values. Crop only the already-bounded rendered lines to the current terminal width.
+- [x] Implement Hex with checked `row_offset * 16` and only the visible rows. Implement Trace from at most 32 `StepTrace` values. Crop only the already-bounded rendered lines to the current terminal width.
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cargo test tui::views::tests -- --nocapture
@@ -433,7 +433,7 @@ cargo test tui::views::tests -- --nocapture
 
 Expected result: all View tests pass without a new dependency. Defer `-D warnings` Clippy until Task 4 connects these new helpers to the production path.
 
-- [ ] Keep Task 3 changes uncommitted and continue directly to Task 4.
+- [x] Keep Task 3 changes uncommitted and continue directly to Task 4.
 
 ---
 
@@ -458,7 +458,7 @@ Expected result: all View tests pass without a new dependency. Defer `-D warning
 - Consume in worker: owned input, owned immutable step vector, target, request ID
 - Produce from worker: `ExecutionReport` using `AllowBinary`
 
-- [ ] Add failing state tests for the exact delay boundary:
+- [x] Add failing state tests for the exact delay boundary:
 
 ```rust
 #[test]
@@ -470,7 +470,7 @@ fn debounce_is_50_ms_through_256_kib_and_200_ms_above_it() {
 
 Also assert one bracketed Paste event increments `request_id` once and schedules one final job.
 
-- [ ] Implement the boundary as one pure helper used by every Input and Pipeline change:
+- [x] Implement the boundary as one pure helper used by every Input and Pipeline change:
 
 ```rust
 fn debounce_for(input_bytes: usize) -> Duration {
@@ -482,7 +482,7 @@ fn debounce_for(input_bytes: usize) -> Duration {
 }
 ```
 
-- [ ] Add failing state tests for result ownership:
+- [x] Add failing state tests for result ownership:
 
   - Input or Pipeline change increments `request_id`, returns `Cancel(new_id)`, clears final/active Artifact and Trace, disables copy and schedules Final.
   - `p` increments `request_id`, immediately submits `Step(selected_index)` and retains the cached final Artifact.
@@ -494,7 +494,7 @@ fn debounce_for(input_bytes: usize) -> Duration {
   - stale success, failure and cancellation reports change no Artifact, status, copy eligibility or user status message.
   - `Esc` changes an active request to `Cancelled`; a later document change schedules a fresh Final request.
 
-- [ ] Replace the old preview state with the minimum explicit model:
+- [x] Replace the old preview state with the minimum explicit model:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -525,13 +525,13 @@ pub(super) struct OutputState {
 }
 ```
 
-- [ ] Keep the editor, focus, Pipeline vector, selected index, modal, status, limits and dirty flag in `App`. Add only `zoom`, `request_id` and `OutputState`; do not introduce a controller or reducer abstraction.
+- [x] Keep the editor, focus, Pipeline vector, selected index, modal, status, limits and dirty flag in `App`. Add only `zoom`, `request_id` and `OutputState`; do not introduce a controller or reducer abstraction.
 
-- [ ] In the same task, migrate `render.rs` from `app.preview`/`PreviewState` to `app.output`/`OutputStatus` and the new bounded View functions while retaining the current pre-Task-5 layout. Only after App and render compile together, remove `PreviewDocument`, the old line-index path and `PreviewState`.
+- [x] In the same task, migrate `render.rs` from `app.preview`/`PreviewState` to `app.output`/`OutputStatus` and the new bounded View functions while retaining the current pre-Task-5 layout. Only after App and render compile together, remove `PreviewDocument`, the old line-index path and `PreviewState`.
 
-- [ ] Make `App::handle_event` compare `request_id` before and after event handling. When an event invalidates work, prepend `Effect::Cancel(new_id)` immediately rather than waiting for debounce submission. A later Tick submits the same ID when its deadline is reached.
+- [x] Make `App::handle_event` compare `request_id` before and after event handling. When an event invalidates work, prepend `Effect::Cancel(new_id)` immediately rather than waiting for debounce submission. A later Tick submits the same ID when its deadline is reached.
 
-- [ ] Change the job boundary to owned data:
+- [x] Change the job boundary to owned data:
 
 ```rust
 pub(super) struct PreviewJob {
@@ -548,7 +548,7 @@ pub(super) struct PreviewResult {
 
 The worker constructs `ExecutionRequest` with `ExecutionPolicy::AllowBinary` and `TUI_OUTPUT_LIMIT`.
 
-- [ ] Add `AtomicU64 latest_request_id` to the existing worker shared state. `submit` stores the ID and replaces the one pending job; `cancel` stores the ID and clears pending. Pass this predicate to `execute_report`:
+- [x] Add `AtomicU64 latest_request_id` to the existing worker shared state. `submit` stores the ID and replaces the one pending job; `cancel` stores the ID and clears pending. Pass this predicate to `execute_report`:
 
 ```rust
 let request_id = job.request_id;
@@ -557,7 +557,7 @@ let report = execute_report(request, || {
 });
 ```
 
-- [ ] Add failing worker tests proving:
+- [x] Add failing worker tests proving:
 
   - a pending old job is replaced, not queued;
   - cancellation before execution returns no applicable old result;
@@ -566,7 +566,7 @@ let report = execute_report(request, || {
   - worker Drop updates the latest ID, clears pending work and returns without joining a running synchronous transform; the detached worker exits itself after the current step;
   - Trace, status and user-visible errors never carry input or output bodies.
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cargo test tui::
@@ -576,7 +576,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 Expected result: state and worker tests pass; no TUI transform executes on the event-loop thread.
 
-- [ ] Keep the verified Task 3–4 changes uncommitted and continue directly to Task 5. Tasks 3–7 are one user-visible workbench change and will be committed with their synchronized documentation in Task 7.
+- [x] Keep the verified Task 3–4 changes uncommitted and continue directly to Task 5. Tasks 3–7 are one user-visible workbench change and will be committed with their synchronized documentation in Task 7.
 
 ---
 
@@ -597,7 +597,7 @@ Expected result: state and worker tests pass; no TUI transform executes on the e
 - Consume: current App state and terminal `Rect`
 - Produce: App Bar, optional Navigation/Step Summary, content panes and Context Bar
 
-- [ ] Add failing TestBackend boundary tests at widths 120, 119, 90, 89, 40 and 39, and heights 16, 15, 13, 11, 10 and 9.
+- [x] Add failing TestBackend boundary tests at widths 120, 119, 90, 89, 40 and 39, and heights 16, 15, 13, 11, 10 and 9.
 
 Expected assertions:
 
@@ -607,7 +607,7 @@ Expected assertions:
   - width 39 or height 9 shows only `Increase terminal size`;
   - height 15 hides Step Summary, height 13 also hides Navigation details, height 11 shows one focused pane, and every visible bordered pane retains at least three content rows.
 
-- [ ] Define the four width modes without an additional layout trait:
+- [x] Define the four width modes without an additional layout trait:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -627,7 +627,7 @@ struct ChromeVisibility {
 }
 ```
 
-- [ ] Implement the pure width calculation:
+- [x] Implement the pure width calculation:
 
 ```rust
 fn width_mode(area: Rect) -> WidthMode {
@@ -661,7 +661,7 @@ fn chrome_visibility(height: u16) -> ChromeVisibility {
 }
 ```
 
-- [ ] Apply this deterministic height policy:
+- [x] Apply this deterministic height policy:
 
   - height `>= 16`: App Bar, Navigation, Step Summary, all eligible panes and full Context Bar;
   - height `14..=15`: hide Step Summary;
@@ -669,19 +669,19 @@ fn chrome_visibility(height: u16) -> ChromeVisibility {
   - height `10..=11`: render App Bar, one focused pane and minimal Context Bar;
   - height `< 10`: render only resize guidance.
 
-- [ ] Render Wide and Medium as Pipeline on the left and Input 42%/Output 58% vertically on the right. Respect `zoom` by giving the focused Pipeline or Output the whole content area. Narrow always renders the focused pane only.
+- [x] Render Wide and Medium as Pipeline on the left and Input 42%/Output 58% vertically on the right. Respect `zoom` by giving the focused Pipeline or Output the whole content area. Narrow always renders the focused pane only.
 
-- [ ] When both right panes are visible, clamp each bordered pane to at least five rows before applying the 42%/58% preference. At height 12 this yields 5/5 rows and therefore three content rows per pane; at larger heights the ratio resumes naturally.
+- [x] When both right panes are visible, clamp each bordered pane to at least five rows before applying the 42%/58% preference. At height 12 this yields 5/5 rows and therefore three content rows per pane; at larger heights the ratio resumes naturally.
 
-- [ ] Render Output from `effective_view` and the bounded View functions. Its title always contains `FINAL` or `STEP NN` and the configured View. Failed Smart shows Trace; explicitly pinned incompatible views show safe guidance rather than old or partial bytes.
+- [x] Render Output from `effective_view` and the bounded View functions. Its title always contains `FINAL` or `STEP NN` and the configured View. Failed Smart shows Trace; explicitly pinned incompatible views show safe guidance rather than old or partial bytes.
 
-- [ ] Render Pipeline rows with selected state, enabled state, display name and Trace status. Wide may show byte-size changes; Medium hides them first. Disabled, failed, cancelled and not-run states must remain distinguishable as text.
+- [x] Render Pipeline rows with selected state, enabled state, display name and Trace status. Wide may show byte-size changes; Medium hides them first. Disabled, failed, cancelled and not-run states must remain distinguishable as text.
 
-- [ ] Use terminal-default background and the current limited 16-color styles. In color mode pair stable-width Unicode marks with `OK`, `ERROR`, `OFF`, `RUNNING` text. Under `NO_COLOR`, render only textual states and selection markers; do not use RGB colors or emoji.
+- [x] Use terminal-default background and the current limited 16-color styles. In color mode pair stable-width Unicode marks with `OK`, `ERROR`, `OFF`, `RUNNING` text. Under `NO_COLOR`, render only textual states and selection markers; do not use RGB colors or emoji.
 
-- [ ] Give current error, cancellation and clipboard status precedence over contextual key hints in every width. Reduced-height Context Bars may omit help but must not omit an active error.
+- [x] Give current error, cancellation and clipboard status precedence over contextual key hints in every width. Reduced-height Context Bars may omit help but must not omit an active error.
 
-- [ ] Add focused render tests for:
+- [x] Add focused render tests for:
 
   - valid text, binary Smart Hex and failure Smart Trace;
   - pinned Text over binary displays `Switch to Hex view`;
@@ -693,7 +693,7 @@ fn chrome_visibility(height: u16) -> ChromeVisibility {
   - escaped ANSI, OSC 52, NUL and C1 bytes never appear as terminal control sequences;
   - dirty rendering still redraws only after state changes.
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cargo test tui::
@@ -702,7 +702,7 @@ cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
 
 Expected result: layout boundaries and one-redraw behavior pass.
 
-- [ ] Keep the verified Task 5 changes uncommitted and continue directly to Task 6. Tasks 5–7 form one user-visible workbench change, so their code and synchronized product documentation must land in the same commit.
+- [x] Keep the verified Task 5 changes uncommitted and continue directly to Task 6. Tasks 5–7 form one user-visible workbench change, so their code and synchronized product documentation must land in the same commit.
 
 ---
 
@@ -723,9 +723,9 @@ Expected result: layout boundaries and one-redraw behavior pass.
 - Keep Palette search: case-insensitive substring over display name and public ID
 - Keep Inspector read-only
 
-- [ ] Add failing key tests that prove Input receives ordinary `1`–`4`, `?`, `z`, `a`, `d`, `j`, `k`, `p`, `f`, `v` and `y` as editor input instead of global commands.
+- [x] Add failing key tests that prove Input receives ordinary `1`–`4`, `?`, `z`, `a`, `d`, `j`, `k`, `p`, `f`, `v` and `y` as editor input instead of global commands.
 
-- [ ] Add failing global tests for `Tab`, `Shift+Tab`, `Ctrl+P`, `F1`, `Ctrl+Q`, `Ctrl+C` and the exact `Esc` priority:
+- [x] Add failing global tests for `Tab`, `Shift+Tab`, `Ctrl+P`, `F1`, `Ctrl+Q`, `Ctrl+C` and the exact `Esc` priority:
 
 ```text
 open modal -> Esc closes modal
@@ -734,9 +734,9 @@ no modal + no zoom + running request -> Esc invalidates request and shows Cancel
 otherwise Esc does nothing destructive
 ```
 
-- [ ] Add failing Pipeline tests for arrows and `j`/`k`, `Space`, Shift+arrows and `J`/`K`, `Delete`/`d`, `Enter`, `a` and `z`. Pipeline edits must schedule Final; selection movement alone must not.
+- [x] Add failing Pipeline tests for arrows and `j`/`k`, `Space`, Shift+arrows and `J`/`K`, `Delete`/`d`, `Enter`, `a` and `z`. Pipeline edits must schedule Final; selection movement alone must not.
 
-- [ ] Add failing Output tests for:
+- [x] Add failing Output tests for:
 
   - `v` and `V` cycling `Smart -> Text -> Hex -> Trace`;
   - `p` requesting the selected Pipeline step immediately;
@@ -745,15 +745,15 @@ otherwise Esc does nothing destructive
   - arrows, PageUp/PageDown, Home and End changing only bounded byte/row offsets;
   - `z` toggling Output zoom.
 
-- [ ] Extend the existing 8-item Palette, not its search algorithm. Its detail region displays the selected transform’s public ID and `Text input` or `Bytes accepted`. Label both existing registry strings as `CLI description` and `CLI behavior`, then show `TUI result: bytes; Smart uses Text or Hex` as the primary TUI output hint so decoder wording cannot imply that TUI discards binary bytes. Do not change CLI registry/help strings or add fuzzy search, recent items, aliases or categories.
+- [x] Extend the existing 8-item Palette, not its search algorithm. Its detail region displays the selected transform’s public ID and `Text input` or `Bytes accepted`. Label both existing registry strings as `CLI description` and `CLI behavior`, then show `TUI result: bytes; Smart uses Text or Hex` as the primary TUI output hint so decoder wording cannot imply that TUI discards binary bytes. Do not change CLI registry/help strings or add fuzzy search, recent items, aliases or categories.
 
-- [ ] Implement a read-only Inspector that renders selected step name, ID, input condition, runtime status, input/output sizes, elapsed time and safe error. It must not contain an option form because no transform has options.
+- [x] Implement a read-only Inspector that renders selected step name, ID, input condition, runtime status, input/output sizes, elapsed time and safe error. It must not contain an option form because no transform has options.
 
-- [ ] Implement context Help as one modal whose body is selected from the current pane. F1 always opens it; `?` opens it only outside Input. Include the actual keys from the approved design and keep the UI language English.
+- [x] Implement context Help as one modal whose body is selected from the current pane. F1 always opens it; `?` opens it only outside Input. Include the actual keys from the approved design and keep the UI language English.
 
-- [ ] Render Zoom by reusing the existing panel render function with a larger `Rect`; do not create separate zoom widgets or state copies.
+- [x] Render Zoom by reusing the existing panel render function with a larger `Rect`; do not create separate zoom widgets or state copies.
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cargo test tui::
@@ -762,7 +762,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 Expected result: all context-sensitive keys and overlays pass without changing Input editing semantics.
 
-- [ ] Keep the verified Task 5–6 changes uncommitted and continue directly to Task 7.
+- [x] Keep the verified Task 5–6 changes uncommitted and continue directly to Task 7.
 
 ---
 
@@ -794,7 +794,7 @@ Expected result: all context-sensitive keys and overlays pass without changing I
 - Keep: dangerous UTF-8 control confirmation
 - Reject: Trace, failure, cancellation, stale and missing Artifact copy
 
-- [ ] Add failing tests proving copy format depends on Artifact validity, not the current View:
+- [x] Add failing tests proving copy format depends on Artifact validity, not the current View:
 
 ```rust
 #[test]
@@ -808,7 +808,7 @@ fn binary_artifact_copies_as_lowercase_hex_in_every_view() {
 
 Add valid Unicode exact-copy, a binary Artifact under pinned Text, Trace/error/no-result rejection, old-result rejection and control-confirmation tests.
 
-- [ ] Define the payload locally in `state.rs`; it is not a public clipboard abstraction:
+- [x] Define the payload locally in `state.rs`; it is not a public clipboard abstraction:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -824,7 +824,7 @@ pub(super) struct ClipboardPayload {
 }
 ```
 
-- [ ] Implement checked allocation without `format!` in the byte loop:
+- [x] Implement checked allocation without `format!` in the byte loop:
 
 ```rust
 fn checked_hex_len(byte_len: usize) -> Option<usize> {
@@ -846,9 +846,9 @@ fn binary_hex(bytes: &[u8]) -> Result<String, ()> {
 
 For UTF-8, reserve exactly the source length and `push_str` the validated original. Do not escape, normalize or use a lossy conversion for clipboard data.
 
-- [ ] Define `Modal::UnsafeCopyConfirm { payload: ClipboardPayload }` and store the already-built UTF-8 payload there so confirmation does not allocate a second full copy. On approval, move the payload into `Effect::Copy`.
+- [x] Define `Modal::UnsafeCopyConfirm { payload: ClipboardPayload }` and store the already-built UTF-8 payload there so confirmation does not allocate a second full copy. On approval, move the payload into `Effect::Copy`.
 
-- [ ] Change the clipboard boundary to consume the String:
+- [x] Change the clipboard boundary to consume the String:
 
 ```rust
 fn set_clipboard_text(
@@ -867,11 +867,11 @@ fn set_clipboard_text(
 }
 ```
 
-- [ ] In `run_loop`, save `payload.kind`, move `payload.text` into `set_clipboard_text`, then emit `ClipboardFinished { kind, result }`. Show `Copied` for UTF-8 and `Copied as Hex` for binary only after a successful operating-system write. Allocation or platform clipboard failure becomes a safe status message; it must not clear or mutate Input, Pipeline or Artifact.
+- [x] In `run_loop`, save `payload.kind`, move `payload.text` into `set_clipboard_text`, then emit `ClipboardFinished { kind, result }`. Show `Copied` for UTF-8 and `Copied as Hex` for binary only after a successful operating-system write. Allocation or platform clipboard failure becomes a safe status message; it must not clear or mutate Input, Pipeline or Artifact.
 
-- [ ] Test arithmetic overflow with `checked_hex_len(usize::MAX) == None`, App handling of clipboard failure, and safe state retention. Use the existing real-platform smoke paths instead of introducing a mock clipboard trait.
+- [x] Test arithmetic overflow with `checked_hex_len(usize::MAX) == None`, App handling of clipboard failure, and safe state retention. Use the existing real-platform smoke paths instead of introducing a mock clipboard trait.
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cargo test tui::
@@ -880,9 +880,9 @@ cargo test --all-targets --all-features
 
 Expected result: UTF-8 text is exact, binary text is lowercase Hex, and old/error results cannot be copied.
 
-- [ ] Request one independent component review covering the strict/allow-binary engine, cancellation timing, `p`/`f`, terminal escaping, clipboard ownership/allocation, stale-result handling and input preservation. Resolve important findings before integration smoke tests.
+- [x] Request one independent component review covering the strict/allow-binary engine, cancellation timing, `p`/`f`, terminal escaping, clipboard ownership/allocation, stale-result handling and input preservation. Resolve important findings before integration smoke tests.
 
-- [ ] Before committing the completed user-visible workbench, synchronize its actual behavior in README, both PRDs and the approved design:
+- [x] Before committing the completed user-visible workbench, synchronize its actual behavior in README, both PRDs and the approved design:
 
   - Pipeline/Input/Output layout, responsive modes and focus order;
   - Smart/Text/Hex/Trace, selected-stage `p`, final `f` and binary Hex copy;
@@ -893,7 +893,7 @@ Expected result: UTF-8 text is exact, binary text is lowercase Hex, and old/erro
 
 Keep the historical verification records unchanged and label platform-wide verification as pending until Tasks 8–9 finish.
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add src/tui.rs src/tui README.md docs/prd/init-prd.md docs/prd/v0.2-prd.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
@@ -915,14 +915,14 @@ git commit -m "feat(tui): 바이트 작업판 고도화"
 - Change selected clipboard fixture: valid UTF-8 Hex text to a raw binary Base64 decode result
 - Produce expected display `FF` and clipboard text `ff`
 
-- [ ] Add CLI integration assertions before changing the shell fixture:
+- [x] Add CLI integration assertions before changing the shell fixture:
 
   - Base64 `/w==`, URL `%FF` and Hex `ff` each exit `4`, write no stdout and preserve the existing `InvalidUtf8Output` rendering.
   - 8 IDs, help/list/version, `doop tui` and rejection of additional TUI arguments remain unchanged.
 
 Keep dangerous valid UTF-8 control-byte TTY refusal and redirected raw-byte preservation in the existing `src/cli.rs` unit tests and Expect shell path, where a real pseudoterminal exists. Do not try to emulate a TTY with the piped stdout used by `tests/cli.rs`.
 
-- [ ] Split the current Expect helper into text and binary preparation:
+- [x] Split the current Expect helper into text and binary preparation:
 
 ```tcl
 proc prepare_text_preview {} {
@@ -947,11 +947,11 @@ proc prepare_binary_preview {} {
 }
 ```
 
-- [ ] Keep normal resize and discard-confirmation checks on `prepare_text_preview`. Use `prepare_binary_preview`, `Tab` to Output and `y` for every clipboard mode. Change the externally verified clipboard value to lowercase `ff`.
+- [x] Keep normal resize and discard-confirmation checks on `prepare_text_preview`. Use `prepare_binary_preview`, `Tab` to Output and `y` for every clipboard mode. Change the externally verified clipboard value to lowercase `ff`.
 
-- [ ] Update exact screen expectations from Preview/Chain and old focus order to Output/Pipeline and `Input -> Output -> Pipeline`. Continue asserting bracketed-paste disable, alternate-screen exit and terminal mode equality on normal, interrupt and clipboard paths.
+- [x] Update exact screen expectations from Preview/Chain and old focus order to Output/Pipeline and `Input -> Output -> Pipeline`. Continue asserting bracketed-paste disable, alternate-screen exit and terminal mode equality on normal, interrupt and clipboard paths.
 
-- [ ] Run local Bash and Zsh smoke:
+- [x] Run local Bash and Zsh smoke:
 
 ```bash
 bash tests/shell-smoke.sh
@@ -960,7 +960,7 @@ zsh tests/shell-smoke.sh
 
 Expected result: both pass on the current host.
 
-- [ ] When the corresponding local environment is available, run the existing protected clipboard modes without weakening backup/restore:
+- [x] When the corresponding local environment is available, run the existing protected clipboard modes without weakening backup/restore:
 
 ```bash
 DOOP_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
@@ -972,7 +972,7 @@ DOOP_SMOKE_CLIPBOARD_MODE=wayland bash tests/shell-smoke.sh
 
 Run Wayland only when the current `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` identify a usable session; do not replace the session display name with a hard-coded value. Record unavailable environments as unverified and never report them as passed.
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add tests/cli.rs tests/shell-smoke.sh
@@ -993,11 +993,11 @@ git commit -m "test(tui): 바이너리 작업판 경계"
 
 **Interfaces:** 문서가 실제 구현, 시험 결과와 공개 계약만 설명한다.
 
-- [ ] Compare the Task 7 documentation commit against the current code and approved design. Keep all CLI-only UTF-8, error and exit-code requirements unchanged; any behavioral mismatch is an implementation or documentation defect, not a verification-note exception.
+- [x] Compare the Task 7 documentation commit against the current code and approved design. Keep all CLI-only UTF-8, error and exit-code requirements unchanged; any behavioral mismatch is an implementation or documentation defect, not a verification-note exception.
 
-- [ ] Run an independent whole-diff review from design commit `691951a` through HEAD for requirement coverage, CLI compatibility, concurrency, terminal/clipboard security, bounded memory and over-engineering. Fix every important finding with a focused regression test, synchronize any affected documentation in that fix commit, and repeat the complete suite below.
+- [x] Run an independent whole-diff review from design commit `691951a` through HEAD for requirement coverage, CLI compatibility, concurrency, terminal/clipboard security, bounded memory and over-engineering. Fix every important finding with a focused regression test, synchronize any affected documentation in that fix commit, and repeat the complete suite below.
 
-- [ ] Run the complete candidate verification suite while the documentation record is still uncommitted. Use `--allow-dirty` only for this pre-commit package check and use a fresh temporary install root:
+- [x] Run the complete candidate verification suite while the documentation record is still uncommitted. Use `--allow-dirty` only for this pre-commit package check and use a fresh temporary install root:
 
 ```bash
 cargo fmt --all -- --check
@@ -1016,11 +1016,11 @@ git diff --check
 
 Expected result: every available check passes, the release measurement reports one dirty redraw, package/install reports `doop 0.2.0`, and no GitHub Actions file exists.
 
-- [ ] Add a new Task 9 verification record to README for this workbench candidate, naming its execution date and exact candidate commit SHA and listing only commands and platform paths actually run. Do not alter the historical 2026-07-30 records or claim unavailable paths passed.
+- [x] Add a new Task 9 verification record to README for this workbench candidate, naming its execution date and exact candidate commit SHA and listing only commands and platform paths actually run. Do not alter the historical 2026-07-30 records or claim unavailable paths passed.
 
-- [ ] Only after the candidate suite passes, evaluate that new candidate-specific record. If it contains actual macOS and Linux results for Bash and Zsh, real TUI paths and each platform's required clipboard path, change the design status to `구현 완료` and replace conditional precedence wording in both PRDs. Otherwise keep the status `기능 구현 완료·플랫폼 통합 검증 대기` and preserve the conditional precedence.
+- [x] Only after the candidate suite passes, evaluate that new candidate-specific record. If it contains actual macOS and Linux results for Bash and Zsh, real TUI paths and each platform's required clipboard path, change the design status to `구현 완료` and replace conditional precedence wording in both PRDs. Otherwise keep the status `기능 구현 완료·플랫폼 통합 검증 대기` and preserve the conditional precedence.
 
-- [ ] Re-index the significantly changed module tree using the `ccc` skill:
+- [x] Re-index the significantly changed module tree using the `ccc` skill:
 
 ```bash
 ccc index
@@ -1028,9 +1028,9 @@ ccc index
 
 If the project index is missing, run `ccc init`, then `ccc index`. Confirm the index includes `src/tui/state.rs`, `worker.rs`, `render.rs` and `views.rs`.
 
-- [ ] Confirm `git status --short --branch` contains only the expected verification-record and plan-document changes, with no generated artifacts.
+- [x] Confirm `git status --short --branch` contains only the expected verification-record and plan-document changes, with no generated artifacts.
 
-- [ ] Commit documentation:
+- [x] Commit documentation:
 
 ```bash
 git add README.md docs/prd/init-prd.md docs/prd/v0.2-prd.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md docs/superpowers/plans/2026-07-31-doop-tui-workbench.md
@@ -1044,12 +1044,12 @@ Expected result: the documentation commit succeeds and the final status is clean
 
 ## Final Self-Review Checklist
 
-- [ ] Every approved section of the design maps to at least one task and one runnable check.
-- [ ] No task adds a new dependency, future-only abstraction, options form, cache, plugin, file I/O or CI.
-- [ ] Every type referenced by a task is defined in this plan before use.
-- [ ] Public CLI behavior has explicit regression coverage at the Pipeline, integration and shell boundaries.
-- [ ] Text, Hex, Trace, clipboard and worker paths have bounded-memory and stale-result checks.
-- [ ] Search the plan for placeholders and remove them:
+- [x] Every approved section of the design maps to at least one task and one runnable check.
+- [x] No task adds a new dependency, future-only abstraction, options form, cache, plugin, file I/O or CI.
+- [x] Every type referenced by a task is defined in this plan before use.
+- [x] Public CLI behavior has explicit regression coverage at the Pipeline, integration and shell boundaries.
+- [x] Text, Hex, Trace, clipboard and worker paths have bounded-memory and stale-result checks.
+- [x] Search the plan for placeholders and remove them:
 
 ```bash
 rg --color=never -n "TO[D]O|FIX[M]E|T[B]D|나중[에] 구현|적절[히] 처리" docs/superpowers/plans/2026-07-31-doop-tui-workbench.md
@@ -1057,13 +1057,13 @@ rg --color=never -n "TO[D]O|FIX[M]E|T[B]D|나중[에] 구현|적절[히] 처리"
 
 Expected result: no matches.
 
-- [ ] Inspect every literal ellipsis separately. The only allowed match is the intentional 16-byte ASCII fixture in Task 3:
+- [x] Inspect every literal ellipsis separately. The only allowed match is the intentional 16-byte ASCII fixture in Task 3:
 
 ```bash
 rg --color=never -n "\\.{3}" docs/superpowers/plans/2026-07-31-doop-tui-workbench.md
 ```
 
-- [ ] Confirm the plan itself is format-clean and tracked:
+- [x] Confirm the plan itself is format-clean and tracked:
 
 ```bash
 git diff --check

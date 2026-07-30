@@ -85,8 +85,8 @@ target/install-check/bin/doop --version
 렌더링 경로의 실제 측정값만 출력합니다. 셸 점검에는 `expect`가 필요하며
 호출한 Bash 또는 Zsh 자체를 의사 터미널 안에서 실행합니다.
 
-고도화한 작업판의 macOS·Linux 셸 및 실제 클립보드 통합 검증은 다음
-로컬 검증 작업에서 수행할 예정입니다.
+고도화한 작업판의 macOS·Linux 셸 및 실제 클립보드 통합 검증 결과는
+아래 2026-07-31 기록에 정리합니다.
 
 ### 2026-07-30 v0.1 릴리스 검증 기록(역사 기록)
 
@@ -212,6 +212,66 @@ headless sway를 실행해 `wayland-1` 유닉스 소켓을 확인했고, 자료 
 `cargo-audit 0.22.2`는 최신 RustSec 데이터베이스를 가져와 자문 1,173건을
 불러왔고 `Cargo.lock`의 146개 의존성을 검사했다. 알려진 취약점과 경고는
 각각 0건이었다. 위 v0.2 검증 범위의 미검증 항목은 없다.
+
+### 2026-07-31 TUI 작업판 검증 기록
+
+검증 기준 코드는
+`2c1b869e36214337ba0c1e817c326562d0ceef38`이다. macOS 호스트와 Linux
+컨테이너 모두 이 커밋을 사용했고, 컨테이너에는 저장소를 읽기 전용으로
+연결했다.
+
+| 환경 | 검증 결과 |
+|---|---|
+| macOS 26.5.2(25F84), Darwin 25.5.0, arm64 | Rust·Cargo 1.97.1, Bash 3.2.57, Zsh 5.9, Expect 5.45에서 전체 검사와 실제 TUI 통과 |
+| Debian 12 arm64, `rust:1.97.1-bookworm` | 형식·Clippy·전체 시험, Bash 5.2의 클립보드 미지원 경로와 Zsh 5.9의 Xvfb/X11 실제 복사 통과 |
+| Wayland | 현재 사용할 수 있는 세션이 없어 미검증 |
+
+macOS에서 다음 명령을 실행했다.
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
+RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features
+cargo package --locked --allow-dirty
+cargo install --locked --offline --path . --root /private/tmp/doop-install.VdwgPC
+/private/tmp/doop-install.VdwgPC/bin/doop --version
+bash tests/shell-smoke.sh
+zsh tests/shell-smoke.sh
+DOOP_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
+DOOP_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
+git diff --check
+```
+
+형식과 경고 금지 린트, 단위 시험 216개와 CLI 통합 시험 15개가 통과했고
+릴리스 전용 렌더링 측정 1개도 별도로 통과했다. 측정 결과는
+`iterations=500, unconditional=19.365834ms, dirty=39.667µs, redraws=1`이었다.
+문서 빌드, 패키징, 오프라인 잠금 설치와 `doop 0.2.0` 실행도 통과했다.
+macOS 실제 복사는 Bash와 Zsh에서 각각 원문 백업, 제품 복사의
+`changeCount` 정확히 1 증가, 복사값 확인, 소유권 재확인과 원문 복원을
+모두 검증했다. 샌드박스 내부의 첫 시도는 붙여넣기 보드 서비스에 접근하지
+못해 쓰기 전 사전 점검에서 중단됐다.
+
+Debian 컨테이너에서는 다음 경로를 실행했다.
+
+```bash
+cargo fmt --all --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-targets --all-features --locked
+env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR \
+  DOOP_SMOKE_CLIPBOARD_MODE=unavailable bash tests/shell-smoke.sh
+Xvfb :99 -screen 0 1280x720x24 -nolisten tcp -ac \
+  >/tmp/doop-xvfb.log 2>&1 &
+DISPLAY=:99 DOOP_SMOKE_CLIPBOARD_MODE=x11 zsh tests/shell-smoke.sh
+```
+
+Linux에서도 단위 시험 216개와 CLI 통합 시험 15개가 통과했다. 실제
+의사 터미널에서 클립보드가 없을 때 `Clipboard unavailable`을 표시하고
+안전하게 계속 동작하는 경로와 X11에 소문자 `ff`를 복사해 `xclip`으로
+정확히 읽는 경로를 확인했다. 두 셸 모두 대체 화면, bracketed paste와
+터미널 모드를 복원했다. Linux amd64, 실제 데스크톱 창 관리자와 Wayland는
+이 기록의 검증 범위에 포함하지 않았으며 GitHub Actions는 사용하지 않았다.
 
 자동 완성과 배포 패키지는 v0.2 범위에 포함하지 않습니다.
 GitHub Actions와 다른 CI 설정은 사용하지 않습니다.
