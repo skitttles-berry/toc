@@ -114,37 +114,27 @@ impl Drop for TerminalSession {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Pane {
+enum Pane {
     Input,
     Preview,
     Chain,
 }
 
-pub enum PreviewState {
+enum PreviewState {
     Idle,
-    Debouncing {
-        deadline: Instant,
-    },
-    Running {
-        generation: u64,
-    },
-    Ready {
-        generation: u64,
-        document: PreviewDocument,
-    },
-    Error {
-        generation: u64,
-        message: String,
-    },
+    Debouncing { deadline: Instant },
+    Running,
+    Ready { document: PreviewDocument },
+    Error { message: String },
 }
 
-pub struct PreviewDocument {
-    pub raw: Arc<str>,
-    pub line_starts: Vec<usize>,
+struct PreviewDocument {
+    raw: Arc<str>,
+    line_starts: Vec<usize>,
 }
 
 impl PreviewDocument {
-    pub fn new(raw: String) -> Self {
+    fn new(raw: String) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(raw.match_indices('\n').map(|(index, _)| index + 1));
         Self {
@@ -163,24 +153,24 @@ impl PreviewDocument {
     }
 }
 
-pub enum Modal {
+enum Modal {
     TransformPicker { query: String, selected: usize },
     QuitConfirm,
     UnsafeCopyConfirm,
 }
 
-pub struct PreviewJob {
-    pub generation: u64,
-    pub input: Vec<u8>,
-    pub steps: Vec<TransformStep>,
+struct PreviewJob {
+    generation: u64,
+    input: Vec<u8>,
+    steps: Vec<TransformStep>,
 }
 
-pub struct PreviewResult {
-    pub generation: u64,
-    pub result: Result<Vec<u8>, PipelineError>,
+struct PreviewResult {
+    generation: u64,
+    result: Result<Vec<u8>, PipelineError>,
 }
 
-pub enum AppEvent {
+enum AppEvent {
     Key(KeyEvent, Instant),
     Paste(String, Instant),
     Tick(Instant),
@@ -189,30 +179,30 @@ pub enum AppEvent {
     Resize,
 }
 
-pub enum Effect {
+enum Effect {
     Submit(PreviewJob),
     Copy(Arc<str>),
     Quit(i32),
 }
 
-pub struct App {
-    pub textarea: TextArea<'static>,
-    pub focus: Pane,
-    pub steps: Vec<TransformStep>,
-    pub selected_step: usize,
-    pub preview: PreviewState,
-    pub generation: u64,
-    pub modal: Option<Modal>,
-    pub status: Option<String>,
-    pub preview_scroll: usize,
-    pub no_color: bool,
+struct App {
+    textarea: TextArea<'static>,
+    focus: Pane,
+    steps: Vec<TransformStep>,
+    selected_step: usize,
+    preview: PreviewState,
+    generation: u64,
+    modal: Option<Modal>,
+    status: Option<String>,
+    preview_scroll: usize,
+    no_color: bool,
     input_limit: usize,
     input_line_limit: usize,
     dirty: bool,
 }
 
 impl App {
-    pub fn new(now: Instant, no_color: bool) -> Self {
+    fn new(now: Instant, no_color: bool) -> Self {
         Self::new_with_input_limits(now, no_color, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT)
     }
 
@@ -260,7 +250,7 @@ impl App {
         }
     }
 
-    pub fn input_text(&self) -> String {
+    fn input_text(&self) -> String {
         self.textarea.lines().join("\n")
     }
 
@@ -340,7 +330,7 @@ impl App {
         self.mark_dirty();
     }
 
-    pub fn insert_paste(&mut self, text: &str, now: Instant) -> bool {
+    fn insert_paste(&mut self, text: &str, now: Instant) -> bool {
         let retained = self.input_len().saturating_sub(self.selected_input_len());
         let remaining = self.input_limit.saturating_sub(retained);
         if text.len() > remaining.saturating_mul(2) {
@@ -365,7 +355,7 @@ impl App {
         modified
     }
 
-    pub fn add_transform(&mut self, id: &str, now: Instant) -> bool {
+    fn add_transform(&mut self, id: &str, now: Instant) -> bool {
         if self.steps.len() == MAX_STEPS {
             self.set_status(Some("Chain limit reached".to_string()));
             return false;
@@ -382,7 +372,7 @@ impl App {
         true
     }
 
-    pub fn toggle_selected(&mut self, now: Instant) {
+    fn toggle_selected(&mut self, now: Instant) {
         let Some(step) = self.steps.get_mut(self.selected_step) else {
             return;
         };
@@ -390,7 +380,7 @@ impl App {
         self.changed(now);
     }
 
-    pub fn move_selected(&mut self, direction: i8, now: Instant) {
+    fn move_selected(&mut self, direction: i8, now: Instant) {
         let next = match direction {
             -1 if self.selected_step > 0 => self.selected_step - 1,
             1 if self.selected_step + 1 < self.steps.len() => self.selected_step + 1,
@@ -401,7 +391,7 @@ impl App {
         self.changed(now);
     }
 
-    pub fn delete_selected(&mut self, now: Instant) {
+    fn delete_selected(&mut self, now: Instant) {
         if self.steps.get(self.selected_step).is_none() {
             return;
         }
@@ -410,11 +400,12 @@ impl App {
         self.changed(now);
     }
 
-    pub fn can_copy(&self) -> bool {
+    #[cfg(test)]
+    fn can_copy(&self) -> bool {
         matches!(self.preview, PreviewState::Ready { .. })
     }
 
-    pub fn open_picker(&mut self) {
+    fn open_picker(&mut self) {
         self.modal = Some(Modal::TransformPicker {
             query: String::new(),
             selected: 0,
@@ -422,7 +413,7 @@ impl App {
         self.mark_dirty();
     }
 
-    pub fn picker_insert(&mut self, character: char) {
+    fn picker_insert(&mut self, character: char) {
         if let Some(Modal::TransformPicker { query, selected }) = &mut self.modal {
             query.push(character);
             *selected = 0;
@@ -430,7 +421,7 @@ impl App {
         }
     }
 
-    pub fn filtered_transforms(&self) -> Vec<&'static TransformDefinition> {
+    fn filtered_transforms(&self) -> Vec<&'static TransformDefinition> {
         let query = match &self.modal {
             Some(Modal::TransformPicker { query, .. }) => query.to_ascii_lowercase(),
             _ => String::new(),
@@ -445,7 +436,7 @@ impl App {
             .collect()
     }
 
-    pub fn confirm_picker(&mut self, now: Instant) {
+    fn confirm_picker(&mut self, now: Instant) {
         let selected = match self.modal {
             Some(Modal::TransformPicker { selected, .. }) => selected,
             _ => return,
@@ -461,9 +452,9 @@ impl App {
         }
     }
 
-    pub fn request_copy(&mut self) -> Vec<Effect> {
+    fn request_copy(&mut self) -> Vec<Effect> {
         let Some((raw, unsafe_raw)) = (match &self.preview {
-            PreviewState::Ready { document, .. } => Some((
+            PreviewState::Ready { document } => Some((
                 Arc::clone(&document.raw),
                 crate::error::contains_dangerous_control(&document.raw),
             )),
@@ -480,21 +471,21 @@ impl App {
         }
     }
 
-    pub fn confirm_unsafe_copy(&mut self) -> Vec<Effect> {
+    fn confirm_unsafe_copy(&mut self) -> Vec<Effect> {
         if !matches!(self.modal, Some(Modal::UnsafeCopyConfirm)) {
             return Vec::new();
         }
         self.modal = None;
         self.mark_dirty();
         match &self.preview {
-            PreviewState::Ready { document, .. } => {
+            PreviewState::Ready { document } => {
                 vec![Effect::Copy(Arc::clone(&document.raw))]
             }
             _ => Vec::new(),
         }
     }
 
-    pub fn request_quit(&mut self) -> Vec<Effect> {
+    fn request_quit(&mut self) -> Vec<Effect> {
         if self.input_len() == 0 {
             vec![Effect::Quit(0)]
         } else {
@@ -504,7 +495,7 @@ impl App {
         }
     }
 
-    pub fn force_interrupt(&mut self) -> Vec<Effect> {
+    fn force_interrupt(&mut self) -> Vec<Effect> {
         self.modal = None;
         self.mark_dirty();
         vec![Effect::Quit(130)]
@@ -518,7 +509,7 @@ impl App {
             return Vec::new();
         }
         let generation = self.generation;
-        self.preview = PreviewState::Running { generation };
+        self.preview = PreviewState::Running;
         self.mark_dirty();
         vec![Effect::Submit(PreviewJob {
             generation,
@@ -534,16 +525,13 @@ impl App {
         self.preview = match result.result {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => PreviewState::Ready {
-                    generation: result.generation,
                     document: PreviewDocument::new(text),
                 },
                 Err(_) => PreviewState::Error {
-                    generation: result.generation,
                     message: "Transform returned invalid UTF-8".to_string(),
                 },
             },
             Err(error) => PreviewState::Error {
-                generation: result.generation,
                 message: crate::error::render_pipeline_error(&error),
             },
         };
@@ -693,7 +681,7 @@ impl App {
 
     fn handle_preview_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         let line_count = match &self.preview {
-            PreviewState::Ready { document, .. } => document.line_starts.len(),
+            PreviewState::Ready { document } => document.line_starts.len(),
             _ => 0,
         };
         let last_line = line_count.saturating_sub(1);
@@ -782,7 +770,7 @@ impl App {
         }
     }
 
-    pub fn handle_event(&mut self, event: AppEvent) -> Vec<Effect> {
+    fn handle_event(&mut self, event: AppEvent) -> Vec<Effect> {
         match event {
             AppEvent::Tick(now) => self.tick(now),
             AppEvent::PreviewFinished(result) => {
@@ -904,14 +892,14 @@ fn render_preview(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let text = match &app.preview {
         PreviewState::Idle => String::new(),
         PreviewState::Debouncing { .. } => "Waiting for changes…".to_string(),
-        PreviewState::Running { .. } => "Running…".to_string(),
-        PreviewState::Ready { document, .. } => visible_safe_text(
+        PreviewState::Running => "Running…".to_string(),
+        PreviewState::Ready { document } => visible_safe_text(
             document,
             app.preview_scroll,
             inner.height as usize,
             inner.width as usize,
         ),
-        PreviewState::Error { message, .. } => crate::error::escape_external(
+        PreviewState::Error { message } => crate::error::escape_external(
             message,
             (inner.width as usize)
                 .saturating_mul(inner.height as usize)
@@ -969,7 +957,7 @@ fn preview_label(preview: &PreviewState) -> &'static str {
     match preview {
         PreviewState::Idle => "Idle",
         PreviewState::Debouncing { .. } => "Waiting",
-        PreviewState::Running { .. } => "Running",
+        PreviewState::Running => "Running",
         PreviewState::Ready { .. } => "Ready",
         PreviewState::Error { .. } => "Error",
     }
@@ -1143,7 +1131,7 @@ fn render_modal(frame: &mut Frame<'_>, app: &App) {
     }
 }
 
-pub fn render(frame: &mut Frame<'_>, app: &mut App) {
+fn render(frame: &mut Frame<'_>, app: &mut App) {
     let area = frame.area();
     if area.width < 40 || area.height < 10 {
         frame.render_widget(
@@ -1185,7 +1173,7 @@ fn draw_if_dirty<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
     Ok(true)
 }
 
-pub fn normalize_paste(input: &str) -> (String, usize) {
+fn normalize_paste(input: &str) -> (String, usize) {
     use std::fmt::Write as _;
 
     let normalized_lines = input.replace("\r\n", "\n").replace('\r', "\n");
@@ -1208,7 +1196,7 @@ struct WorkerState {
     shutdown: bool,
 }
 
-pub struct PreviewWorker {
+struct PreviewWorker {
     shared: Arc<(Mutex<WorkerState>, Condvar)>,
     results: mpsc::Receiver<PreviewResult>,
 }
@@ -1220,7 +1208,7 @@ impl Default for PreviewWorker {
 }
 
 impl PreviewWorker {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let shared = Arc::new((
             Mutex::new(WorkerState {
                 pending: None,
@@ -1258,14 +1246,14 @@ impl PreviewWorker {
         Self { shared, results }
     }
 
-    pub fn submit(&self, job: PreviewJob) {
+    fn submit(&self, job: PreviewJob) {
         let (lock, condition) = &*self.shared;
         let mut state = lock.lock().expect("preview worker lock poisoned");
         state.pending = Some(job);
         condition.notify_one();
     }
 
-    pub fn try_recv(&self) -> Option<PreviewResult> {
+    fn try_recv(&self) -> Option<PreviewResult> {
         self.results.try_recv().ok()
     }
 }
@@ -1818,7 +1806,6 @@ mod tests {
     fn unsafe_preview_requires_confirmation_before_copy_effect() {
         let mut app = App::new(now(), true);
         app.preview = PreviewState::Ready {
-            generation: 1,
             document: PreviewDocument::new("x\u{1b}[2J".to_string()),
         };
         assert!(app.request_copy().is_empty());
@@ -1838,15 +1825,13 @@ mod tests {
             deadline: start + DEBOUNCE,
         };
         assert!(app.request_copy().is_empty());
-        app.preview = PreviewState::Running { generation: 1 };
+        app.preview = PreviewState::Running;
         assert!(app.request_copy().is_empty());
         app.preview = PreviewState::Error {
-            generation: 1,
             message: "failed".to_string(),
         };
         assert!(app.request_copy().is_empty());
         app.preview = PreviewState::Ready {
-            generation: 1,
             document: PreviewDocument::new("safe".to_string()),
         };
         assert!(matches!(app.request_copy().as_slice(), [Effect::Copy(_)]));
@@ -1857,7 +1842,6 @@ mod tests {
         let start = now();
         let mut app = App::new(start, true);
         app.preview = PreviewState::Ready {
-            generation: 1,
             document: PreviewDocument::new("\u{1b}".to_string()),
         };
 
@@ -1970,7 +1954,6 @@ mod tests {
         app.insert_paste("source", start);
         app.generation = 7;
         app.preview = PreviewState::Ready {
-            generation: 7,
             document: PreviewDocument::new("zero\none\ntwo".to_string()),
         };
         app.focus = Pane::Preview;
@@ -1991,7 +1974,6 @@ mod tests {
         let mut app = App::new(start, true);
         app.insert_paste("source", start);
         app.preview = PreviewState::Ready {
-            generation: 1,
             document: PreviewDocument::new("result".to_string()),
         };
         app.focus = Pane::Preview;
@@ -2040,7 +2022,6 @@ mod tests {
             "clipboard\n\u{1b}[2J".to_string()
         )));
         app.preview = PreviewState::Error {
-            generation: 1,
             message: "preview\n\u{1b}[2J".to_string(),
         };
         app.focus = Pane::Preview;
@@ -2062,7 +2043,6 @@ mod tests {
     fn clipboard_failure_preserves_ready_preview() {
         let mut app = App::new(Instant::now(), true);
         app.preview = PreviewState::Ready {
-            generation: 1,
             document: PreviewDocument::new("result".to_string()),
         };
         app.handle_event(AppEvent::ClipboardFinished(Err(
@@ -2123,10 +2103,7 @@ mod tests {
         );
         let effects = app.handle_event(AppEvent::Tick(start + Duration::from_millis(200)));
         assert!(matches!(effects.as_slice(), [Effect::Submit(_)]));
-        assert!(matches!(
-            app.preview,
-            PreviewState::Running { generation: 1 }
-        ));
+        assert!(matches!(app.preview, PreviewState::Running));
     }
 
     #[test]
@@ -2155,7 +2132,6 @@ mod tests {
         let start = now();
         let mut app = App::new(start, true);
         app.preview = PreviewState::Ready {
-            generation: 0,
             document: PreviewDocument::new("old".to_string()),
         };
         app.insert_paste("new", start);
@@ -2168,15 +2144,12 @@ mod tests {
         let start = now();
         let mut app = App::new(start, true);
         app.generation = 2;
-        app.preview = PreviewState::Running { generation: 2 };
+        app.preview = PreviewState::Running;
         app.handle_event(AppEvent::PreviewFinished(PreviewResult {
             generation: 1,
             result: Ok(b"old".to_vec()),
         }));
-        assert!(matches!(
-            app.preview,
-            PreviewState::Running { generation: 2 }
-        ));
+        assert!(matches!(app.preview, PreviewState::Running));
     }
 
     #[test]
@@ -2185,7 +2158,6 @@ mod tests {
         let mut app = App::new(start, true);
         app.generation = 2;
         app.preview = PreviewState::Ready {
-            generation: 1,
             document: PreviewDocument::new("old".to_string()),
         };
         app.handle_event(AppEvent::PreviewFinished(PreviewResult {
