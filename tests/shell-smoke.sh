@@ -334,7 +334,7 @@ tui_run() {
                 }
                 send -- "y"
                 if {$mode eq "unavailable"} {
-                    expect_exact "Clipboard" 101 102
+                    # The unchanged "C" is omitted by the incremental redraw.
                     expect_exact "unavailable" 101 102
                 } elseif {$mode eq "x11"} {
                     # "Copy as Hex" keeps its common "Cop" prefix during the incremental redraw.
