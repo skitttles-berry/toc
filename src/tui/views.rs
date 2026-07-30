@@ -4,121 +4,703 @@ use unicode_segmentation::UnicodeSegmentation as _;
 use unicode_width::UnicodeWidthStr as _;
 
 const VISIBLE_TEXT_BYTE_BUDGET: usize = 4 * 1024;
+pub(super) const TEXT_VIEW_UNAVAILABLE_MESSAGE: &str = "Switch to Hex view";
 
-pub(super) struct PreviewDocument {
-    pub(super) raw: Arc<str>,
-    pub(super) line_starts: Vec<usize>,
+#[derive(Clone, Debug)]
+pub(super) struct Artifact {
+    bytes: Arc<[u8]>,
+    is_utf8: bool,
 }
 
-impl PreviewDocument {
-    pub(super) fn new(raw: String) -> Self {
-        let mut line_starts = vec![0];
-        line_starts.extend(raw.match_indices('\n').map(|(index, _)| index + 1));
+impl Artifact {
+    pub(super) fn new(bytes: Vec<u8>) -> Self {
+        let is_utf8 = std::str::from_utf8(&bytes).is_ok();
         Self {
-            raw: Arc::from(raw),
-            line_starts,
+            bytes: Arc::from(bytes),
+            is_utf8,
         }
     }
 
-    fn line(&self, index: usize) -> Option<&str> {
-        let start = *self.line_starts.get(index)?;
-        let end = self
-            .line_starts
-            .get(index + 1)
-            .map_or(self.raw.len(), |next| next.saturating_sub(1));
-        self.raw.get(start..end)
+    pub(super) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(super) fn is_utf8(&self) -> bool {
+        self.is_utf8
     }
 }
 
-pub(super) fn visible_safe_text(
-    document: &PreviewDocument,
-    first_line: usize,
-    rows: usize,
-    columns: usize,
-) -> String {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // Output view keys are connected in Task 6.
+pub(super) enum ViewMode {
+    Smart,
+    Text,
+    Hex,
+    Trace,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EffectiveView {
+    Text,
+    Hex,
+    Trace,
+    Unavailable,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct TextWindow {
+    pub text: String,
+    pub previous_offset: usize,
+    pub next_offset: usize,
+    pub inspected_bytes: usize,
+}
+
+pub(super) fn effective_view(
+    mode: ViewMode,
+    artifact: Option<&Artifact>,
+    failed: bool,
+) -> EffectiveView {
+    match mode {
+        ViewMode::Smart if failed => EffectiveView::Trace,
+        ViewMode::Smart => match artifact {
+            Some(artifact) if artifact.is_utf8() => EffectiveView::Text,
+            Some(_) => EffectiveView::Hex,
+            None => EffectiveView::Unavailable,
+        },
+        ViewMode::Text => match artifact {
+            Some(artifact) if !artifact.is_utf8() => EffectiveView::Unavailable,
+            Some(_) => EffectiveView::Text,
+            None => EffectiveView::Unavailable,
+        },
+        ViewMode::Hex => EffectiveView::Hex,
+        ViewMode::Trace => EffectiveView::Trace,
+    }
+}
+
+fn utf8_boundary_at_or_before(bytes: &[u8], offset: usize) -> usize {
+    let mut boundary = offset.min(bytes.len());
+    while boundary > 0 && boundary < bytes.len() && bytes[boundary] & 0b1100_0000 == 0b1000_0000 {
+        boundary -= 1;
+    }
+    boundary
+}
+
+fn next_utf8_boundary(bytes: &[u8], offset: usize) -> usize {
+    let mut boundary = offset.saturating_add(1).min(bytes.len());
+    while boundary < bytes.len() && bytes[boundary] & 0b1100_0000 == 0b1000_0000 {
+        boundary += 1;
+    }
+    boundary
+}
+
+fn bounded_utf8_text(artifact: &Artifact, offset: usize) -> Option<(usize, &str)> {
+    if !artifact.is_utf8() {
+        return None;
+    }
+    let bytes = artifact.bytes();
+    let start = utf8_boundary_at_or_before(bytes, offset);
+    let end = utf8_boundary_at_or_before(
+        bytes,
+        start
+            .saturating_add(VISIBLE_TEXT_BYTE_BUDGET)
+            .min(bytes.len()),
+    );
+    std::str::from_utf8(&bytes[start..end])
+        .ok()
+        .map(|text| (start, text))
+}
+
+fn is_dangerous_text_control(character: char) -> bool {
+    character == '\r' || crate::error::is_dangerous_control(character)
+}
+
+fn safe_grapheme_prefix(text: &str, columns: usize, byte_budget: usize) -> String {
     let mut output = String::new();
-    let mut remaining = VISIBLE_TEXT_BYTE_BUDGET;
-    for row in 0..rows {
-        let Some(line) = document.line(first_line + row) else {
+    let mut used_width = 0;
+    for grapheme in text.graphemes(true) {
+        let dangerous = grapheme.chars().any(crate::error::is_dangerous_control);
+        let escaped =
+            dangerous.then(|| crate::error::escape_controls(grapheme, grapheme.chars().count()));
+        let rendered = escaped.as_deref().unwrap_or(grapheme);
+        if output.len() + rendered.len() > byte_budget || used_width + rendered.width() > columns {
             break;
-        };
-        if row > 0 {
-            if remaining == 0 {
-                break;
-            }
-            output.push('\n');
-            remaining -= 1;
         }
-        let mut prefix_end = line.len().min(remaining);
-        while !line.is_char_boundary(prefix_end) {
-            prefix_end -= 1;
-        }
-        let truncated = prefix_end < line.len();
-        let prefix = &line[..prefix_end];
-        let mut used = 0;
-        for (offset, grapheme) in prefix.grapheme_indices(true) {
-            if truncated && offset + grapheme.len() == prefix.len() {
-                // ponytail: bounded prefixes may omit their last grapheme; use a cached grapheme index for complete display.
-                remaining = 0;
-                break;
-            }
-            let dangerous = grapheme.chars().any(crate::error::is_dangerous_control);
-            let escaped = dangerous
-                .then(|| crate::error::escape_controls(grapheme, grapheme.chars().count()));
-            let rendered = escaped.as_deref().unwrap_or(grapheme);
-            let cost = grapheme.len().max(rendered.len());
-            if cost > remaining {
-                remaining = 0;
-                break;
-            }
-            remaining -= cost;
-            let width = rendered.width();
-            if used + width > columns {
-                break;
-            }
-            output.push_str(rendered);
-            used += width;
-        }
+        output.push_str(rendered);
+        used_width += rendered.width();
     }
     output
 }
+
+pub(super) fn with_bounded_header(header: &str, body: String) -> String {
+    let mut output = safe_grapheme_prefix(header, usize::MAX, VISIBLE_TEXT_BYTE_BUDGET);
+    if body.is_empty() || output.len() == VISIBLE_TEXT_BYTE_BUDGET {
+        return output;
+    }
+    output.push('\n');
+    let remaining = VISIBLE_TEXT_BYTE_BUDGET.saturating_sub(output.len());
+    let mut end = body.len().min(remaining);
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    output.push_str(&body[..end]);
+    output
+}
+
+pub(super) fn render_text_window(
+    artifact: &Artifact,
+    offset: usize,
+    rows: usize,
+    columns: usize,
+) -> TextWindow {
+    let Some((start, source)) = bounded_utf8_text(artifact, offset) else {
+        return TextWindow {
+            text: String::new(),
+            previous_offset: 0,
+            next_offset: 0,
+            inspected_bytes: 0,
+        };
+    };
+    let bytes = artifact.bytes();
+    let truncated = start + source.len() < bytes.len();
+    let mut output = String::new();
+    let mut cursor = start;
+    let mut row = 0;
+    let mut used_width = 0;
+    let mut fallback = None;
+
+    if rows > 0 && columns > 0 {
+        for (relative, grapheme) in source.grapheme_indices(true) {
+            if truncated && relative + grapheme.len() == source.len() {
+                fallback = Some((start + source.len(), true));
+                break;
+            }
+            if grapheme == "\r\n" {
+                let escaped_cr = "\\x0d";
+                if output.len() + escaped_cr.len() <= VISIBLE_TEXT_BYTE_BUDGET
+                    && used_width + escaped_cr.width() <= columns
+                {
+                    output.push_str(escaped_cr);
+                }
+                cursor = start + relative + grapheme.len();
+                if row + 1 >= rows || output.len() == VISIBLE_TEXT_BYTE_BUDGET {
+                    break;
+                }
+                output.push('\n');
+                row += 1;
+                used_width = 0;
+                continue;
+            }
+            if grapheme == "\n" {
+                if row + 1 >= rows || output.len() == VISIBLE_TEXT_BYTE_BUDGET {
+                    fallback = Some((start + relative + grapheme.len(), false));
+                    break;
+                }
+                output.push('\n');
+                cursor = start + relative + grapheme.len();
+                row += 1;
+                used_width = 0;
+                continue;
+            }
+            let dangerous = grapheme.chars().any(is_dangerous_text_control);
+            let escaped = dangerous.then(|| {
+                crate::error::escape_controls(grapheme, grapheme.chars().count())
+                    .replace('\r', "\\x0d")
+            });
+            let rendered = escaped.as_deref().unwrap_or(grapheme);
+            if output.len() + rendered.len() > VISIBLE_TEXT_BYTE_BUDGET
+                || used_width + rendered.width() > columns
+            {
+                fallback = Some((start + relative + grapheme.len(), false));
+                break;
+            }
+            output.push_str(rendered);
+            cursor = start + relative + grapheme.len();
+            used_width += rendered.width();
+        }
+    }
+
+    if rows > 0 && columns > 0 && cursor == start && start < bytes.len() {
+        let (next, show_placeholder) =
+            fallback.unwrap_or_else(|| (next_utf8_boundary(bytes, start), false));
+        if show_placeholder {
+            output.push('…');
+        }
+        cursor = next;
+    }
+
+    TextWindow {
+        previous_offset: utf8_boundary_at_or_before(
+            bytes,
+            start.saturating_sub(VISIBLE_TEXT_BYTE_BUDGET),
+        ),
+        next_offset: cursor,
+        inspected_bytes: cursor.saturating_sub(start),
+        text: output,
+    }
+}
+
+pub(super) fn next_text_offset(artifact: &Artifact, offset: usize) -> usize {
+    render_text_window(artifact, offset, 1, 1).next_offset
+}
+
+pub(super) fn previous_text_offset(artifact: &Artifact, offset: usize) -> usize {
+    if !artifact.is_utf8() {
+        return 0;
+    }
+    let bytes = artifact.bytes();
+    let end = utf8_boundary_at_or_before(bytes, offset);
+    let start = utf8_boundary_at_or_before(bytes, end.saturating_sub(VISIBLE_TEXT_BYTE_BUDGET));
+    std::str::from_utf8(&bytes[start..end])
+        .ok()
+        .and_then(|text| text.grapheme_indices(true).next_back())
+        .map_or(start, |(relative, _)| start + relative)
+}
+
+pub(super) fn last_text_offset(artifact: &Artifact) -> usize {
+    previous_text_offset(artifact, artifact.bytes().len())
+}
+
+pub(super) fn render_hex_window(artifact: &Artifact, row_offset: usize, rows: usize) -> String {
+    use std::fmt::Write as _;
+
+    let mut output = String::new();
+    for index in 0..rows {
+        let Some(row) = row_offset.checked_add(index) else {
+            break;
+        };
+        let Some(offset) = row.checked_mul(16) else {
+            break;
+        };
+        if offset >= artifact.bytes().len() {
+            break;
+        }
+        let end = offset.saturating_add(16).min(artifact.bytes().len());
+        let bytes = &artifact.bytes()[offset..end];
+        let mut line = format!("{offset:08X}  ");
+        for index in 0..16 {
+            if index == 8 {
+                line.push(' ');
+            }
+            match bytes.get(index) {
+                Some(byte) => write!(line, "{byte:02X} ").expect("writing to String cannot fail"),
+                None => line.push_str("   "),
+            }
+        }
+        if bytes.len() < 16 {
+            line.pop();
+        }
+        line.push_str(" |");
+        for byte in bytes {
+            line.push(if (0x20..=0x7e).contains(byte) {
+                char::from(*byte)
+            } else {
+                '.'
+            });
+        }
+        line.push('|');
+        let separator = usize::from(!output.is_empty());
+        if output.len() + separator + line.len() > VISIBLE_TEXT_BYTE_BUDGET {
+            break;
+        }
+        if separator == 1 {
+            output.push('\n');
+        }
+        output.push_str(&line);
+    }
+    output
+}
+
+fn trace_status(status: crate::pipeline::StepStatus) -> &'static str {
+    match status {
+        crate::pipeline::StepStatus::Succeeded => "OK",
+        crate::pipeline::StepStatus::Disabled => "OFF",
+        crate::pipeline::StepStatus::Failed => "ERROR",
+        crate::pipeline::StepStatus::NotExecuted => "NOT RUN",
+        crate::pipeline::StepStatus::Cancelled => "CANCELLED",
+    }
+}
+
+pub(super) fn render_transform_error_summary(error: &crate::error::TransformError) -> String {
+    use crate::error::{JsonErrorKind, TransformError};
+
+    match error {
+        TransformError::InvalidUtf8Input => "input is not valid UTF-8".to_string(),
+        TransformError::InvalidBase64 {
+            position: Some(position),
+        } => {
+            format!("invalid Base64 at byte {position}")
+        }
+        TransformError::InvalidBase64 { position: None } => "invalid Base64 padding".to_string(),
+        TransformError::InvalidUrl { position } => {
+            format!("invalid percent escape at byte {position}")
+        }
+        TransformError::InvalidHex { position } => {
+            format!("invalid hex character at byte {position}")
+        }
+        TransformError::OddHexDigitCount { digits } => {
+            format!("hex input has an odd number of digits: {digits}")
+        }
+        TransformError::InvalidUtf8Output { total_bytes, .. } => {
+            format!("output is not valid UTF-8 ({total_bytes} bytes)")
+        }
+        TransformError::InvalidJson { line, column, kind } => {
+            let reason = match kind {
+                JsonErrorKind::Syntax => "invalid JSON syntax",
+                JsonErrorKind::DuplicateKey => "duplicate JSON object key",
+                JsonErrorKind::Bom => "UTF-8 BOM is not allowed",
+                JsonErrorKind::DepthExceeded => "JSON depth exceeds 128",
+            };
+            format!("{reason} at line {line}, column {column}")
+        }
+        TransformError::OutputTooLarge { limit } => format!("output exceeds {limit} bytes"),
+    }
+}
+
+pub(super) fn render_pipeline_error_summary(error: &crate::error::PipelineError) -> String {
+    match error {
+        crate::error::PipelineError::TooManySteps { max } => {
+            format!("chain exceeds {max} steps")
+        }
+        crate::error::PipelineError::Step {
+            step,
+            transform_id,
+            source,
+        } => format!(
+            "step {step} ({}) failed: {}",
+            crate::error::escape_external(transform_id, 128),
+            render_transform_error_summary(source)
+        ),
+    }
+}
+
+pub(super) fn render_trace_window(
+    traces: &[crate::pipeline::StepTrace],
+    first_row: usize,
+    rows: usize,
+    columns: usize,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut output = String::new();
+    for trace in traces.iter().take(32).skip(first_row).take(rows) {
+        let mut line = format!(
+            "#{} {} {}",
+            trace.step,
+            crate::error::escape_external(trace.transform_id, 128),
+            trace_status(trace.status)
+        );
+        if let Some(input_bytes) = trace.input_bytes {
+            write!(line, " in:{input_bytes}B").expect("writing to String cannot fail");
+        }
+        if let Some(output_bytes) = trace.output_bytes {
+            write!(line, " out:{output_bytes}B").expect("writing to String cannot fail");
+        }
+        if let Some(elapsed) = trace.elapsed {
+            write!(line, " {}ms", elapsed.as_millis()).expect("writing to String cannot fail");
+        }
+        if let Some(error) = &trace.error {
+            write!(line, " error: {}", render_transform_error_summary(error))
+                .expect("writing to String cannot fail");
+        }
+        let available = VISIBLE_TEXT_BYTE_BUDGET.saturating_sub(output.len());
+        let line = safe_grapheme_prefix(&line, columns, available.saturating_sub(1));
+        if line.is_empty() && !output.is_empty() {
+            break;
+        }
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&line);
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TUI_INPUT_LIMIT;
+    use crate::{
+        error::TransformError,
+        pipeline::{StepStatus, StepTrace},
+    };
+    use std::time::Duration;
 
     #[test]
-    fn preview_escapes_only_visible_dangerous_controls() {
-        let document = PreviewDocument::new("safe\u{1b}[2J\nnext".to_string());
-        assert_eq!(visible_safe_text(&document, 0, 1, 12), "safe\\x1b[2J");
-        assert_eq!(visible_safe_text(&document, 1, 1, 12), "next");
-        assert_eq!(&*document.raw, "safe\u{1b}[2J\nnext");
+    fn smart_uses_trace_for_failure_text_for_utf8_and_hex_for_binary() {
+        assert_eq!(
+            effective_view(ViewMode::Smart, None, true),
+            EffectiveView::Trace
+        );
+        assert_eq!(
+            effective_view(
+                ViewMode::Smart,
+                Some(&Artifact::new(b"hello".to_vec())),
+                false
+            ),
+            EffectiveView::Text
+        );
+        assert_eq!(
+            effective_view(ViewMode::Smart, Some(&Artifact::new(vec![0xff])), false),
+            EffectiveView::Hex
+        );
     }
-    #[test]
-    fn preview_clips_wide_and_combining_text_by_terminal_cell_width() {
-        let document = PreviewDocument::new("界a\ne\u{301}x".to_string());
 
-        assert_eq!(visible_safe_text(&document, 0, 1, 1), "");
-        assert_eq!(visible_safe_text(&document, 0, 1, 2), "界");
-        assert_eq!(visible_safe_text(&document, 1, 1, 1), "e\u{301}");
+    #[test]
+    fn pinned_text_for_binary_is_unavailable_without_changing_mode() {
+        assert_eq!(
+            effective_view(ViewMode::Text, Some(&Artifact::new(vec![0xff])), false),
+            EffectiveView::Unavailable
+        );
+        assert_eq!(
+            effective_view(ViewMode::Hex, Some(&Artifact::new(b"text".to_vec())), true),
+            EffectiveView::Hex
+        );
     }
-    #[test]
-    fn preview_preserves_emoji_zwj_grapheme_when_it_fits() {
-        let document = PreviewDocument::new("👩‍💻x".to_string());
 
-        assert_eq!(visible_safe_text(&document, 0, 1, 1), "");
-        assert_eq!(visible_safe_text(&document, 0, 1, 2), "👩‍💻");
+    #[test]
+    fn text_window_starts_at_utf8_boundary_and_preserves_tabs_and_newlines() {
+        let artifact = Artifact::new("a界\tb\nnext".as_bytes().to_vec());
+
+        let window = render_text_window(&artifact, 2, 2, 8);
+
+        assert_eq!(window.text, "界\tb\nnext");
+        assert_eq!(window.previous_offset, 0);
+        assert_eq!(window.next_offset, artifact.bytes().len());
+        assert!(window.inspected_bytes <= VISIBLE_TEXT_BYTE_BUDGET);
+        assert!(window.text.len() <= VISIBLE_TEXT_BYTE_BUDGET);
     }
+
     #[test]
-    fn preview_bounds_zero_width_grapheme_output() {
-        let combining_mark = '\u{301}';
-        let repeats = (TUI_INPUT_LIMIT - 1) / combining_mark.len_utf8();
-        let document =
-            PreviewDocument::new(format!("e{}", combining_mark.to_string().repeat(repeats)));
+    fn text_window_escapes_every_dangerous_c0_and_c1_control() {
+        let mut text = String::from("tab\tnewline\ncarriage\r");
+        text.extend((0..=0x1f).filter_map(char::from_u32));
+        text.extend((0x7f..=0x9f).filter_map(char::from_u32));
+        text.push_str("\u{1b}]52;c;secret\u{7}");
+        let artifact = Artifact::new(text.into_bytes());
 
-        let visible = visible_safe_text(&document, 0, 1, 1);
+        let window = render_text_window(&artifact, 0, 8, 4_096);
 
-        assert!(document.raw.len() > 4_096);
-        assert!(visible.len() <= 4_096);
+        assert!(window.text.starts_with("tab\tnewline\ncarriage\\x0d"));
+        assert!(window.text.contains("\\x00"));
+        assert!(window.text.contains("\\x1b]52;c;secret\\x07"));
+        assert!(!window.text.contains('\r'));
+        assert!(!window.text.chars().any(crate::error::is_dangerous_control));
+        assert!(window.inspected_bytes <= VISIBLE_TEXT_BYTE_BUDGET);
+        assert!(window.text.len() <= VISIBLE_TEXT_BYTE_BUDGET);
+    }
+
+    #[test]
+    fn text_window_stops_before_a_long_line_exceeds_either_budget() {
+        let artifact = Artifact::new("界".repeat(3_000).into_bytes());
+
+        let window = render_text_window(&artifact, 0, 1, 8_192);
+
+        assert!(window.inspected_bytes <= VISIBLE_TEXT_BYTE_BUDGET);
+        assert!(window.text.len() <= VISIBLE_TEXT_BYTE_BUDGET);
+        assert!(window.next_offset > 0);
+        assert!(window.next_offset < artifact.bytes().len());
+        assert!(
+            std::str::from_utf8(artifact.bytes())
+                .unwrap()
+                .is_char_boundary(window.next_offset)
+        );
+    }
+
+    #[test]
+    fn text_window_advances_past_a_non_displayable_first_grapheme() {
+        let cases = [
+            ("\nnext".to_string(), 1, 1, ""),
+            ("界".to_string(), 1, 1, ""),
+            (
+                format!("e{}", "\u{301}".repeat(VISIBLE_TEXT_BYTE_BUDGET)),
+                1,
+                80,
+                "…",
+            ),
+        ];
+
+        for (text, rows, columns, expected) in cases {
+            let artifact = Artifact::new(text.into_bytes());
+            let window = render_text_window(&artifact, 0, rows, columns);
+            let text = std::str::from_utf8(artifact.bytes()).unwrap();
+
+            assert_eq!(window.text, expected);
+            assert!(window.next_offset > 0);
+            assert!(window.previous_offset <= window.next_offset);
+            assert!(window.next_offset <= artifact.bytes().len());
+            assert!(text.is_char_boundary(window.previous_offset));
+            assert!(text.is_char_boundary(window.next_offset));
+        }
+    }
+
+    #[test]
+    fn truncated_first_grapheme_uses_a_visible_bounded_fallback() {
+        let text = format!("a{}b", "\u{301}".repeat(3_000));
+        let artifact = Artifact::new(text.into_bytes());
+
+        let window = render_text_window(&artifact, 0, 1, 80);
+
+        assert!(!window.text.is_empty());
+        assert!(window.next_offset > 1);
+        assert!(window.next_offset <= 4 * 1024);
+        assert!(window.inspected_bytes <= 4 * 1024);
+        assert!(
+            std::str::from_utf8(artifact.bytes())
+                .unwrap()
+                .is_char_boundary(window.next_offset)
+        );
+    }
+
+    #[test]
+    fn text_window_treats_crlf_as_a_row_boundary_without_skipping_next_line() {
+        let artifact = Artifact::new(b"\r\nsecret\n".to_vec());
+
+        let first = render_text_window(&artifact, 0, 1, 80);
+        let second = render_text_window(&artifact, first.next_offset, 1, 80);
+        let text = std::str::from_utf8(artifact.bytes()).unwrap();
+
+        assert_eq!(first.text, "\\x0d");
+        assert!(!first.text.contains('\r'));
+        assert!(!first.text.contains("secret"));
+        assert_eq!(first.next_offset, 2);
+        assert_eq!(second.text, "secret");
+        assert!(text.is_char_boundary(first.previous_offset));
+        assert!(text.is_char_boundary(first.next_offset));
+        assert!(text.is_char_boundary(second.next_offset));
+    }
+
+    #[test]
+    fn text_window_handles_newline_dense_sixty_four_mebibyte_artifacts_without_line_indexing() {
+        let artifact = Artifact::new(vec![b'\n'; 64 * 1024 * 1024]);
+
+        let window = render_text_window(&artifact, 0, 8, 80);
+
+        assert_eq!(artifact.bytes().len(), 64 * 1024 * 1024);
+        assert!(window.inspected_bytes <= VISIBLE_TEXT_BYTE_BUDGET);
+        assert!(window.text.len() <= VISIBLE_TEXT_BYTE_BUDGET);
+        assert!(window.next_offset <= VISIBLE_TEXT_BYTE_BUDGET);
+    }
+
+    #[test]
+    fn text_window_validates_only_a_bounded_utf8_slice_of_a_large_artifact() {
+        let artifact = Artifact::new(vec![b'x'; 64 * 1024 * 1024]);
+
+        let (start, text) = bounded_utf8_text(&artifact, 3).unwrap();
+
+        assert_eq!(start, 3);
+        assert_eq!(text.len(), VISIBLE_TEXT_BYTE_BUDGET);
+        assert!(text.len() <= VISIBLE_TEXT_BYTE_BUDGET);
+    }
+
+    #[test]
+    fn hex_window_uses_sixteen_bytes_uppercase_and_printable_ascii() {
+        let artifact = Artifact::new(vec![
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f, 0x20, 0x41, 0xff,
+        ]);
+
+        assert_eq!(
+            render_hex_window(&artifact, 0, 2),
+            "00000000  00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  |................|\n00000010  20 41 FF                                         | A.|"
+        );
+    }
+
+    #[test]
+    fn hex_window_uses_checked_offsets_and_only_requested_rows() {
+        let artifact = Artifact::new((0..64).collect());
+
+        assert_eq!(
+            render_hex_window(&artifact, 2, 1),
+            "00000020  20 21 22 23 24 25 26 27  28 29 2A 2B 2C 2D 2E 2F  | !\"#$%&'()*+,-./|"
+        );
+        assert!(render_hex_window(&artifact, usize::MAX, 1).is_empty());
+    }
+
+    #[test]
+    fn trace_window_renders_statuses_sizes_elapsed_and_sanitized_error_without_bodies() {
+        let traces = [
+            StepTrace {
+                step: 1,
+                transform_id: "first",
+                input_bytes: Some(3),
+                output_bytes: Some(4),
+                elapsed: Some(Duration::from_millis(7)),
+                status: StepStatus::Succeeded,
+                error: None,
+            },
+            StepTrace {
+                step: 2,
+                transform_id: "off",
+                input_bytes: Some(4),
+                output_bytes: Some(4),
+                elapsed: None,
+                status: StepStatus::Disabled,
+                error: None,
+            },
+            StepTrace {
+                step: 3,
+                transform_id: "bad",
+                input_bytes: Some(4),
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::Failed,
+                error: Some(TransformError::InvalidUtf8Output {
+                    preview_hex: "736563726574".to_string(),
+                    total_bytes: 6,
+                }),
+            },
+            StepTrace {
+                step: 4,
+                transform_id: "later",
+                input_bytes: None,
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::NotExecuted,
+                error: None,
+            },
+            StepTrace {
+                step: 5,
+                transform_id: "cancel",
+                input_bytes: Some(4),
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::Cancelled,
+                error: None,
+            },
+        ];
+
+        let rendered = render_trace_window(&traces, 0, 5, 120);
+
+        for status in ["OK", "OFF", "ERROR", "NOT RUN", "CANCELLED"] {
+            assert!(rendered.contains(status));
+        }
+        assert!(rendered.contains("#1 first OK in:3B out:4B 7ms"));
+        assert!(rendered.contains("#3 bad ERROR in:4B error: output is not valid UTF-8 (6 bytes)"));
+        assert!(!rendered.contains("736563726574"));
+        assert!(!rendered.contains("secret"));
+        assert!(!rendered.contains('\u{1b}'));
+        assert!(!rendered
+            .chars()
+            .any(|character| character != '\n' && crate::error::is_dangerous_control(character)));
+        assert!(rendered.len() <= VISIBLE_TEXT_BYTE_BUDGET);
+    }
+
+    #[test]
+    fn trace_window_limits_input_to_thirty_two_steps_and_crops_visible_rows() {
+        let traces = (1..=33)
+            .map(|step| StepTrace {
+                step,
+                transform_id: "transform",
+                input_bytes: Some(step),
+                output_bytes: Some(step),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            })
+            .collect::<Vec<_>>();
+
+        let rendered = render_trace_window(&traces, 31, 2, 12);
+
+        assert_eq!(rendered, "#32 transfor");
+        assert!(!rendered.contains("#33"));
     }
 }

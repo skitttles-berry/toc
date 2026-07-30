@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Modifier, Style};
@@ -9,36 +6,127 @@ use tui_textarea::{TextArea, WrapMode};
 
 use crate::{
     MAX_STEPS, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT, TUI_UNDO_HISTORY_LIMIT,
-    pipeline::TransformStep,
+    error::PipelineError,
+    pipeline::{ExecutionOutcome, ExecutionTarget, StepTrace, TransformStep},
     transforms::{TransformDefinition, transform_by_id, transforms},
 };
 
 use super::{
-    views::PreviewDocument,
+    views::{
+        Artifact, EffectiveView, ViewMode, effective_view, last_text_offset, next_text_offset,
+        previous_text_offset,
+    },
     worker::{PreviewJob, PreviewResult},
 };
 
-pub(super) const DEBOUNCE: Duration = Duration::from_millis(200);
+// ponytail: fixed page stride; use viewport rows if terminal-sized paging becomes necessary.
+const OUTPUT_PAGE_SCROLL: usize = 10;
+
+pub(super) fn debounce_for(input_bytes: usize) -> Duration {
+    if input_bytes <= 256 * 1024 {
+        Duration::from_millis(50)
+    } else {
+        Duration::from_millis(200)
+    }
+}
+
+fn confirmation_choice(key: &KeyEvent) -> Option<bool> {
+    match (key.code, key.modifiers) {
+        (KeyCode::Enter | KeyCode::Char('y'), KeyModifiers::NONE)
+        | (KeyCode::Char('Y'), KeyModifiers::SHIFT) => Some(true),
+        (KeyCode::Esc | KeyCode::Char('n'), KeyModifiers::NONE)
+        | (KeyCode::Char('N'), KeyModifiers::SHIFT) => Some(false),
+        _ => None,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Pane {
     Input,
-    Preview,
-    Chain,
+    Output,
+    Pipeline,
 }
 
-pub(super) enum PreviewState {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OutputSource {
+    Final,
+    Step(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum OutputStatus {
     Idle,
     Debouncing { deadline: Instant },
     Running,
-    Ready { document: PreviewDocument },
-    Error { message: String },
+    Ready,
+    Failed(PipelineError),
+    Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CopyKind {
+    Text,
+    Hex,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ClipboardPayload {
+    pub(super) text: String,
+    pub(super) kind: CopyKind,
+}
+
+fn checked_hex_len(byte_len: usize) -> Option<usize> {
+    byte_len.checked_mul(2)
+}
+
+fn binary_hex(bytes: &[u8]) -> Result<String, ()> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let capacity = checked_hex_len(bytes.len()).ok_or(())?;
+    let mut output = String::new();
+    output.try_reserve_exact(capacity).map_err(|_| ())?;
+    for &byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Ok(output)
+}
+
+fn clipboard_payload(artifact: &Artifact) -> Result<ClipboardPayload, ()> {
+    match std::str::from_utf8(artifact.bytes()) {
+        Ok(raw) => {
+            let mut text = String::new();
+            text.try_reserve_exact(raw.len()).map_err(|_| ())?;
+            text.push_str(raw);
+            Ok(ClipboardPayload {
+                text,
+                kind: CopyKind::Text,
+            })
+        }
+        Err(_) => Ok(ClipboardPayload {
+            text: binary_hex(artifact.bytes())?,
+            kind: CopyKind::Hex,
+        }),
+    }
+}
+
+pub(super) struct OutputState {
+    pub(super) source: OutputSource,
+    pub(super) view: ViewMode,
+    pub(super) status: OutputStatus,
+    pub(super) final_artifact: Option<Artifact>,
+    pub(super) active_artifact: Option<Artifact>,
+    pub(super) traces: Vec<StepTrace>,
+    pub(super) byte_offset: usize,
+    pub(super) row_offset: usize,
 }
 
 pub(super) enum Modal {
     TransformPicker { query: String, selected: usize },
+    StepInspector,
+    Help,
     QuitConfirm,
-    UnsafeCopyConfirm,
+    UnsafeCopyConfirm { payload: ClipboardPayload },
 }
 
 pub(super) enum AppEvent {
@@ -46,26 +134,31 @@ pub(super) enum AppEvent {
     Paste(String, Instant),
     Tick(Instant),
     PreviewFinished(PreviewResult),
-    ClipboardFinished(Result<(), String>),
+    ClipboardFinished {
+        kind: CopyKind,
+        result: Result<(), String>,
+    },
     Resize,
 }
 
 pub(super) enum Effect {
     Submit(PreviewJob),
-    Copy(Arc<str>),
+    Cancel(u64),
+    Copy(ClipboardPayload),
     Quit(i32),
 }
 
 pub(super) struct App {
     pub(super) textarea: TextArea<'static>,
     pub(super) focus: Pane,
+    pub(super) zoom: Option<Pane>,
     pub(super) steps: Vec<TransformStep>,
     pub(super) selected_step: usize,
-    pub(super) preview: PreviewState,
-    generation: u64,
+    pub(super) output: OutputState,
+    pub(super) request_id: u64,
     pub(super) modal: Option<Modal>,
+    suspended_modal: Option<Modal>,
     pub(super) status: Option<String>,
-    pub(super) preview_scroll: usize,
     pub(super) no_color: bool,
     input_limit: usize,
     input_line_limit: usize,
@@ -107,13 +200,23 @@ impl App {
         Self {
             textarea,
             focus: Pane::Input,
+            zoom: None,
             steps: Vec::new(),
             selected_step: 0,
-            preview: PreviewState::Idle,
-            generation: 0,
+            output: OutputState {
+                source: OutputSource::Final,
+                view: ViewMode::Smart,
+                status: OutputStatus::Idle,
+                final_artifact: None,
+                active_artifact: None,
+                traces: Vec::new(),
+                byte_offset: 0,
+                row_offset: 0,
+            },
+            request_id: 0,
             modal: None,
+            suspended_modal: None,
             status: None,
-            preview_scroll: 0,
             no_color,
             input_limit,
             input_line_limit,
@@ -193,11 +296,19 @@ impl App {
     }
 
     fn changed(&mut self, now: Instant) {
-        self.generation = self.generation.wrapping_add(1);
-        self.preview = PreviewState::Debouncing {
-            deadline: now + DEBOUNCE,
+        self.request_id = self
+            .request_id
+            .checked_add(1)
+            .expect("TUI request ID exhausted");
+        self.output.source = OutputSource::Final;
+        self.output.status = OutputStatus::Debouncing {
+            deadline: now + debounce_for(self.input_len()),
         };
-        self.preview_scroll = 0;
+        self.output.final_artifact = None;
+        self.output.active_artifact = None;
+        self.output.traces.clear();
+        self.output.byte_offset = 0;
+        self.output.row_offset = 0;
         self.mark_dirty();
     }
 
@@ -228,7 +339,7 @@ impl App {
 
     fn add_transform(&mut self, id: &str, now: Instant) -> bool {
         if self.steps.len() == MAX_STEPS {
-            self.set_status(Some("Chain limit reached".to_string()));
+            self.set_status(Some("Pipeline limit reached".to_string()));
             return false;
         }
         let Some(definition) = transform_by_id(id) else {
@@ -271,9 +382,10 @@ impl App {
         self.changed(now);
     }
 
-    #[cfg(test)]
-    fn can_copy(&self) -> bool {
-        matches!(self.preview, PreviewState::Ready { .. })
+    pub(super) fn can_copy(&self) -> bool {
+        matches!(self.output.status, OutputStatus::Ready)
+            && self.output.view != ViewMode::Trace
+            && self.output.active_artifact.is_some()
     }
 
     pub(super) fn open_picker(&mut self) {
@@ -281,6 +393,27 @@ impl App {
             query: String::new(),
             selected: 0,
         });
+        self.mark_dirty();
+    }
+
+    fn open_inspector(&mut self) {
+        if self.steps.get(self.selected_step).is_some() {
+            self.modal = Some(Modal::StepInspector);
+            self.mark_dirty();
+        }
+    }
+
+    fn open_help(&mut self) {
+        if matches!(self.modal, Some(Modal::Help)) {
+            return;
+        }
+        let modal = self.modal.take();
+        if matches!(modal.as_ref(), Some(Modal::UnsafeCopyConfirm { .. })) {
+            self.suspended_modal = None;
+        } else {
+            self.suspended_modal = modal;
+        }
+        self.modal = Some(Modal::Help);
         self.mark_dirty();
     }
 
@@ -324,34 +457,35 @@ impl App {
     }
 
     fn request_copy(&mut self) -> Vec<Effect> {
-        let Some((raw, unsafe_raw)) = (match &self.preview {
-            PreviewState::Ready { document } => Some((
-                Arc::clone(&document.raw),
-                crate::error::contains_dangerous_control(&document.raw),
-            )),
-            _ => None,
-        }) else {
+        if !self.can_copy() {
+            return Vec::new();
+        }
+        let Some(artifact) = self.output.active_artifact.as_ref() else {
             return Vec::new();
         };
-        if unsafe_raw {
-            self.modal = Some(Modal::UnsafeCopyConfirm);
+        let Ok(payload) = clipboard_payload(artifact) else {
+            self.set_status(Some("Copy unavailable".to_string()));
+            return Vec::new();
+        };
+        if payload.kind == CopyKind::Text && crate::error::contains_dangerous_control(&payload.text)
+        {
+            self.modal = Some(Modal::UnsafeCopyConfirm { payload });
             self.mark_dirty();
             Vec::new()
         } else {
-            vec![Effect::Copy(raw)]
+            vec![Effect::Copy(payload)]
         }
     }
 
     fn confirm_unsafe_copy(&mut self) -> Vec<Effect> {
-        if !matches!(self.modal, Some(Modal::UnsafeCopyConfirm)) {
+        if !matches!(self.modal, Some(Modal::UnsafeCopyConfirm { .. })) {
             return Vec::new();
         }
-        self.modal = None;
+        let Some(Modal::UnsafeCopyConfirm { payload }) = self.modal.take() else {
+            unreachable!("unsafe copy modal checked above")
+        };
         self.mark_dirty();
-        match &self.preview {
-            PreviewState::Ready { document } => vec![Effect::Copy(Arc::clone(&document.raw))],
-            _ => Vec::new(),
-        }
+        vec![Effect::Copy(payload)]
     }
 
     fn request_quit(&mut self) -> Vec<Effect> {
@@ -366,53 +500,138 @@ impl App {
 
     pub(super) fn force_interrupt(&mut self) -> Vec<Effect> {
         self.modal = None;
+        self.suspended_modal = None;
         self.mark_dirty();
         vec![Effect::Quit(130)]
     }
 
     fn tick(&mut self, now: Instant) -> Vec<Effect> {
-        let PreviewState::Debouncing { deadline } = &self.preview else {
+        let OutputStatus::Debouncing { deadline } = &self.output.status else {
             return Vec::new();
         };
         if now < *deadline {
             return Vec::new();
         }
-        let generation = self.generation;
-        self.preview = PreviewState::Running;
+        self.output.status = OutputStatus::Running;
         self.mark_dirty();
         vec![Effect::Submit(PreviewJob {
-            generation,
+            request_id: self.request_id,
             input: self.input_text().into_bytes(),
             steps: self.steps.clone(),
+            target: ExecutionTarget::Final,
         })]
     }
 
     fn finish_preview(&mut self, result: PreviewResult) {
-        if result.generation != self.generation {
+        let report = result.report;
+        if report.request_id != self.request_id {
             return;
         }
-        self.preview = match result.result {
-            Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(text) => PreviewState::Ready {
-                    document: PreviewDocument::new(text),
-                },
-                Err(_) => PreviewState::Error {
-                    message: "Transform returned invalid UTF-8".to_string(),
-                },
-            },
-            Err(error) => PreviewState::Error {
-                message: crate::error::render_pipeline_error(&error),
-            },
+        self.output.source = match report.target {
+            ExecutionTarget::Final => OutputSource::Final,
+            ExecutionTarget::Step(index) => OutputSource::Step(index),
         };
+        self.output.traces = report.traces;
+        self.output.byte_offset = 0;
+        self.output.row_offset = 0;
+        match report.outcome {
+            ExecutionOutcome::Success(bytes) => {
+                let artifact = Artifact::new(bytes);
+                if report.target == ExecutionTarget::Final {
+                    self.output.final_artifact = Some(artifact.clone());
+                }
+                self.output.active_artifact = Some(artifact);
+                self.output.status = OutputStatus::Ready;
+            }
+            ExecutionOutcome::Failed(error) => {
+                self.output.active_artifact = None;
+                if report.target == ExecutionTarget::Final {
+                    self.output.final_artifact = None;
+                }
+                self.output.status = OutputStatus::Failed(error);
+            }
+            ExecutionOutcome::Cancelled => {
+                self.output.active_artifact = None;
+                self.output.status = OutputStatus::Cancelled;
+            }
+        }
+        self.mark_dirty();
+    }
+
+    fn request_selected_step(&mut self) -> Vec<Effect> {
+        if self.steps.get(self.selected_step).is_none() {
+            self.set_status(Some("No pipeline step selected".to_string()));
+            return Vec::new();
+        }
+        self.request_id = self
+            .request_id
+            .checked_add(1)
+            .expect("TUI request ID exhausted");
+        self.output.source = OutputSource::Step(self.selected_step);
+        self.output.status = OutputStatus::Running;
+        self.output.active_artifact = None;
+        self.output.traces.clear();
+        self.output.byte_offset = 0;
+        self.output.row_offset = 0;
+        self.mark_dirty();
+        vec![Effect::Submit(PreviewJob {
+            request_id: self.request_id,
+            input: self.input_text().into_bytes(),
+            steps: self.steps.clone(),
+            target: ExecutionTarget::Step(self.selected_step),
+        })]
+    }
+
+    fn restore_final(&mut self) -> Vec<Effect> {
+        let Some(final_artifact) = self.output.final_artifact.clone() else {
+            self.set_status(Some("Final output unavailable".to_string()));
+            return Vec::new();
+        };
+        self.request_id = self
+            .request_id
+            .checked_add(1)
+            .expect("TUI request ID exhausted");
+        self.output.source = OutputSource::Final;
+        self.output.status = OutputStatus::Ready;
+        self.output.active_artifact = Some(final_artifact);
+        self.output.traces.clear();
+        self.output.byte_offset = 0;
+        self.output.row_offset = 0;
+        self.mark_dirty();
+        Vec::new()
+    }
+
+    fn cancel_active(&mut self) {
+        if !matches!(
+            self.output.status,
+            OutputStatus::Debouncing { .. } | OutputStatus::Running
+        ) {
+            return;
+        }
+        self.request_id = self
+            .request_id
+            .checked_add(1)
+            .expect("TUI request ID exhausted");
+        self.output.status = OutputStatus::Cancelled;
+        self.output.active_artifact = None;
+        self.output.traces.clear();
         self.mark_dirty();
     }
 
     fn rotate_focus(&mut self, backwards: bool) {
         self.focus = match (self.focus, backwards) {
-            (Pane::Input, false) | (Pane::Chain, true) => Pane::Preview,
-            (Pane::Preview, false) | (Pane::Input, true) => Pane::Chain,
-            (Pane::Chain, false) | (Pane::Preview, true) => Pane::Input,
+            (Pane::Input, false) | (Pane::Pipeline, true) => Pane::Output,
+            (Pane::Output, false) | (Pane::Input, true) => Pane::Pipeline,
+            (Pane::Pipeline, false) | (Pane::Output, true) => Pane::Input,
         };
+        if self.zoom.is_some() {
+            self.zoom = Some(self.focus);
+        }
+        self.mark_dirty();
+    }
+
+    fn toggle_zoom(&mut self, pane: Pane) {
+        self.zoom = (self.zoom != Some(pane)).then_some(pane);
         self.mark_dirty();
     }
 
@@ -467,28 +686,42 @@ impl App {
                 }
                 Vec::new()
             }
-            Some(Modal::UnsafeCopyConfirm) => match key.code {
-                KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.confirm_unsafe_copy(),
-                KeyCode::Esc | KeyCode::Char('n' | 'N') => {
+            Some(Modal::UnsafeCopyConfirm { .. }) => match confirmation_choice(&key) {
+                Some(true) => self.confirm_unsafe_copy(),
+                Some(false) => {
                     self.modal = None;
                     self.mark_dirty();
                     Vec::new()
                 }
-                _ => Vec::new(),
+                None => Vec::new(),
             },
-            Some(Modal::QuitConfirm) => match key.code {
-                KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
+            Some(Modal::QuitConfirm) => match confirmation_choice(&key) {
+                Some(true) => {
                     self.modal = None;
                     self.mark_dirty();
                     vec![Effect::Quit(0)]
                 }
-                KeyCode::Esc | KeyCode::Char('n' | 'N') => {
+                Some(false) => {
                     self.modal = None;
                     self.mark_dirty();
                     Vec::new()
                 }
-                _ => Vec::new(),
+                None => Vec::new(),
             },
+            Some(Modal::Help) => {
+                if key.code == KeyCode::Esc {
+                    self.modal = self.suspended_modal.take();
+                    self.mark_dirty();
+                }
+                Vec::new()
+            }
+            Some(Modal::StepInspector) => {
+                if key.code == KeyCode::Esc {
+                    self.modal = None;
+                    self.mark_dirty();
+                }
+                Vec::new()
+            }
             None => Vec::new(),
         }
     }
@@ -548,47 +781,165 @@ impl App {
         }
     }
 
-    fn handle_preview_key(&mut self, key: KeyEvent) -> Vec<Effect> {
-        let line_count = match &self.preview {
-            PreviewState::Ready { document } => document.line_starts.len(),
-            _ => 0,
+    fn cycle_view(&mut self, backwards: bool) {
+        self.output.view = match (self.output.view, backwards) {
+            (ViewMode::Smart, false) | (ViewMode::Hex, true) => ViewMode::Text,
+            (ViewMode::Text, false) | (ViewMode::Trace, true) => ViewMode::Hex,
+            (ViewMode::Hex, false) | (ViewMode::Smart, true) => ViewMode::Trace,
+            (ViewMode::Trace, false) | (ViewMode::Text, true) => ViewMode::Smart,
         };
-        let last_line = line_count.saturating_sub(1);
-        let before = self.preview_scroll;
-        match key.code {
-            KeyCode::Enter => return self.request_copy(),
-            KeyCode::Up => self.preview_scroll = self.preview_scroll.saturating_sub(1),
-            KeyCode::Down => {
-                self.preview_scroll = self.preview_scroll.saturating_add(1).min(last_line);
-            }
-            KeyCode::PageUp => self.preview_scroll = self.preview_scroll.saturating_sub(10),
-            KeyCode::PageDown => {
-                self.preview_scroll = self.preview_scroll.saturating_add(10).min(last_line);
-            }
-            _ => {}
-        }
-        if self.preview_scroll != before {
-            self.mark_dirty();
-        }
-        Vec::new()
+        self.output.byte_offset = 0;
+        self.output.row_offset = 0;
+        self.mark_dirty();
     }
 
-    fn handle_chain_key(&mut self, key: KeyEvent, now: Instant) {
+    fn output_max_offset(&self) -> (bool, usize) {
+        match effective_view(
+            self.output.view,
+            self.output.active_artifact.as_ref(),
+            matches!(self.output.status, OutputStatus::Failed(_)),
+        ) {
+            EffectiveView::Text => (
+                true,
+                self.output
+                    .active_artifact
+                    .as_ref()
+                    .map_or(0, last_text_offset),
+            ),
+            EffectiveView::Unavailable => (true, 0),
+            EffectiveView::Hex => (
+                false,
+                self.output
+                    .active_artifact
+                    .as_ref()
+                    .map_or(0, |artifact| artifact.bytes().len().saturating_sub(1) / 16),
+            ),
+            EffectiveView::Trace => (false, self.output.traces.len().saturating_sub(1)),
+        }
+    }
+
+    fn scroll_output(&mut self, direction: i8, amount: usize) {
+        let (bytes, maximum) = self.output_max_offset();
+        if bytes
+            && let Some(artifact) = self.output.active_artifact.clone()
+            && effective_view(
+                self.output.view,
+                Some(&artifact),
+                matches!(self.output.status, OutputStatus::Failed(_)),
+            ) == EffectiveView::Text
+        {
+            let mut next = self.output.byte_offset;
+            for _ in 0..amount {
+                let moved = if direction < 0 {
+                    previous_text_offset(&artifact, next)
+                } else {
+                    next_text_offset(&artifact, next)
+                }
+                .min(maximum);
+                if moved == next {
+                    break;
+                }
+                next = moved;
+            }
+            if self.output.byte_offset != next {
+                self.output.byte_offset = next;
+                self.mark_dirty();
+            }
+            return;
+        }
+        let offset = if bytes {
+            &mut self.output.byte_offset
+        } else {
+            &mut self.output.row_offset
+        };
+        let next = if direction < 0 {
+            offset.saturating_sub(amount)
+        } else {
+            offset.saturating_add(amount).min(maximum)
+        };
+        if *offset != next {
+            *offset = next;
+            self.mark_dirty();
+        }
+    }
+
+    fn output_home_or_end(&mut self, end: bool) {
+        let (bytes, maximum) = self.output_max_offset();
+        let offset = if bytes {
+            &mut self.output.byte_offset
+        } else {
+            &mut self.output.row_offset
+        };
+        let next = if end { maximum } else { 0 };
+        if *offset != next {
+            *offset = next;
+            self.mark_dirty();
+        }
+    }
+
+    fn handle_output_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match (key.code, key.modifiers) {
-            (KeyCode::Up, modifiers) if modifiers.contains(KeyModifiers::SHIFT) => {
+            (KeyCode::Enter | KeyCode::Char('y'), KeyModifiers::NONE) => self.request_copy(),
+            (KeyCode::Char('p'), KeyModifiers::NONE) => self.request_selected_step(),
+            (KeyCode::Char('f'), KeyModifiers::NONE) => self.restore_final(),
+            (KeyCode::Char('v'), KeyModifiers::NONE) => {
+                self.cycle_view(false);
+                Vec::new()
+            }
+            (KeyCode::Char('V'), KeyModifiers::SHIFT) => {
+                self.cycle_view(true);
+                Vec::new()
+            }
+            (KeyCode::Up | KeyCode::Left, KeyModifiers::NONE) => {
+                self.scroll_output(-1, 1);
+                Vec::new()
+            }
+            (KeyCode::Down | KeyCode::Right, KeyModifiers::NONE) => {
+                self.scroll_output(1, 1);
+                Vec::new()
+            }
+            (KeyCode::PageUp, KeyModifiers::NONE) => {
+                self.scroll_output(-1, OUTPUT_PAGE_SCROLL);
+                Vec::new()
+            }
+            (KeyCode::PageDown, KeyModifiers::NONE) => {
+                self.scroll_output(1, OUTPUT_PAGE_SCROLL);
+                Vec::new()
+            }
+            (KeyCode::Home, KeyModifiers::NONE) => {
+                self.output_home_or_end(false);
+                Vec::new()
+            }
+            (KeyCode::End, KeyModifiers::NONE) => {
+                self.output_home_or_end(true);
+                Vec::new()
+            }
+            (KeyCode::Char('z'), KeyModifiers::NONE) => {
+                self.toggle_zoom(Pane::Output);
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn handle_pipeline_key(&mut self, key: KeyEvent, now: Instant) {
+        match (key.code, key.modifiers) {
+            (KeyCode::Up, modifiers) if modifiers == KeyModifiers::SHIFT => {
                 self.move_selected(-1, now);
             }
-            (KeyCode::Down, modifiers) if modifiers.contains(KeyModifiers::SHIFT) => {
+            (KeyCode::Down, modifiers) if modifiers == KeyModifiers::SHIFT => {
                 self.move_selected(1, now);
             }
-            (KeyCode::Up, _) => {
+            (KeyCode::Char('K'), KeyModifiers::SHIFT) => self.move_selected(-1, now),
+            (KeyCode::Char('J'), KeyModifiers::SHIFT) => self.move_selected(1, now),
+            (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
                 let next = self.selected_step.saturating_sub(1);
                 if self.selected_step != next {
                     self.selected_step = next;
                     self.mark_dirty();
                 }
             }
-            (KeyCode::Down, _) => {
+            (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
                 let next = self
                     .selected_step
                     .saturating_add(1)
@@ -598,49 +949,71 @@ impl App {
                     self.mark_dirty();
                 }
             }
-            (KeyCode::Char(' '), _) => self.toggle_selected(now),
-            (KeyCode::Delete, _) => self.delete_selected(now),
+            (KeyCode::Char(' '), KeyModifiers::NONE) => self.toggle_selected(now),
+            (KeyCode::Delete | KeyCode::Char('d'), KeyModifiers::NONE) => {
+                self.delete_selected(now);
+            }
+            (KeyCode::Enter, KeyModifiers::NONE) => self.open_inspector(),
+            (KeyCode::Char('a'), KeyModifiers::NONE) => self.open_picker(),
+            (KeyCode::Char('z'), KeyModifiers::NONE) => self.toggle_zoom(Pane::Pipeline),
             _ => {}
         }
     }
 
     fn handle_key(&mut self, key: KeyEvent, now: Instant) -> Vec<Effect> {
+        if key.code == KeyCode::F(1) && key.modifiers == KeyModifiers::NONE {
+            self.open_help();
+            return Vec::new();
+        }
         if self.modal.is_some() {
             return self.handle_modal_key(key, now);
         }
+        if key.code == KeyCode::Esc {
+            if self.zoom.take().is_some() {
+                self.mark_dirty();
+            } else {
+                self.cancel_active();
+            }
+            return Vec::new();
+        }
         match (key.code, key.modifiers) {
-            (KeyCode::Char('p' | 'P'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
                 self.open_picker();
                 return Vec::new();
             }
-            (KeyCode::Char('q' | 'Q'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
                 return self.request_quit();
             }
-            (KeyCode::Tab, modifiers) if !modifiers.contains(KeyModifiers::SHIFT) => {
+            (KeyCode::Tab, KeyModifiers::NONE) => {
                 self.rotate_focus(false);
                 return Vec::new();
             }
-            (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::SHIFT) => {
+            (KeyCode::BackTab | KeyCode::Tab, KeyModifiers::SHIFT) => {
                 self.rotate_focus(true);
                 return Vec::new();
             }
             _ => {}
+        }
+        if key.code == KeyCode::Char('?') && self.focus != Pane::Input {
+            self.open_help();
+            return Vec::new();
         }
         match self.focus {
             Pane::Input => {
                 self.handle_input_key(key, now);
                 Vec::new()
             }
-            Pane::Preview => self.handle_preview_key(key),
-            Pane::Chain => {
-                self.handle_chain_key(key, now);
+            Pane::Output => self.handle_output_key(key),
+            Pane::Pipeline => {
+                self.handle_pipeline_key(key, now);
                 Vec::new()
             }
         }
     }
 
     pub(super) fn handle_event(&mut self, event: AppEvent) -> Vec<Effect> {
-        match event {
+        let request_id = self.request_id;
+        let mut effects = match event {
             AppEvent::Tick(now) => self.tick(now),
             AppEvent::PreviewFinished(result) => {
                 self.finish_preview(result);
@@ -651,8 +1024,9 @@ impl App {
                 Vec::new()
             }
             AppEvent::Paste(_, _) => Vec::new(),
-            AppEvent::ClipboardFinished(result) => {
+            AppEvent::ClipboardFinished { kind, result } => {
                 self.set_status(Some(match result {
+                    Ok(()) if kind == CopyKind::Hex => "Copied as Hex".to_string(),
                     Ok(()) => "Copied".to_string(),
                     Err(message) => crate::error::escape_external(&message, 512),
                 }));
@@ -663,7 +1037,11 @@ impl App {
                 self.mark_dirty();
                 Vec::new()
             }
+        };
+        if self.request_id != request_id {
+            effects.insert(0, Effect::Cancel(self.request_id));
         }
+        effects
     }
 }
 
@@ -687,7 +1065,12 @@ fn normalize_paste(input: &str) -> (String, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{TUI_OUTPUT_LIMIT, error::PipelineError, pipeline::execute};
+    use crate::{
+        TUI_OUTPUT_LIMIT,
+        error::PipelineError,
+        pipeline::{ExecutionOutcome, ExecutionReport, ExecutionTarget, StepStatus, execute},
+        tui::views::{EffectiveView, effective_view},
+    };
     use crossterm::event::{KeyCode, KeyModifiers};
 
     fn now() -> Instant {
@@ -756,6 +1139,102 @@ mod tests {
         assert_eq!(app.steps[0].definition.id, "hex-encode");
     }
     #[test]
+    fn input_keeps_all_pane_shortcut_characters_as_editor_input() {
+        let start = now();
+        let mut app = App::new(start, true);
+
+        for character in "1234?zadjkpfvy".chars() {
+            key(
+                &mut app,
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+                start,
+            );
+        }
+
+        assert_eq!(app.input_text(), "1234?zadjkpfvy");
+        assert_eq!(app.focus, Pane::Input);
+        assert!(app.modal.is_none());
+        assert!(app.zoom.is_none());
+    }
+    #[test]
+    fn global_keys_cycle_focus_and_open_palette_help_or_quit() {
+        let start = now();
+        let mut app = App::new(start, true);
+
+        key(&mut app, KeyCode::Tab, KeyModifiers::NONE, start);
+        assert_eq!(app.focus, Pane::Output);
+        key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT, start);
+        assert_eq!(app.focus, Pane::Input);
+
+        key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL, start);
+        assert!(app.modal.is_some());
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+
+        key(&mut app, KeyCode::F(1), KeyModifiers::NONE, start);
+        assert!(app.modal.is_some());
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('q'), KeyModifiers::CONTROL, start).as_slice(),
+            [Effect::Quit(0)]
+        ));
+    }
+    #[test]
+    fn question_mark_opens_help_only_outside_input() {
+        let start = now();
+        let mut app = App::new(start, true);
+
+        key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE, start);
+        assert_eq!(app.input_text(), "?");
+        assert!(app.modal.is_none());
+
+        app.focus = Pane::Pipeline;
+        key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE, start);
+        assert!(app.modal.is_some());
+    }
+    #[test]
+    fn escape_closes_only_the_highest_priority_transient_state() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.output.status = OutputStatus::Running;
+        app.zoom = Some(Pane::Output);
+        app.open_picker();
+
+        let request_id = app.request_id;
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+        assert!(app.modal.is_none());
+        assert_eq!(app.zoom, Some(Pane::Output));
+        assert!(matches!(app.output.status, OutputStatus::Running));
+        assert_eq!(app.request_id, request_id);
+
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+        assert!(app.zoom.is_none());
+        assert!(matches!(app.output.status, OutputStatus::Running));
+        assert_eq!(app.request_id, request_id);
+
+        let effects = key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+        assert!(matches!(effects.as_slice(), [Effect::Cancel(_)]));
+        assert!(matches!(app.output.status, OutputStatus::Cancelled));
+
+        let request_id = app.request_id;
+        assert!(key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start).is_empty());
+        assert_eq!(app.request_id, request_id);
+        assert!(matches!(app.output.status, OutputStatus::Cancelled));
+    }
+    #[test]
+    fn ctrl_c_is_owned_only_by_the_run_loop_interrupt_path() {
+        let start = now();
+        let mut app = App::new(start, true);
+
+        assert!(key(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL, start).is_empty());
+        assert_eq!(app.input_text(), "");
+        assert!(matches!(
+            app.force_interrupt().as_slice(),
+            [Effect::Quit(130)]
+        ));
+    }
+    #[test]
     fn global_focus_and_picker_keys_do_not_edit_input() {
         let start = now();
         let mut app = App::new(start, true);
@@ -766,7 +1245,7 @@ mod tests {
 
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
         key(&mut app, KeyCode::Tab, KeyModifiers::NONE, start);
-        assert_eq!(app.focus, Pane::Preview);
+        assert_eq!(app.focus, Pane::Output);
         key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT, start);
         assert_eq!(app.focus, Pane::Input);
         assert_eq!(app.input_text(), "");
@@ -804,45 +1283,151 @@ mod tests {
         assert_eq!(app.steps[0].definition.id, "base64-encode");
     }
     #[test]
+    fn utf8_artifact_copy_keeps_the_exact_original_text() {
+        let original = "한글 e\u{301}\n\t\\u0061";
+        let payload = clipboard_payload(&Artifact::new(original.as_bytes().to_vec())).unwrap();
+
+        assert_eq!(payload.text, original);
+        assert_eq!(payload.kind, CopyKind::Text);
+    }
+    #[test]
+    fn binary_artifact_copies_as_lowercase_hex() {
+        let payload = clipboard_payload(&Artifact::new(vec![0x00, 0xab, 0xff])).unwrap();
+
+        assert_eq!(payload.text, "00abff");
+        assert_eq!(payload.kind, CopyKind::Hex);
+    }
+    #[test]
+    fn binary_copy_length_rejects_arithmetic_overflow() {
+        assert_eq!(checked_hex_len(usize::MAX), None);
+        assert_eq!(
+            checked_hex_len(TUI_OUTPUT_LIMIT),
+            Some(TUI_OUTPUT_LIMIT * 2)
+        );
+    }
+    #[test]
+    fn copy_format_depends_on_artifact_validity_in_every_non_trace_view() {
+        for (bytes, expected_text, expected_kind) in [
+            (b"plain".to_vec(), "plain", CopyKind::Text),
+            (vec![0x00, 0xab, 0xff], "00abff", CopyKind::Hex),
+        ] {
+            for view in [ViewMode::Smart, ViewMode::Text, ViewMode::Hex] {
+                let mut app = App::new(now(), true);
+                app.output.status = OutputStatus::Ready;
+                app.output.view = view;
+                app.output.active_artifact = Some(Artifact::new(bytes.clone()));
+
+                assert!(matches!(
+                    app.request_copy().as_slice(),
+                    [Effect::Copy(ClipboardPayload { text, kind })]
+                        if text == expected_text && *kind == expected_kind
+                ));
+            }
+        }
+
+        for bytes in [b"plain".to_vec(), vec![0xff]] {
+            let mut app = App::new(now(), true);
+            app.output.status = OutputStatus::Ready;
+            app.output.view = ViewMode::Trace;
+            app.output.active_artifact = Some(Artifact::new(bytes));
+            assert!(app.request_copy().is_empty());
+        }
+    }
+    #[test]
     fn unsafe_preview_requires_confirmation_before_copy_effect() {
         let mut app = App::new(now(), true);
-        app.preview = PreviewState::Ready {
-            document: PreviewDocument::new("x\u{1b}[2J".to_string()),
-        };
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"x\x1b[2J".to_vec()));
         assert!(app.request_copy().is_empty());
-        assert!(matches!(app.modal, Some(Modal::UnsafeCopyConfirm)));
+        assert!(matches!(app.modal, Some(Modal::UnsafeCopyConfirm { .. })));
         assert!(matches!(
             app.confirm_unsafe_copy().as_slice(),
             [Effect::Copy(_)]
         ));
     }
     #[test]
+    fn unsafe_confirmation_owns_the_original_payload_until_approval() {
+        let mut app = App::new(now(), true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"old\x1b".to_vec()));
+
+        assert!(app.request_copy().is_empty());
+        app.output.active_artifact = Some(Artifact::new(b"new".to_vec()));
+
+        assert!(matches!(
+            app.confirm_unsafe_copy().as_slice(),
+            [Effect::Copy(ClipboardPayload {
+                text,
+                kind: CopyKind::Text,
+            })] if text == "old\x1b"
+        ));
+    }
+    #[test]
+    fn unsafe_copy_cancel_or_modal_transition_discards_the_payload() {
+        let start = now();
+        for key_code in [KeyCode::Esc, KeyCode::Char('n')] {
+            let mut app = App::new(start, true);
+            app.output.status = OutputStatus::Ready;
+            app.output.active_artifact = Some(Artifact::new(b"secret\x1b".to_vec()));
+            app.request_copy();
+
+            assert!(key(&mut app, key_code, KeyModifiers::NONE, start).is_empty());
+            assert!(app.confirm_unsafe_copy().is_empty());
+        }
+
+        let mut app = App::new(start, true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"secret\x1b".to_vec()));
+        app.request_copy();
+        key(&mut app, KeyCode::F(1), KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+
+        assert!(app.modal.is_none());
+        assert!(app.confirm_unsafe_copy().is_empty());
+    }
+    #[test]
+    fn binary_copy_never_requires_unsafe_text_confirmation() {
+        let mut app = App::new(now(), true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(vec![0x00, 0x1b, 0xff]));
+
+        assert!(matches!(
+            app.request_copy().as_slice(),
+            [Effect::Copy(ClipboardPayload {
+                text,
+                kind: CopyKind::Hex,
+            })] if text == "001bff"
+        ));
+        assert!(app.modal.is_none());
+    }
+    #[test]
     fn only_ready_preview_can_be_copied() {
         let start = now();
         let mut app = App::new(start, true);
+        app.output.active_artifact = Some(Artifact::new(b"stale".to_vec()));
         assert!(app.request_copy().is_empty());
-        app.preview = PreviewState::Debouncing {
-            deadline: start + DEBOUNCE,
+        app.output.status = OutputStatus::Debouncing {
+            deadline: start + debounce_for(0),
         };
         assert!(app.request_copy().is_empty());
-        app.preview = PreviewState::Running;
+        app.output.status = OutputStatus::Running;
         assert!(app.request_copy().is_empty());
-        app.preview = PreviewState::Error {
-            message: "failed".to_string(),
-        };
+        app.output.status = OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
         assert!(app.request_copy().is_empty());
-        app.preview = PreviewState::Ready {
-            document: PreviewDocument::new("safe".to_string()),
-        };
+        app.output.status = OutputStatus::Cancelled;
+        assert!(app.request_copy().is_empty());
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = None;
+        assert!(app.request_copy().is_empty());
+        app.output.active_artifact = Some(Artifact::new(b"safe".to_vec()));
         assert!(matches!(app.request_copy().as_slice(), [Effect::Copy(_)]));
     }
     #[test]
     fn confirmation_modal_keys_accept_or_cancel_explicit_actions() {
         let start = now();
         let mut app = App::new(start, true);
-        app.preview = PreviewState::Ready {
-            document: PreviewDocument::new("\u{1b}".to_string()),
-        };
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(vec![0x1b]));
 
         app.request_copy();
         assert!(key(&mut app, KeyCode::Char('n'), KeyModifiers::NONE, start).is_empty());
@@ -860,6 +1445,59 @@ mod tests {
             key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE, start).as_slice(),
             [Effect::Quit(0)]
         ));
+    }
+    #[test]
+    fn unsafe_confirmation_rejects_modified_keys_without_losing_the_payload() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"secret\x1b".to_vec()));
+        app.request_copy();
+        assert!(matches!(app.modal, Some(Modal::UnsafeCopyConfirm { .. })));
+
+        for (code, modifiers) in [
+            (KeyCode::Char('y'), KeyModifiers::CONTROL),
+            (KeyCode::Enter, KeyModifiers::ALT),
+            (KeyCode::Char('n'), KeyModifiers::META),
+            (KeyCode::Esc, KeyModifiers::CONTROL),
+        ] {
+            assert!(key(&mut app, code, modifiers, start).is_empty());
+            assert!(matches!(app.modal, Some(Modal::UnsafeCopyConfirm { .. })));
+        }
+
+        assert!(matches!(
+            key(
+                &mut app,
+                KeyCode::Char('Y'),
+                KeyModifiers::SHIFT,
+                start
+            )
+            .as_slice(),
+            [Effect::Copy(ClipboardPayload { text, .. })] if text == "secret\x1b"
+        ));
+    }
+    #[test]
+    fn quit_confirmation_rejects_modified_keys_without_discarding_input() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.insert_paste("keep", start);
+        app.request_quit();
+        assert!(matches!(app.modal, Some(Modal::QuitConfirm)));
+
+        for (code, modifiers) in [
+            (KeyCode::Char('y'), KeyModifiers::CONTROL),
+            (KeyCode::Enter, KeyModifiers::ALT),
+            (KeyCode::Char('n'), KeyModifiers::META),
+            (KeyCode::Esc, KeyModifiers::CONTROL),
+        ] {
+            assert!(key(&mut app, code, modifiers, start).is_empty());
+            assert!(matches!(app.modal, Some(Modal::QuitConfirm)));
+            assert_eq!(app.input_text(), "keep");
+        }
+
+        assert!(key(&mut app, KeyCode::Char('N'), KeyModifiers::SHIFT, start).is_empty());
+        assert!(app.modal.is_none());
+        assert_eq!(app.input_text(), "keep");
     }
     #[test]
     fn quit_requires_confirmation_only_when_input_is_not_empty() {
@@ -905,37 +1543,22 @@ mod tests {
         assert!(!matches!(app.modal, Some(Modal::QuitConfirm)));
     }
     #[test]
-    fn preview_scroll_is_bounded_and_does_not_mutate_input_or_generation() {
-        let start = now();
-        let mut app = App::new(start, true);
-        app.insert_paste("source", start);
-        app.generation = 7;
-        app.preview = PreviewState::Ready {
-            document: PreviewDocument::new("zero\none\ntwo".to_string()),
-        };
-        app.focus = Pane::Preview;
-
-        key(&mut app, KeyCode::Up, KeyModifiers::NONE, start);
-        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
-        assert_eq!(app.preview_scroll, 0);
-        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
-        key(&mut app, KeyCode::Down, KeyModifiers::NONE, start);
-        assert_eq!(app.preview_scroll, 2);
-        assert_eq!(app.input_text(), "source");
-        assert_eq!(app.generation, 7);
-    }
-    #[test]
     fn preview_enter_requests_copy_without_editing_input() {
         let start = now();
         let mut app = App::new(start, true);
         app.insert_paste("source", start);
-        app.preview = PreviewState::Ready {
-            document: PreviewDocument::new("result".to_string()),
-        };
-        app.focus = Pane::Preview;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
+        app.focus = Pane::Output;
 
         let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
-        assert!(matches!(effects.as_slice(), [Effect::Copy(raw)] if &**raw == "result"));
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Copy(ClipboardPayload {
+                text,
+                kind: CopyKind::Text,
+            })] if text == "result"
+        ));
         assert_eq!(app.input_text(), "source");
     }
     #[test]
@@ -945,7 +1568,7 @@ mod tests {
         app.add_transform("base64-encode", start);
         app.add_transform("url-encode", start);
         app.add_transform("format-json", start);
-        app.focus = Pane::Chain;
+        app.focus = Pane::Pipeline;
         app.selected_step = 0;
 
         key(&mut app, KeyCode::Down, KeyModifiers::NONE, start);
@@ -960,6 +1583,218 @@ mod tests {
         assert_eq!(app.steps[0].definition.id, "base64-encode");
     }
     #[test]
+    fn pipeline_supports_all_selection_edit_inspect_palette_and_zoom_keys() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.steps = ["base64-encode", "url-encode", "format-json"]
+            .into_iter()
+            .map(|id| TransformStep {
+                definition: transform_by_id(id).unwrap(),
+                enabled: true,
+            })
+            .collect();
+        app.focus = Pane::Pipeline;
+
+        key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE, start);
+        assert_eq!(app.selected_step, 1);
+        key(&mut app, KeyCode::Char('k'), KeyModifiers::NONE, start);
+        assert_eq!(app.selected_step, 0);
+        key(&mut app, KeyCode::Down, KeyModifiers::SHIFT, start);
+        assert_eq!(app.selected_step, 1);
+        assert_eq!(app.steps[1].definition.id, "base64-encode");
+        key(&mut app, KeyCode::Up, KeyModifiers::SHIFT, start);
+        assert_eq!(app.selected_step, 0);
+        assert_eq!(app.steps[0].definition.id, "base64-encode");
+        key(&mut app, KeyCode::Down, KeyModifiers::NONE, start);
+        assert_eq!(app.selected_step, 1);
+        key(&mut app, KeyCode::Char('J'), KeyModifiers::SHIFT, start);
+        assert_eq!(app.selected_step, 2);
+        assert_eq!(app.steps[2].definition.id, "url-encode");
+        key(&mut app, KeyCode::Char('K'), KeyModifiers::SHIFT, start);
+        assert_eq!(app.selected_step, 1);
+        assert_eq!(app.steps[1].definition.id, "url-encode");
+
+        key(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, start);
+        assert!(!app.steps[1].enabled);
+        key(&mut app, KeyCode::Char('d'), KeyModifiers::NONE, start);
+        assert_eq!(app.steps.len(), 2);
+
+        key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
+        assert!(app.modal.is_some());
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Char('a'), KeyModifiers::NONE, start);
+        assert!(app.modal.is_some());
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+
+        key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE, start);
+        assert_eq!(app.zoom, Some(Pane::Pipeline));
+        key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE, start);
+        assert!(app.zoom.is_none());
+    }
+    #[test]
+    fn pipeline_edits_schedule_final_but_selection_does_not() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.steps = ["base64-encode", "url-encode"]
+            .into_iter()
+            .map(|id| TransformStep {
+                definition: transform_by_id(id).unwrap(),
+                enabled: true,
+            })
+            .collect();
+        app.focus = Pane::Pipeline;
+        app.output.source = OutputSource::Step(0);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"owned".to_vec()));
+
+        assert!(key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE, start).is_empty());
+        assert_eq!(app.request_id, 0);
+        assert_eq!(app.output.source, OutputSource::Step(0));
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"owned"
+        );
+
+        assert!(matches!(
+            key(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, start).as_slice(),
+            [Effect::Cancel(_)]
+        ));
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert!(matches!(app.output.status, OutputStatus::Debouncing { .. }));
+        assert!(matches!(
+            app.handle_event(AppEvent::Tick(start + debounce_for(0)))
+                .as_slice(),
+            [Effect::Submit(PreviewJob {
+                target: ExecutionTarget::Final,
+                ..
+            })]
+        ));
+    }
+    #[test]
+    fn output_cycles_views_requests_sources_copy_and_zoom() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.steps.push(TransformStep {
+            definition: transform_by_id("base64-encode").unwrap(),
+            enabled: true,
+        });
+        app.output.status = OutputStatus::Ready;
+        app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+        app.output.active_artifact = app.output.final_artifact.clone();
+
+        for expected in [
+            ViewMode::Text,
+            ViewMode::Hex,
+            ViewMode::Trace,
+            ViewMode::Smart,
+        ] {
+            key(&mut app, KeyCode::Char('v'), KeyModifiers::NONE, start);
+            assert_eq!(app.output.view, expected);
+        }
+        key(&mut app, KeyCode::Char('V'), KeyModifiers::SHIFT, start);
+        assert_eq!(app.output.view, ViewMode::Trace);
+
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start).as_slice(),
+            [Effect::Cancel(_), Effect::Submit(_)]
+        ));
+        assert!(
+            key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start)
+                .iter()
+                .all(|effect| !matches!(effect, Effect::Submit(_)))
+        );
+        assert_eq!(app.output.source, OutputSource::Final);
+        app.output.view = ViewMode::Smart;
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE, start).as_slice(),
+            [Effect::Copy(ClipboardPayload {
+                text,
+                kind: CopyKind::Text,
+            })] if text == "final"
+        ));
+        assert!(matches!(
+            key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start).as_slice(),
+            [Effect::Copy(ClipboardPayload {
+                text,
+                kind: CopyKind::Text,
+            })] if text == "final"
+        ));
+
+        key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE, start);
+        assert_eq!(app.zoom, Some(Pane::Output));
+        key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE, start);
+        assert!(app.zoom.is_none());
+    }
+    #[test]
+    fn output_scroll_keys_change_only_bounded_offsets() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(vec![b'x'; 40]));
+
+        app.output.view = ViewMode::Text;
+        for code in [
+            KeyCode::Down,
+            KeyCode::Right,
+            KeyCode::PageDown,
+            KeyCode::End,
+        ] {
+            key(&mut app, code, KeyModifiers::NONE, start);
+        }
+        assert!(app.output.byte_offset <= 40);
+        assert!(
+            std::str::from_utf8(app.output.active_artifact.as_ref().unwrap().bytes())
+                .unwrap()
+                .is_char_boundary(app.output.byte_offset)
+        );
+        let request_id = app.request_id;
+        key(&mut app, KeyCode::Home, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, 0);
+        key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Left, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, 0);
+
+        app.output.view = ViewMode::Hex;
+        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
+        assert_eq!(app.output.row_offset, 2);
+        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
+        assert!(app.output.row_offset <= 2);
+
+        app.output.view = ViewMode::Trace;
+        app.output.traces = (1..=3)
+            .map(|step| StepTrace {
+                step,
+                transform_id: "base64-encode",
+                input_bytes: None,
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::NotExecuted,
+                error: None,
+            })
+            .collect();
+        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
+        assert_eq!(app.output.row_offset, 2);
+        key(&mut app, KeyCode::Up, KeyModifiers::NONE, start);
+        assert_eq!(app.output.row_offset, 1);
+        assert_eq!(app.request_id, request_id);
+        assert!(matches!(app.output.status, OutputStatus::Ready));
+    }
+    #[test]
+    fn trace_view_never_copies_an_underlying_artifact() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.status = OutputStatus::Ready;
+        app.output.view = ViewMode::Trace;
+        app.output.active_artifact = Some(Artifact::new(b"hidden result".to_vec()));
+
+        assert!(key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start).is_empty());
+        assert!(key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE, start).is_empty());
+        assert!(app.modal.is_none());
+    }
+    #[test]
     fn dangerous_key_input_is_escaped_before_reaching_the_editor() {
         let start = now();
         let mut app = App::new(start, true);
@@ -969,38 +1804,90 @@ mod tests {
     #[test]
     fn clipboard_failure_preserves_ready_preview() {
         let mut app = App::new(Instant::now(), true);
-        app.preview = PreviewState::Ready {
-            document: PreviewDocument::new("result".to_string()),
-        };
-        app.handle_event(AppEvent::ClipboardFinished(Err(
-            "Clipboard unavailable".to_string()
-        )));
-        let PreviewState::Ready { document, .. } = &app.preview else {
-            panic!("expected ready preview");
-        };
-        assert_eq!(&*document.raw, "result");
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
+        app.handle_event(AppEvent::ClipboardFinished {
+            kind: CopyKind::Text,
+            result: Err("Clipboard unavailable".to_string()),
+        });
+        assert!(matches!(app.output.status, OutputStatus::Ready));
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"result"
+        );
         assert_eq!(app.status.as_deref(), Some("Clipboard unavailable"));
+    }
+    #[test]
+    fn clipboard_success_message_preserves_the_copy_kind() {
+        for (kind, expected) in [(CopyKind::Text, "Copied"), (CopyKind::Hex, "Copied as Hex")] {
+            let mut app = App::new(now(), true);
+
+            app.handle_event(AppEvent::ClipboardFinished {
+                kind,
+                result: Ok(()),
+            });
+
+            assert_eq!(app.status.as_deref(), Some(expected));
+        }
+    }
+    #[test]
+    fn clipboard_failure_is_safe_and_preserves_workbench_state() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.insert_paste("source", start);
+        app.steps.push(TransformStep {
+            definition: transform_by_id("base64-encode").unwrap(),
+            enabled: true,
+        });
+        app.output.source = OutputSource::Step(0);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
+        app.output.traces.push(StepTrace {
+            step: 1,
+            transform_id: "base64-encode",
+            input_bytes: Some(6),
+            output_bytes: Some(8),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        });
+
+        app.handle_event(AppEvent::ClipboardFinished {
+            kind: CopyKind::Hex,
+            result: Err("clipboard\n\u{1b}[2J".to_string()),
+        });
+
+        assert_eq!(app.status.as_deref(), Some("clipboard\\x0a\\x1b[2J"));
+        assert_eq!(app.input_text(), "source");
+        assert_eq!(app.steps.len(), 1);
+        assert_eq!(app.output.source, OutputSource::Step(0));
+        assert!(matches!(app.output.status, OutputStatus::Ready));
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"result"
+        );
+        assert_eq!(app.output.traces.len(), 1);
     }
     #[test]
     fn starts_as_an_empty_non_destructive_workbench() {
         let app = App::new(now(), true);
         assert_eq!(app.input_text(), "");
         assert!(app.steps.is_empty());
-        assert!(matches!(app.preview, PreviewState::Idle));
+        assert!(matches!(app.output.status, OutputStatus::Idle));
     }
     #[test]
-    fn change_debounces_for_200_milliseconds() {
+    fn small_change_debounces_for_50_milliseconds() {
         let start = now();
         let mut app = App::new(start, true);
         app.insert_paste("x", start);
 
         assert!(
-            app.handle_event(AppEvent::Tick(start + Duration::from_millis(199)))
+            app.handle_event(AppEvent::Tick(start + Duration::from_millis(49)))
                 .is_empty()
         );
-        let effects = app.handle_event(AppEvent::Tick(start + Duration::from_millis(200)));
+        let effects = app.handle_event(AppEvent::Tick(start + Duration::from_millis(50)));
         assert!(matches!(effects.as_slice(), [Effect::Submit(_)]));
-        assert!(matches!(app.preview, PreviewState::Running));
+        assert!(matches!(app.output.status, OutputStatus::Running));
     }
     #[test]
     fn empty_chain_previews_input_without_overwriting_it() {
@@ -1012,52 +1899,59 @@ mod tests {
             panic!("expected preview job");
         };
         let result = execute(job.input.clone(), &job.steps, TUI_OUTPUT_LIMIT);
-        app.handle_event(AppEvent::PreviewFinished(PreviewResult {
-            generation: job.generation,
-            result,
-        }));
+        app.handle_event(AppEvent::PreviewFinished(preview_result(
+            job.request_id,
+            job.target,
+            match result {
+                Ok(bytes) => ExecutionOutcome::Success(bytes),
+                Err(error) => ExecutionOutcome::Failed(error),
+            },
+        )));
         assert_eq!(app.input_text(), "plain");
-        let PreviewState::Ready { document, .. } = &app.preview else {
-            panic!("expected ready preview");
-        };
-        assert_eq!(&*document.raw, "plain");
+        assert!(matches!(app.output.status, OutputStatus::Ready));
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"plain"
+        );
     }
     #[test]
     fn a_change_immediately_hides_the_previous_copyable_result() {
         let start = now();
         let mut app = App::new(start, true);
-        app.preview = PreviewState::Ready {
-            document: PreviewDocument::new("old".to_string()),
-        };
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"old".to_vec()));
         app.insert_paste("new", start);
-        assert!(matches!(app.preview, PreviewState::Debouncing { .. }));
+        assert!(matches!(app.output.status, OutputStatus::Debouncing { .. }));
         assert!(!app.can_copy());
     }
     #[test]
     fn stale_worker_result_never_replaces_current_preview() {
         let start = now();
         let mut app = App::new(start, true);
-        app.generation = 2;
-        app.preview = PreviewState::Running;
-        app.handle_event(AppEvent::PreviewFinished(PreviewResult {
-            generation: 1,
-            result: Ok(b"old".to_vec()),
-        }));
-        assert!(matches!(app.preview, PreviewState::Running));
+        app.request_id = 2;
+        app.output.status = OutputStatus::Running;
+        app.handle_event(AppEvent::PreviewFinished(preview_result(
+            1,
+            ExecutionTarget::Final,
+            ExecutionOutcome::Success(b"old".to_vec()),
+        )));
+        assert!(matches!(app.output.status, OutputStatus::Running));
+        assert!(app.output.active_artifact.is_none());
+        assert!(app.request_copy().is_empty());
     }
     #[test]
     fn an_error_hides_previous_result_and_disables_copy() {
         let start = now();
         let mut app = App::new(start, true);
-        app.generation = 2;
-        app.preview = PreviewState::Ready {
-            document: PreviewDocument::new("old".to_string()),
-        };
-        app.handle_event(AppEvent::PreviewFinished(PreviewResult {
-            generation: 2,
-            result: Err(PipelineError::TooManySteps { max: 32 }),
-        }));
-        assert!(matches!(app.preview, PreviewState::Error { .. }));
+        app.request_id = 2;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"old".to_vec()));
+        app.handle_event(AppEvent::PreviewFinished(preview_result(
+            2,
+            ExecutionTarget::Final,
+            ExecutionOutcome::Failed(PipelineError::TooManySteps { max: 32 }),
+        )));
+        assert!(matches!(app.output.status, OutputStatus::Failed(_)));
         assert!(!app.can_copy());
     }
     #[test]
@@ -1104,11 +1998,11 @@ mod tests {
         let start = now();
         let mut app = App::new_with_input_limits(start, true, 8, 2);
         assert!(app.insert_paste("a\nb", start));
-        let before = (app.input_text(), app.generation);
+        let before = (app.input_text(), app.request_id);
 
         assert!(!app.insert_paste("\nc", start));
-        assert_eq!((app.input_text(), app.generation), before);
-        assert!(matches!(app.preview, PreviewState::Debouncing { .. }));
+        assert_eq!((app.input_text(), app.request_id), before);
+        assert!(matches!(app.output.status, OutputStatus::Debouncing { .. }));
         assert_eq!(app.status.as_deref(), Some("Input limit reached"));
     }
     #[test]
@@ -1116,15 +2010,15 @@ mod tests {
         let start = now();
         let mut app = App::new_with_input_limits(start, true, 8, 1);
         assert!(app.insert_paste("a", start));
-        let before = (app.input_text(), app.generation);
+        let before = (app.input_text(), app.request_id);
 
         app.handle_event(AppEvent::Key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             start,
         ));
 
-        assert_eq!((app.input_text(), app.generation), before);
-        assert!(matches!(app.preview, PreviewState::Debouncing { .. }));
+        assert_eq!((app.input_text(), app.request_id), before);
+        assert!(matches!(app.output.status, OutputStatus::Debouncing { .. }));
         assert_eq!(app.status.as_deref(), Some("Input limit reached"));
     }
     #[test]
@@ -1135,11 +2029,11 @@ mod tests {
         app.textarea.select_all();
         key(&mut app, KeyCode::Char('x'), KeyModifiers::CONTROL, start);
         key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE, start);
-        let before = (app.input_text(), app.generation);
+        let before = (app.input_text(), app.request_id);
 
         key(&mut app, KeyCode::Char('y'), KeyModifiers::CONTROL, start);
 
-        assert_eq!((app.input_text(), app.generation), before);
+        assert_eq!((app.input_text(), app.request_id), before);
         assert_eq!(app.status.as_deref(), Some("Input limit reached"));
     }
     #[test]
@@ -1150,11 +2044,11 @@ mod tests {
         app.textarea.select_all();
         key(&mut app, KeyCode::Char('x'), KeyModifiers::CONTROL, start);
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
-        let before = (app.input_text(), app.generation);
+        let before = (app.input_text(), app.request_id);
 
         key(&mut app, KeyCode::Char('y'), KeyModifiers::CONTROL, start);
 
-        assert_eq!((app.input_text(), app.generation), before);
+        assert_eq!((app.input_text(), app.request_id), before);
         assert_eq!(app.status.as_deref(), Some("Input limit reached"));
     }
     #[test]
@@ -1213,5 +2107,563 @@ mod tests {
 
         assert!(app.insert_paste("é", start));
         assert_eq!(app.input_text(), "aé");
+    }
+
+    #[test]
+    fn debounce_is_50_ms_through_256_kib_and_200_ms_above_it() {
+        assert_eq!(debounce_for(256 * 1024), Duration::from_millis(50));
+        assert_eq!(debounce_for(256 * 1024 + 1), Duration::from_millis(200));
+    }
+
+    #[test]
+    fn one_paste_invalidates_once_and_schedules_one_final_job() {
+        let start = now();
+        let mut app = App::new(start, true);
+
+        let effects = app.handle_event(AppEvent::Paste("pasted".to_string(), start));
+
+        assert_eq!(app.request_id, 1);
+        assert!(matches!(effects.as_slice(), [Effect::Cancel(1)]));
+        assert!(matches!(
+            app.output.status,
+            OutputStatus::Debouncing { deadline }
+                if deadline == start + Duration::from_millis(50)
+        ));
+        let effects = app.handle_event(AppEvent::Tick(start + Duration::from_millis(50)));
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Submit(PreviewJob {
+                request_id: 1,
+                target: ExecutionTarget::Final,
+                ..
+            })]
+        ));
+    }
+
+    fn preview_result(
+        request_id: u64,
+        target: ExecutionTarget,
+        outcome: ExecutionOutcome,
+    ) -> PreviewResult {
+        PreviewResult {
+            report: ExecutionReport {
+                request_id,
+                target,
+                outcome,
+                traces: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn document_change_clears_owned_results_and_trace_and_disables_copy() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+        app.output.active_artifact = Some(Artifact::new(b"active".to_vec()));
+        app.output.status = OutputStatus::Ready;
+        app.output.traces.push(StepTrace {
+            step: 1,
+            transform_id: "base64-encode",
+            input_bytes: Some(3),
+            output_bytes: Some(4),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        });
+        assert!(app.can_copy());
+
+        let effects = app.handle_event(AppEvent::Paste("x".to_string(), start));
+
+        assert_eq!(app.request_id, 1);
+        assert!(matches!(effects.as_slice(), [Effect::Cancel(1)]));
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert!(app.output.final_artifact.is_none());
+        assert!(app.output.active_artifact.is_none());
+        assert!(app.output.traces.is_empty());
+        assert!(!app.can_copy());
+    }
+
+    #[test]
+    fn pipeline_change_uses_the_same_invalidation_and_debounce_path() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.steps.push(TransformStep {
+            definition: transform_by_id("base64-encode").unwrap(),
+            enabled: true,
+        });
+        app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+        app.output.active_artifact = Some(Artifact::new(b"active".to_vec()));
+        app.output.status = OutputStatus::Ready;
+        app.focus = Pane::Pipeline;
+
+        let effects = key(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, start);
+
+        assert_eq!(app.request_id, 1);
+        assert!(matches!(effects.as_slice(), [Effect::Cancel(1)]));
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert!(app.output.final_artifact.is_none());
+        assert!(app.output.active_artifact.is_none());
+        assert!(matches!(
+            app.output.status,
+            OutputStatus::Debouncing { deadline }
+                if deadline == start + Duration::from_millis(50)
+        ));
+    }
+
+    #[test]
+    fn selected_stage_request_is_immediate_and_keeps_cached_final() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.steps.push(TransformStep {
+            definition: transform_by_id("base64-encode").unwrap(),
+            enabled: true,
+        });
+        app.output.final_artifact = Some(Artifact::new(b"cached".to_vec()));
+        app.output.active_artifact = app.output.final_artifact.clone();
+        app.output.status = OutputStatus::Ready;
+        app.focus = Pane::Output;
+
+        let effects = key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
+
+        assert_eq!(app.request_id, 1);
+        assert_eq!(app.output.source, OutputSource::Step(0));
+        assert!(matches!(app.output.status, OutputStatus::Running));
+        assert_eq!(
+            app.output.final_artifact.as_ref().unwrap().bytes(),
+            b"cached"
+        );
+        assert!(app.output.active_artifact.is_none());
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                Effect::Cancel(1),
+                Effect::Submit(PreviewJob {
+                    request_id: 1,
+                    target: ExecutionTarget::Step(0),
+                    ..
+                })
+            ]
+        ));
+    }
+
+    #[test]
+    fn selected_stage_without_pipeline_is_a_true_no_op() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+
+        let effects = key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
+
+        assert!(effects.is_empty());
+        assert_eq!(app.request_id, 0);
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert_eq!(app.status.as_deref(), Some("No pipeline step selected"));
+    }
+
+    #[test]
+    fn final_key_cancels_selected_stage_and_restores_cached_artifact() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.request_id = 4;
+        app.output.source = OutputSource::Step(0);
+        app.output.status = OutputStatus::Running;
+        app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+        app.focus = Pane::Output;
+
+        let effects = key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
+
+        assert_eq!(app.request_id, 5);
+        assert!(matches!(effects.as_slice(), [Effect::Cancel(5)]));
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert!(matches!(app.output.status, OutputStatus::Ready));
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"final"
+        );
+    }
+
+    #[test]
+    fn final_key_without_cached_artifact_submits_nothing() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+
+        let effects = key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
+
+        assert!(effects.is_empty());
+        assert_eq!(app.request_id, 0);
+        assert_eq!(app.status.as_deref(), Some("Final output unavailable"));
+    }
+
+    #[test]
+    fn pipeline_selection_movement_does_not_change_result_ownership() {
+        let start = now();
+        let mut app = App::new(start, true);
+        for id in ["base64-encode", "hex-encode"] {
+            app.steps.push(TransformStep {
+                definition: transform_by_id(id).unwrap(),
+                enabled: true,
+            });
+        }
+        app.output.source = OutputSource::Step(0);
+        app.output.active_artifact = Some(Artifact::new(b"active".to_vec()));
+        app.output.status = OutputStatus::Ready;
+        app.focus = Pane::Pipeline;
+        let request_id = app.request_id;
+
+        let effects = key(&mut app, KeyCode::Down, KeyModifiers::NONE, start);
+
+        assert!(effects.is_empty());
+        assert_eq!(app.selected_step, 1);
+        assert_eq!(app.request_id, request_id);
+        assert_eq!(app.output.source, OutputSource::Step(0));
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"active"
+        );
+    }
+
+    #[test]
+    fn manual_view_stays_pinned_and_smart_is_recomputed_from_reports() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.output.view = ViewMode::Text;
+        app.handle_event(AppEvent::Paste("x".to_string(), start));
+        assert_eq!(app.output.view, ViewMode::Text);
+
+        app.output.view = ViewMode::Smart;
+        app.handle_event(AppEvent::PreviewFinished(preview_result(
+            app.request_id,
+            ExecutionTarget::Final,
+            ExecutionOutcome::Success(vec![0xff]),
+        )));
+        assert_eq!(
+            effective_view(
+                app.output.view,
+                app.output.active_artifact.as_ref(),
+                matches!(app.output.status, OutputStatus::Failed(_))
+            ),
+            EffectiveView::Hex
+        );
+
+        app.request_id += 1;
+        app.handle_event(AppEvent::PreviewFinished(preview_result(
+            app.request_id,
+            ExecutionTarget::Final,
+            ExecutionOutcome::Failed(PipelineError::TooManySteps { max: 32 }),
+        )));
+        assert_eq!(
+            effective_view(
+                app.output.view,
+                app.output.active_artifact.as_ref(),
+                matches!(app.output.status, OutputStatus::Failed(_))
+            ),
+            EffectiveView::Trace
+        );
+    }
+
+    #[test]
+    fn every_stale_report_is_inert() {
+        let start = now();
+        let outcomes = [
+            ExecutionOutcome::Success(b"stale".to_vec()),
+            ExecutionOutcome::Failed(PipelineError::TooManySteps { max: 32 }),
+            ExecutionOutcome::Cancelled,
+        ];
+        for outcome in outcomes {
+            let mut app = App::new(start, true);
+            app.request_id = 9;
+            app.output.source = OutputSource::Step(2);
+            app.output.status = OutputStatus::Ready;
+            app.output.final_artifact = Some(Artifact::new(b"final-current".to_vec()));
+            app.output.active_artifact = Some(Artifact::new(b"current".to_vec()));
+            app.output.traces.push(StepTrace {
+                step: 1,
+                transform_id: "base64-encode",
+                input_bytes: Some(3),
+                output_bytes: Some(4),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            });
+            app.output.byte_offset = 7;
+            app.output.row_offset = 3;
+            app.status = Some("keep".to_string());
+            assert!(app.can_copy());
+
+            let active_before = app
+                .output
+                .active_artifact
+                .as_ref()
+                .unwrap()
+                .bytes()
+                .to_vec();
+            let final_before = app.output.final_artifact.as_ref().unwrap().bytes().to_vec();
+            let traces_before = app.output.traces.clone();
+            let source_before = app.output.source;
+            let byte_offset_before = app.output.byte_offset;
+            let row_offset_before = app.output.row_offset;
+            let output_status_before = app.output.status.clone();
+            let user_status_before = app.status.clone();
+            let was_copyable = app.can_copy();
+
+            app.handle_event(AppEvent::PreviewFinished(preview_result(
+                8,
+                ExecutionTarget::Final,
+                outcome,
+            )));
+
+            assert_eq!(
+                app.output.active_artifact.as_ref().unwrap().bytes(),
+                active_before
+            );
+            assert_eq!(
+                app.output.final_artifact.as_ref().unwrap().bytes(),
+                final_before
+            );
+            assert_eq!(app.output.traces, traces_before);
+            assert_eq!(app.output.source, source_before);
+            assert_eq!(app.output.byte_offset, byte_offset_before);
+            assert_eq!(app.output.row_offset, row_offset_before);
+            assert_eq!(app.output.status, output_status_before);
+            assert_eq!(app.status, user_status_before);
+            assert_eq!(app.can_copy(), was_copyable);
+            assert_eq!(app.request_id, 9);
+        }
+    }
+
+    #[test]
+    fn escape_cancels_active_request_and_a_later_change_schedules_final() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.request_id = 3;
+        app.output.source = OutputSource::Step(0);
+        app.output.status = OutputStatus::Running;
+        app.focus = Pane::Output;
+
+        let effects = key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+        assert_eq!(app.request_id, 4);
+        assert!(matches!(effects.as_slice(), [Effect::Cancel(4)]));
+        assert!(matches!(app.output.status, OutputStatus::Cancelled));
+
+        app.focus = Pane::Input;
+        let effects = app.handle_event(AppEvent::Paste("fresh".to_string(), start));
+        assert_eq!(app.request_id, 5);
+        assert!(matches!(effects.as_slice(), [Effect::Cancel(5)]));
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert!(matches!(app.output.status, OutputStatus::Debouncing { .. }));
+    }
+
+    #[test]
+    fn text_arrows_advance_on_utf8_boundaries_without_repeating_the_same_window() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.view = ViewMode::Text;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new("界a".as_bytes().to_vec()));
+
+        key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, "界".len());
+        assert!("界a".is_char_boundary(app.output.byte_offset));
+        let first = crate::tui::views::render_text_window(
+            app.output.active_artifact.as_ref().unwrap(),
+            app.output.byte_offset,
+            1,
+            80,
+        );
+        assert_eq!(first.text, "a");
+
+        key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, "界".len());
+        let second = crate::tui::views::render_text_window(
+            app.output.active_artifact.as_ref().unwrap(),
+            app.output.byte_offset,
+            1,
+            80,
+        );
+        assert_eq!(second.text, "a");
+        key(&mut app, KeyCode::Left, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, 0);
+        assert!("界a".is_char_boundary(app.output.byte_offset));
+    }
+
+    #[test]
+    fn text_end_and_page_down_stop_at_the_last_visible_start() {
+        let start = now();
+        for code in [KeyCode::End, KeyCode::PageDown] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Output;
+            app.output.view = ViewMode::Text;
+            app.output.status = OutputStatus::Ready;
+            app.output.active_artifact = Some(Artifact::new(b"abc".to_vec()));
+
+            key(&mut app, code, KeyModifiers::NONE, start);
+
+            assert_eq!(app.output.byte_offset, 2);
+            let window = crate::tui::views::render_text_window(
+                app.output.active_artifact.as_ref().unwrap(),
+                app.output.byte_offset,
+                1,
+                80,
+            );
+            assert_eq!(window.text, "c");
+        }
+    }
+
+    #[test]
+    fn text_pages_stay_bounded_and_long_graphemes_render_without_scalar_crawl() {
+        let start = now();
+        let text = format!("a{}b", "\u{301}".repeat(3_000));
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.view = ViewMode::Text;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(text.as_bytes().to_vec()));
+
+        for _ in 0..2 {
+            let before = app.output.byte_offset;
+            key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
+            assert!(app.output.byte_offset > before);
+            assert!(app.output.byte_offset > before.saturating_add(1));
+            assert!(text.is_char_boundary(app.output.byte_offset));
+            let window = crate::tui::views::render_text_window(
+                app.output.active_artifact.as_ref().unwrap(),
+                app.output.byte_offset,
+                1,
+                80,
+            );
+            assert!(!window.text.is_empty());
+        }
+        assert_eq!(app.output.byte_offset, text.len() - 1);
+        let maximum = app.output.byte_offset;
+        key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, maximum);
+
+        app.output.byte_offset = 0;
+        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, maximum);
+        assert!(text.is_char_boundary(app.output.byte_offset));
+        let page = crate::tui::views::render_text_window(
+            app.output.active_artifact.as_ref().unwrap(),
+            app.output.byte_offset,
+            1,
+            80,
+        );
+        assert_eq!(page.text, "b");
+
+        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
+        assert!(app.output.byte_offset < maximum);
+        assert!(text.is_char_boundary(app.output.byte_offset));
+    }
+
+    #[test]
+    fn zoom_focus_moves_with_exact_tab_and_shift_tab() {
+        let start = now();
+        for (focus, code, modifiers, expected) in [
+            (Pane::Input, KeyCode::Tab, KeyModifiers::NONE, Pane::Output),
+            (
+                Pane::Output,
+                KeyCode::Tab,
+                KeyModifiers::NONE,
+                Pane::Pipeline,
+            ),
+            (
+                Pane::Pipeline,
+                KeyCode::Tab,
+                KeyModifiers::NONE,
+                Pane::Input,
+            ),
+            (
+                Pane::Input,
+                KeyCode::Tab,
+                KeyModifiers::SHIFT,
+                Pane::Pipeline,
+            ),
+            (Pane::Output, KeyCode::Tab, KeyModifiers::SHIFT, Pane::Input),
+            (
+                Pane::Pipeline,
+                KeyCode::Tab,
+                KeyModifiers::SHIFT,
+                Pane::Output,
+            ),
+            (
+                Pane::Pipeline,
+                KeyCode::BackTab,
+                KeyModifiers::SHIFT,
+                Pane::Output,
+            ),
+        ] {
+            let mut app = App::new(start, true);
+            app.focus = focus;
+            app.zoom = Some(focus);
+
+            key(&mut app, code, modifiers, start);
+
+            assert_eq!(app.focus, expected);
+            assert_eq!(app.zoom, Some(expected));
+        }
+    }
+
+    #[test]
+    fn global_shortcuts_reject_extra_modifiers() {
+        let start = now();
+        for (code, modifiers) in [
+            (
+                KeyCode::Char('p'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
+            (
+                KeyCode::Char('q'),
+                KeyModifiers::CONTROL | KeyModifiers::META,
+            ),
+            (KeyCode::Char('P'), KeyModifiers::CONTROL),
+            (KeyCode::Char('Q'), KeyModifiers::CONTROL),
+        ] {
+            let mut app = App::new(start, true);
+            let effects = key(&mut app, code, modifiers, start);
+            assert!(effects.is_empty());
+            assert!(app.modal.is_none());
+        }
+
+        for (code, modifiers) in [
+            (KeyCode::Tab, KeyModifiers::ALT),
+            (KeyCode::Tab, KeyModifiers::SHIFT | KeyModifiers::CONTROL),
+            (KeyCode::BackTab, KeyModifiers::NONE),
+            (KeyCode::BackTab, KeyModifiers::SHIFT | KeyModifiers::ALT),
+        ] {
+            let mut app = App::new(start, true);
+            key(&mut app, code, modifiers, start);
+            assert_eq!(app.focus, Pane::Input);
+        }
+    }
+
+    #[test]
+    fn help_restores_the_suspended_picker_query_and_selection() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.open_picker();
+        for character in "decode".chars() {
+            key(
+                &mut app,
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+                start,
+            );
+        }
+        key(&mut app, KeyCode::Down, KeyModifiers::NONE, start);
+
+        key(&mut app, KeyCode::F(1), KeyModifiers::NONE, start);
+        assert!(matches!(app.modal, Some(Modal::Help)));
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker {
+                ref query,
+                selected: 1,
+            }) if query == "decode"
+        ));
     }
 }

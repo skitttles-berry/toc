@@ -7,7 +7,9 @@ use std::{
 
 use crossterm::{
     cursor::{Hide, Show},
-    event::{DisableBracketedPaste, EnableBracketedPaste, KeyCode, KeyEventKind, KeyModifiers},
+    event::{
+        DisableBracketedPaste, EnableBracketedPaste, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -104,7 +106,7 @@ impl Drop for TerminalSession {
 
 fn set_clipboard_text(
     clipboard: &mut Option<arboard::Clipboard>,
-    text: &str,
+    text: String,
 ) -> Result<(), String> {
     if clipboard.is_none() {
         *clipboard =
@@ -114,8 +116,12 @@ fn set_clipboard_text(
         return Err("Clipboard unavailable".to_string());
     };
     clipboard
-        .set_text(text.to_string())
+        .set_text(text)
         .map_err(|_| "Clipboard unavailable".to_string())
+}
+
+fn is_force_interrupt(key: &KeyEvent) -> bool {
+    key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL
 }
 
 fn run_loop(
@@ -134,9 +140,7 @@ fn run_loop(
                 crossterm::event::read().map_err(|error| AppError::Tui(error.to_string()))?;
             match event {
                 crossterm::event::Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    if key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                    {
+                    if is_force_interrupt(&key) {
                         effects.extend(app.force_interrupt());
                     } else {
                         effects.extend(app.handle_event(AppEvent::Key(key, Instant::now())));
@@ -160,9 +164,11 @@ fn run_loop(
         for effect in effects {
             match effect {
                 Effect::Submit(job) => worker.submit(job),
-                Effect::Copy(text) => {
-                    let result = set_clipboard_text(clipboard, &text);
-                    let _ = app.handle_event(AppEvent::ClipboardFinished(result));
+                Effect::Cancel(request_id) => worker.cancel(request_id),
+                Effect::Copy(payload) => {
+                    let kind = payload.kind;
+                    let result = set_clipboard_text(clipboard, payload.text);
+                    let _ = app.handle_event(AppEvent::ClipboardFinished { kind, result });
                 }
                 Effect::Quit(code) => return Ok(code),
             }
@@ -260,5 +266,33 @@ mod tests {
             "TUI error: doop tui requires terminal stdin and stdout"
         );
         assert!(check_terminal_entry(true, false).is_err());
+    }
+
+    #[test]
+    fn force_interrupt_accepts_only_exact_ctrl_c() {
+        assert!(is_force_interrupt(&crossterm::event::KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        )));
+        for key in [
+            crossterm::event::KeyEvent::new(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
+            crossterm::event::KeyEvent::new(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            crossterm::event::KeyEvent::new(KeyCode::Char('C'), KeyModifiers::CONTROL),
+            crossterm::event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+        ] {
+            assert!(!is_force_interrupt(&key));
+        }
+    }
+
+    #[test]
+    fn clipboard_boundary_consumes_an_owned_string() {
+        let _: fn(&mut Option<arboard::Clipboard>, String) -> Result<(), String> =
+            set_clipboard_text;
     }
 }
