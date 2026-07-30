@@ -15,14 +15,22 @@ smoke_output=
 smoke_error=
 smoke_expected=
 smoke_clipboard_backup=
+smoke_clipboard_verify=
 smoke_clipboard_backed_up=false
 smoke_expect_pid=
+smoke_signal_pending=false
 cleanup() {
     smoke_cleanup_status=$?
     trap - EXIT HUP INT TERM
     if [ "$smoke_clipboard_backed_up" = true ]; then
         if ! pbcopy <"$smoke_clipboard_backup"; then
             printf 'shell smoke failed: could not restore macOS clipboard\n' >&2
+            smoke_cleanup_status=1
+        elif ! pbpaste >"$smoke_clipboard_verify"; then
+            printf 'shell smoke failed: could not verify restored macOS clipboard\n' >&2
+            smoke_cleanup_status=1
+        elif ! cmp -s "$smoke_clipboard_backup" "$smoke_clipboard_verify"; then
+            printf 'shell smoke failed: restored macOS clipboard did not match backup\n' >&2
             smoke_cleanup_status=1
         fi
     fi
@@ -32,9 +40,14 @@ cleanup() {
         [ -z "$smoke_error" ] || rm -f -- "$smoke_error"
         [ -z "$smoke_expected" ] || rm -f -- "$smoke_expected"
         [ -z "$smoke_clipboard_backup" ] || rm -f -- "$smoke_clipboard_backup"
+        [ -z "$smoke_clipboard_verify" ] || rm -f -- "$smoke_clipboard_verify"
         rmdir -- "$smoke_tmp"
     fi
     exit "$smoke_cleanup_status"
+}
+
+handle_pending_signal() {
+    smoke_signal_pending=true
 }
 
 handle_signal() {
@@ -54,6 +67,7 @@ smoke_input="$smoke_tmp/input.txt"
 smoke_output="$smoke_tmp/output.txt"
 smoke_error="$smoke_tmp/error.txt"
 smoke_expected="$smoke_tmp/expected.txt"
+smoke_clipboard_verify="$smoke_tmp/clipboard-verify.txt"
 smoke_clipboard_expected=68656c6c6f
 smoke_os=$(uname -s)
 
@@ -97,6 +111,8 @@ pty_run() {
 
 tui_run() {
     export DOOP_SMOKE_TUI_MODE="$1"
+    smoke_signal_pending=false
+    trap handle_pending_signal HUP INT TERM
     expect -c '
         proc expect_exact {text eof_code timeout_code} {
             global spawn_id
@@ -271,6 +287,10 @@ tui_run() {
         exit $result
     ' &
     smoke_expect_pid=$!
+    trap handle_signal HUP INT TERM
+    if [ "$smoke_signal_pending" = true ]; then
+        handle_signal
+    fi
     wait "$smoke_expect_pid"
     smoke_expect_status=$?
     smoke_expect_pid=
