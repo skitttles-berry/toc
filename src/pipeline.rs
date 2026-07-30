@@ -205,7 +205,7 @@ pub(crate) fn execute_report(
     ExecutionReport {
         request_id,
         target,
-        outcome: outcome.unwrap_or_else(|| ExecutionOutcome::Success(input)),
+        outcome: outcome.unwrap_or(ExecutionOutcome::Success(input)),
         traces,
     }
 }
