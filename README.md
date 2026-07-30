@@ -80,10 +80,11 @@ target/install-check/bin/doop --version
 렌더링 경로의 실제 측정값만 출력합니다. 셸 점검에는 `expect`가 필요하며
 호출한 Bash 또는 Zsh 자체를 의사 터미널 안에서 실행합니다.
 
-### 2026-07-30 릴리스 검증 기록
+### 2026-07-30 v0.1 릴리스 검증 기록(역사 기록)
 
-프로덕션 코드 기준은 `3f336dc`이며 아래 검증 스크립트와 기록은 이 문서와
-같은 검증 커밋에 포함된다. Rust는 `1.97.1`이다.
+다음은 v0.1 당시의 역사 기록이다. 프로덕션 코드 기준은 `3f336dc`이며 아래
+검증 스크립트와 기록은 이 문서와 같은 검증 커밋에 포함된다.
+Rust는 `1.97.1`이다.
 
 | 환경 | 셸·CLI·TUI | 클립보드 |
 |---|---|---|
@@ -138,6 +139,71 @@ docker stop doop-task5-validation
 cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
 iterations=500, unconditional=27.937084ms, dirty=55.75µs, redraws=1
 ```
+
+### 2026-07-30 v0.2 전체 검증 기록
+
+v0.2 검증 기준 코드는 `7ca79dc29aa925407bc95517def837691a4ae875`다.
+이 기록은 그 기준 코드 다음의 문서 전용 커밋으로 추가되며 제품 코드,
+Cargo 설정, 시험 스크립트와 CI는 변경하지 않는다.
+
+| 환경 | 도구 체인 |
+|---|---|
+| macOS 26.5.2(25F84), Darwin 25.5.0, arm64 | Rust·Cargo 1.97.1, Bash 3.2.57, Zsh 5.9, Expect 5.45 |
+| Debian 12 aarch64, `rust:1.97.1-bookworm` | Rust·Cargo 1.97.1, Bash 5.2.15, Zsh 5.9, Expect 5.45.4, sway 1.7, wl-clipboard 2.1.0 |
+
+컨테이너 이미지 식별자는
+`sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa`다.
+저장소는 `/workspace`에 읽기 전용으로 연결했고 Cargo 대상·설치·설정과
+화면 서버 런타임은 `/tmp`에 두었다.
+
+macOS에서 다음 범주를 검증했다.
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
+RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features
+cargo package --locked
+cargo install --locked --offline --path . --root "$install_root"
+"$install_root/bin/doop" --version
+bash tests/shell-smoke.sh
+zsh tests/shell-smoke.sh
+DOOP_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
+DOOP_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
+```
+
+형식, 경고 금지 린트와 일반 시험 126개가 통과했고, ignored 릴리스 측정
+1개도 별도로 통과했다. rustdoc 경고 금지 문서 빌드, 패키징과 오프라인
+잠금 설치도 통과했다.
+설치 결과는 `doop 0.2.0`이었다. 릴리스 렌더링 측정 결과는
+`iterations=500, unconditional=28.677083ms, dirty=62.709µs, redraws=1`이었다.
+Bash·Zsh의 기본 스모크와 실제 macOS 복사가 모두 통과했다. 각 실제 복사
+전후에 별도 임시 파일로 원문을 백업·복원하고 `pbpaste`와 `cmp`로 동일성을
+확인했다. 클립보드 내용 자체는 출력하거나 기록하지 않았다.
+
+Linux 컨테이너에서는 다음 범주를 검증했다.
+
+```bash
+bash tests/shell-smoke.sh
+zsh tests/shell-smoke.sh
+DOOP_SMOKE_CLIPBOARD_MODE=unavailable bash tests/shell-smoke.sh
+xvfb-run -a env DOOP_SMOKE_CLIPBOARD_MODE=x11 bash tests/shell-smoke.sh
+WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman sway
+WAYLAND_DISPLAY=wayland-1 DOOP_SMOKE_CLIPBOARD_MODE=wayland \
+  bash tests/shell-smoke.sh
+cargo audit --color never --file /workspace/Cargo.lock
+```
+
+Bash·Zsh 기본 스모크와 `/dev/full` 출력 오류 코드 `5`, 화면 서버가 없을
+때의 `Clipboard unavailable`, Xvfb/X11 실제 복사와 `xclip` 정확값 검증이
+통과했다. 비권한 사용자와 권한 `0700`의 `XDG_RUNTIME_DIR`에서 wlroots
+headless sway를 실행해 `wayland-1` 유닉스 소켓을 확인했고, 자료 제어 복사와
+외부 `wl-paste --no-newline` 정확값 검증도 통과했다.
+
+`cargo-audit 0.22.2`는 최신 RustSec 데이터베이스를 가져와 자문 1,173건을
+불러왔고 `Cargo.lock`의 146개 의존성을 검사했다. 알려진 취약점과 경고는
+각각 0건이었다. 위 v0.2 검증 범위의 미검증 항목은 없다.
 
 자동 완성과 배포 패키지는 v0.2 범위에 포함하지 않습니다.
 GitHub Actions와 다른 CI 설정은 사용하지 않습니다.
