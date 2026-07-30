@@ -88,7 +88,7 @@ pub fn write_result(
     match writer.write_all(result).and_then(|()| writer.flush()) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-        Err(error) => Err(AppError::Output(error.kind())),
+        Err(_) => Err(AppError::Output),
     }
 }
 
@@ -329,10 +329,7 @@ mod tests {
     fn buffered_flush_failure_is_output_error_with_code_five() {
         let mut writer = std::io::BufWriter::new(FailingWriter(std::io::ErrorKind::Other));
         let error = write_result(&mut writer, false, b"x").unwrap_err();
-        assert!(matches!(
-            &error,
-            AppError::Output(std::io::ErrorKind::Other)
-        ));
+        assert!(matches!(&error, AppError::Output));
         assert_eq!(error.exit_code(), 5);
     }
 

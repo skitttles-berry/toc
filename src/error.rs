@@ -50,12 +50,11 @@ pub enum InputError {
 
 #[derive(Debug)]
 pub enum AppError {
-    Internal,
-    Usage(String),
+    Usage,
     Input(InputError),
     Pipeline(PipelineError),
     UnsafeTerminalOutput { preview: String },
-    Output(std::io::ErrorKind),
+    Output,
     Tui(String),
     Interrupted,
 }
@@ -63,12 +62,12 @@ pub enum AppError {
 impl AppError {
     pub fn exit_code(&self) -> i32 {
         match self {
-            Self::Internal | Self::Tui(_) => 1,
-            Self::Usage(_)
+            Self::Tui(_) => 1,
+            Self::Usage
             | Self::Input(InputError::MissingSource | InputError::ConflictingSources) => 2,
             Self::Input(_) => 3,
             Self::Pipeline(_) | Self::UnsafeTerminalOutput { .. } => 4,
-            Self::Output(_) => 5,
+            Self::Output => 5,
             Self::Interrupted => 130,
         }
     }
@@ -135,6 +134,13 @@ pub(crate) fn hex_preview(bytes: &[u8]) -> String {
     preview
 }
 
+pub(crate) fn invalid_utf8_output(bytes: &[u8]) -> TransformError {
+    TransformError::InvalidUtf8Output {
+        preview_hex: hex_preview(bytes),
+        total_bytes: bytes.len(),
+    }
+}
+
 fn render_transform_error(error: &TransformError) -> String {
     match error {
         TransformError::InvalidUtf8Input => "input is not valid UTF-8".to_string(),
@@ -198,8 +204,7 @@ pub fn render_pipeline_error(error: &PipelineError) -> String {
 
 pub fn render_app_error(error: &AppError) -> String {
     match error {
-        AppError::Internal => "Internal error".to_string(),
-        AppError::Usage(_) => "Invalid usage".to_string(),
+        AppError::Usage => "Invalid usage".to_string(),
         AppError::Input(InputError::MissingSource) => "Provide stdin or --input PATH".to_string(),
         AppError::Input(InputError::ConflictingSources) => {
             "Use stdin or --input PATH, not both".to_string()
@@ -218,7 +223,7 @@ pub fn render_app_error(error: &AppError) -> String {
                 escape_external(preview, 256)
             )
         }
-        AppError::Output(_) => "Could not write output".to_string(),
+        AppError::Output => "Could not write output".to_string(),
         AppError::Tui(message) => {
             format!("TUI error: {}", escape_external(message, 512))
         }
@@ -240,8 +245,7 @@ mod tests {
 
     #[test]
     fn maps_error_categories_to_public_exit_codes() {
-        assert_eq!(AppError::Internal.exit_code(), 1);
-        assert_eq!(AppError::Usage("bad".into()).exit_code(), 2);
+        assert_eq!(AppError::Usage.exit_code(), 2);
         assert_eq!(AppError::Input(InputError::MissingSource).exit_code(), 2);
         assert_eq!(
             AppError::Input(InputError::ConflictingSources).exit_code(),
@@ -262,7 +266,7 @@ mod tests {
             .exit_code(),
             4
         );
-        assert_eq!(AppError::Output(std::io::ErrorKind::Other).exit_code(), 5);
+        assert_eq!(AppError::Output.exit_code(), 5);
         assert_eq!(AppError::Tui("terminal unavailable".into()).exit_code(), 1);
         assert_eq!(AppError::Interrupted.exit_code(), 130);
     }
@@ -300,6 +304,17 @@ mod tests {
         });
         assert!(rendered.contains("bytes omitted"));
         assert!(rendered.contains("total: 65 bytes"));
+    }
+
+    #[test]
+    fn invalid_utf8_output_bounds_the_preview_to_sixty_four_bytes() {
+        assert_eq!(
+            invalid_utf8_output(&[0xff; 65]),
+            TransformError::InvalidUtf8Output {
+                preview_hex: "ff".repeat(64),
+                total_bytes: 65,
+            }
+        );
     }
 
     #[test]

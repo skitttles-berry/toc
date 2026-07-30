@@ -40,7 +40,7 @@ fn run() -> Result<(), AppError> {
             if exit_code == 0 {
                 Ok(())
             } else {
-                Err(AppError::Usage(text))
+                Err(AppError::Usage)
             }
         }
         ParseOutcome::Run(Invocation::List) => {
@@ -81,7 +81,7 @@ fn run() -> Result<(), AppError> {
 fn main() {
     if let Err(error) = run() {
         let code = error.exit_code();
-        if !matches!(error, AppError::Usage(_)) {
+        if !matches!(error, AppError::Usage) {
             let message = doop::error::render_app_error(&error);
             let _ = writeln!(io::stderr().lock(), "{message}");
         }

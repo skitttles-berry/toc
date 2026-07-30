@@ -2,7 +2,7 @@ use base64::{
     DecodeError, DecodeSliceError, Engine as _, encoded_len, engine::general_purpose::STANDARD,
 };
 
-use crate::error::{TransformError, hex_preview};
+use crate::error::{TransformError, invalid_utf8_output};
 
 pub fn encode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
     let required = encoded_len(input.len(), true).ok_or(TransformError::OutputTooLarge {
@@ -75,10 +75,7 @@ pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
         })?;
     decoded.truncate(written);
     if std::str::from_utf8(&decoded).is_err() {
-        return Err(TransformError::InvalidUtf8Output {
-            preview_hex: hex_preview(&decoded),
-            total_bytes: decoded.len(),
-        });
+        return Err(invalid_utf8_output(&decoded));
     }
     Ok(decoded)
 }

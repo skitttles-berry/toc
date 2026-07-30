@@ -42,6 +42,31 @@ fn transform_error_writes_only_stderr_and_code_four() {
 }
 
 #[test]
+fn decoders_report_the_same_bounded_invalid_utf8_details() {
+    let expected = format!(
+        "decoded bytes are not UTF-8 (hex prefix: {}; bytes omitted; total: 65 bytes)\n",
+        "ff".repeat(64)
+    );
+    let inputs = [
+        ("base64-decode", format!("{}//8=", "/".repeat(84))),
+        ("url-decode", "%FF".repeat(65)),
+        ("hex-decode", "ff".repeat(65)),
+    ];
+
+    for (transform, input) in inputs {
+        let output = run(&[transform], input.as_bytes());
+        assert_eq!(output.status.code(), Some(4), "{transform}");
+        assert!(output.stdout.is_empty(), "{transform}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(
+            stderr.strip_prefix(&format!("step 1 ({transform}) failed: ")),
+            Some(expected.as_str()),
+            "{transform}"
+        );
+    }
+}
+
+#[test]
 fn help_version_and_list_are_successful_english_output() {
     for args in [
         &[][..],
@@ -146,15 +171,6 @@ fn hex_cli_handles_binary_input_whitespace_chains_and_atomic_errors() {
         assert!(output.stdout.is_empty());
         assert_eq!(String::from_utf8(output.stderr).unwrap(), expected);
     }
-
-    let invalid_utf8 = "ff".repeat(65);
-    let output = run(&["hex-decode"], invalid_utf8.as_bytes());
-    assert_eq!(output.status.code(), Some(4));
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains(&"ff".repeat(64)));
-    assert!(stderr.contains("bytes omitted"));
-    assert!(stderr.contains("total: 65 bytes"));
 }
 
 #[test]

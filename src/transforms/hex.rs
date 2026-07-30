@@ -1,4 +1,4 @@
-use crate::error::{TransformError, hex_preview};
+use crate::error::{TransformError, invalid_utf8_output};
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
@@ -81,10 +81,7 @@ pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
     debug_assert_eq!(output.len(), required);
 
     if std::str::from_utf8(&output).is_err() {
-        return Err(TransformError::InvalidUtf8Output {
-            preview_hex: hex_preview(&output),
-            total_bytes: output.len(),
-        });
+        return Err(invalid_utf8_output(&output));
     }
     Ok(output)
 }
