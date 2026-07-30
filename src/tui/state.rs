@@ -62,7 +62,7 @@ pub(super) struct App {
     pub(super) steps: Vec<TransformStep>,
     pub(super) selected_step: usize,
     pub(super) preview: PreviewState,
-    pub(super) generation: u64,
+    generation: u64,
     pub(super) modal: Option<Modal>,
     pub(super) status: Option<String>,
     pub(super) preview_scroll: usize,
@@ -121,7 +121,7 @@ impl App {
         }
     }
 
-    pub(super) fn input_text(&self) -> String {
+    fn input_text(&self) -> String {
         self.textarea.lines().join("\n")
     }
 
@@ -201,7 +201,7 @@ impl App {
         self.mark_dirty();
     }
 
-    pub(super) fn insert_paste(&mut self, text: &str, now: Instant) -> bool {
+    fn insert_paste(&mut self, text: &str, now: Instant) -> bool {
         let retained = self.input_len().saturating_sub(self.selected_input_len());
         let remaining = self.input_limit.saturating_sub(retained);
         if text.len() > remaining.saturating_mul(2) {
@@ -226,7 +226,7 @@ impl App {
         modified
     }
 
-    pub(super) fn add_transform(&mut self, id: &str, now: Instant) -> bool {
+    fn add_transform(&mut self, id: &str, now: Instant) -> bool {
         if self.steps.len() == MAX_STEPS {
             self.set_status(Some("Chain limit reached".to_string()));
             return false;
