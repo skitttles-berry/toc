@@ -349,7 +349,7 @@ Smart는 실패 보고서에 Trace를 사용한다. Text나 Hex를 수동으로 
 
 ## 8.1 실행 엔진
 
-* `StrictText`와 `AllowBinary`에서 유효한 UTF-8 결과가 동일함
+* 모든 활성 단계의 출력이 유효한 UTF-8일 때 `StrictText`와 `AllowBinary`의 최종 결과가 동일함. 중간 단계가 비 UTF-8이면 이후 바이트 허용 단계가 최종 텍스트를 만들더라도 `StrictText`는 해당 중간 단계에서 실패함
 * 비 UTF-8 Base64·URL·Hex 디코딩이 CLI에서는 기존 오류이고 TUI에서는 성공함
 * TUI 바이너리 결과가 바이트 입력 단계에는 전달되고 텍스트 입력 단계에서는 실패함
 * 첫 실패 뒤 단계가 `NotExecuted`임
@@ -388,6 +388,7 @@ Smart는 실패 보고서에 Trace를 사용한다. Text나 Hex를 수동으로 
 * 기존 8개 공개 변환 ID와 직접 명령 구조가 유지됨
 * macOS와 Linux의 Bash·Zsh에서 CLI와 TUI Smoke 시험
 * 클립보드 사용 가능·불가능 상태와 X11 경로
+* macOS 필수 클립보드 Smoke는 백업부터 복원까지 다른 클립보드 사용이 없는 환경에서 실행하고, 제품 복사의 `changeCount`가 정확히 1 증가한 경우에만 소유한 내용으로 기록함
 * raw mode, 대체 화면과 bracketed paste의 정상·인터럽트·패닉 복구
 
 필수 로컬 검증 명령은 기존 README의 형식, Clippy, 전체 시험, 릴리스 렌더 측정과 셸 Smoke 명령을 유지한다.
@@ -423,6 +424,7 @@ Smart는 실패 보고서에 Trace를 사용한다. Text나 Hex를 수동으로 
 | 변환 내부 협력 취소 | 한 단계가 사용자가 체감할 만큼 오래 실행되는 변환을 추가할 때 |
 | 작업자 결과 채널의 `Empty`·`Disconnected` 구분 | 작업자 비정상 종료를 화면 상태나 복구 동작으로 구분해야 할 때 |
 | Viewport 행 기반 `PageUp`·`PageDown` | 고정 10단위 이동이 실제 터미널 높이에서 탐색을 방해하는 사례가 확인될 때 |
+| 붙여넣기 정규화 단일 패스 | 최대 약 8 MiB인 임시 정규화 버퍼가 측정상 메모리 문제로 확인될 때 |
 | Tokio·Task Scheduler | 네트워크나 다수 비동기 I/O 작업이 제품 범위에 들어올 때 |
 | 대용량 Streaming Pipeline | 현재 입력·출력 제한을 넘는 승인된 파일 사용 사례가 있을 때 |
 | 신규 인코딩·해시·압축·JWT Operation | 각 형식의 입력 규약, 보안 경계와 시험 벡터가 승인될 때 |

@@ -31,7 +31,6 @@ impl Artifact {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // Output view keys are connected in Task 6.
 pub(super) enum ViewMode {
     Smart,
     Text,
@@ -50,7 +49,6 @@ pub(super) enum EffectiveView {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct TextWindow {
     pub text: String,
-    pub previous_offset: usize,
     pub next_offset: usize,
     pub inspected_bytes: usize,
 }
@@ -155,7 +153,6 @@ pub(super) fn render_text_window(
     let Some((start, source)) = bounded_utf8_text(artifact, offset) else {
         return TextWindow {
             text: String::new(),
-            previous_offset: 0,
             next_offset: 0,
             inspected_bytes: 0,
         };
@@ -229,10 +226,6 @@ pub(super) fn render_text_window(
     }
 
     TextWindow {
-        previous_offset: utf8_boundary_at_or_before(
-            bytes,
-            start.saturating_sub(VISIBLE_TEXT_BYTE_BUDGET),
-        ),
         next_offset: cursor,
         inspected_bytes: cursor.saturating_sub(start),
         text: output,
@@ -463,7 +456,6 @@ mod tests {
         let window = render_text_window(&artifact, 2, 2, 8);
 
         assert_eq!(window.text, "界\tb\nnext");
-        assert_eq!(window.previous_offset, 0);
         assert_eq!(window.next_offset, artifact.bytes().len());
         assert!(window.inspected_bytes <= VISIBLE_TEXT_BYTE_BUDGET);
         assert!(window.text.len() <= VISIBLE_TEXT_BYTE_BUDGET);
@@ -525,9 +517,7 @@ mod tests {
 
             assert_eq!(window.text, expected);
             assert!(window.next_offset > 0);
-            assert!(window.previous_offset <= window.next_offset);
             assert!(window.next_offset <= artifact.bytes().len());
-            assert!(text.is_char_boundary(window.previous_offset));
             assert!(text.is_char_boundary(window.next_offset));
         }
     }
@@ -563,7 +553,6 @@ mod tests {
         assert!(!first.text.contains("secret"));
         assert_eq!(first.next_offset, 2);
         assert_eq!(second.text, "secret");
-        assert!(text.is_char_boundary(first.previous_offset));
         assert!(text.is_char_boundary(first.next_offset));
         assert!(text.is_char_boundary(second.next_offset));
     }

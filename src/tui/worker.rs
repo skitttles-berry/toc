@@ -42,12 +42,6 @@ pub(super) struct PreviewWorker {
     results: mpsc::Receiver<PreviewResult>,
 }
 
-impl Default for PreviewWorker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl PreviewWorker {
     pub(super) fn new() -> Self {
         let shared = Arc::new(WorkerShared {

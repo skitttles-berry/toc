@@ -15,14 +15,12 @@ pub struct TransformStep {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExecutionPolicy {
     StrictText,
-    #[allow(dead_code)] // Used by the TUI execution path added in the next task.
     AllowBinary,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExecutionTarget {
     Final,
-    #[allow(dead_code)] // Used by selected-stage TUI execution in the next task.
     Step(usize),
 }
 

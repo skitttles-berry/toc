@@ -91,6 +91,13 @@ fn pane_block<'a>(app: &App, title: &'a str, focused: bool) -> Block<'a> {
         .title_style(style)
 }
 
+fn source_label(source: OutputSource) -> String {
+    match source {
+        OutputSource::Final => "FINAL".to_string(),
+        OutputSource::Step(index) => format!("STEP {:02}", index + 1),
+    }
+}
+
 fn render_input(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let block = pane_block(app, "Input", app.focus == Pane::Input);
     app.textarea.set_block(block);
@@ -98,10 +105,7 @@ fn render_input(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
 }
 
 fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let source = match app.output.source {
-        OutputSource::Final => "FINAL".to_string(),
-        OutputSource::Step(index) => format!("STEP {:02}", index + 1),
-    };
+    let source = source_label(app.output.source);
     let view = match app.output.view {
         ViewMode::Smart => "Smart",
         ViewMode::Text => "Text",
@@ -209,7 +213,9 @@ fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: boo
                 .traces
                 .iter()
                 .find(|trace| trace.step == index + 1);
-            let status = if !step.enabled {
+            let status = if let Some(trace) = trace {
+                trace.status
+            } else if !step.enabled {
                 StepStatus::Disabled
             } else if matches!(app.output.status, OutputStatus::Running)
                 && matches!(app.output.source, OutputSource::Step(target) if target == index)
@@ -231,7 +237,7 @@ fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: boo
                     },
                 ));
             } else {
-                trace.map_or(StepStatus::NotExecuted, |trace| trace.status)
+                StepStatus::NotExecuted
             };
             let (mark, label, color) = match status {
                 StepStatus::Succeeded => ("✓ ", "OK", Color::Green),
@@ -338,15 +344,16 @@ fn render_step_summary(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn render_context(frame: &mut Frame<'_>, app: &App, area: Rect, full: bool) {
-    let text = match &app.output.status {
-        OutputStatus::Failed(error) => crate::error::escape_external(
-            &render_pipeline_error_summary(error),
-            area.width as usize,
-        ),
+    let prefix = format!("{} | ", source_label(app.output.source));
+    let body_width = (area.width as usize).saturating_sub(prefix.len());
+    let body = match &app.output.status {
+        OutputStatus::Failed(error) => {
+            crate::error::escape_external(&render_pipeline_error_summary(error), body_width)
+        }
         OutputStatus::Cancelled => "Cancelled".to_string(),
         _ => {
             if let Some(message) = &app.status {
-                crate::error::escape_external(message, area.width as usize)
+                crate::error::escape_external(message, body_width)
             } else {
                 match &app.output.status {
                     _ if app.can_copy()
@@ -368,6 +375,7 @@ fn render_context(frame: &mut Frame<'_>, app: &App, area: Rect, full: bool) {
             }
         }
     };
+    let text = format!("{prefix}{body}");
     let style = if app.no_color {
         Style::default()
     } else {
@@ -500,14 +508,16 @@ fn render_inspector(frame: &mut Frame<'_>, app: &App) {
         .traces
         .iter()
         .find(|trace| trace.step == app.selected_step + 1);
-    let status = if !step.enabled {
+    let status = if let Some(trace) = trace {
+        step_status(trace.status)
+    } else if !step.enabled {
         "OFF"
     } else if matches!(app.output.status, OutputStatus::Running)
         && app.output.source == OutputSource::Step(app.selected_step)
     {
         "RUNNING"
     } else {
-        trace.map_or("NOT RUN", |trace| step_status(trace.status))
+        "NOT RUN"
     };
     let input = trace
         .and_then(|trace| trace.input_bytes)
@@ -1383,6 +1393,60 @@ mod tests {
     }
 
     #[test]
+    fn context_bar_prefixes_source_for_every_status_branch_and_usable_width() {
+        for (source, prefix) in [
+            (OutputSource::Final, "FINAL | "),
+            (OutputSource::Step(1), "STEP 02 | "),
+        ] {
+            for (width, height) in [(120, 16), (90, 13), (40, 10)] {
+                let mut normal = App::new(now(), true);
+                normal.output.source = source;
+                let context = rendered_app(width, height, &mut normal);
+                assert!(context.lines().last().unwrap().starts_with(prefix));
+
+                let mut status = App::new(now(), true);
+                status.output.source = source;
+                status.status = Some("Copied\u{1b}[2J".to_string());
+                let context = rendered_app(width, height, &mut status);
+                let context = context.lines().last().unwrap();
+                assert!(context.starts_with(prefix));
+                assert!(context.contains("Copied\\x1b[2J"));
+                assert!(!context.contains('\u{1b}'));
+
+                let mut failed = App::new(now(), true);
+                failed.output.source = source;
+                failed.status = Some("stale".to_string());
+                failed.output.status =
+                    OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
+                let context = rendered_app(width, height, &mut failed);
+                let context = context.lines().last().unwrap();
+                assert!(context.starts_with(prefix));
+                assert!(context.contains("chain exceeds 32 steps"));
+                assert!(!context.contains("stale"));
+
+                let mut cancelled = App::new(now(), true);
+                cancelled.output.source = source;
+                cancelled.status = Some("stale".to_string());
+                cancelled.output.status = OutputStatus::Cancelled;
+                let context = rendered_app(width, height, &mut cancelled);
+                let context = context.lines().last().unwrap();
+                assert!(context.starts_with(prefix));
+                assert!(context.contains("Cancelled"));
+                assert!(!context.contains("stale"));
+
+                let mut copy_hint = App::new(now(), true);
+                copy_hint.output.source = source;
+                copy_hint.output.status = OutputStatus::Ready;
+                copy_hint.output.active_artifact = Some(Artifact::new(vec![0xff]));
+                let context = rendered_app(width, height, &mut copy_hint);
+                let context = context.lines().last().unwrap();
+                assert!(context.starts_with(prefix));
+                assert!(context.contains("Copy as Hex"));
+            }
+        }
+    }
+
+    #[test]
     fn invalid_utf8_failure_output_never_exposes_the_hex_preview() {
         for view in [ViewMode::Smart, ViewMode::Text, ViewMode::Hex] {
             let mut app = App::new(now(), true);
@@ -1599,6 +1663,160 @@ mod tests {
     }
 
     #[test]
+    fn disabled_pipeline_rows_show_trace_status_before_current_enablement() {
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Pipeline;
+        app.steps = ["base64-encode", "hex-encode"]
+            .into_iter()
+            .map(|id| TransformStep {
+                definition: transform_by_id(id).unwrap(),
+                enabled: false,
+            })
+            .collect();
+        app.output.traces = vec![
+            StepTrace {
+                step: 1,
+                transform_id: "base64-encode",
+                input_bytes: Some(1),
+                output_bytes: Some(1),
+                elapsed: None,
+                status: StepStatus::Disabled,
+                error: None,
+            },
+            StepTrace {
+                step: 2,
+                transform_id: "hex-encode",
+                input_bytes: None,
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::NotExecuted,
+                error: None,
+            },
+        ];
+
+        let screen = rendered_app(89, 20, &mut app);
+        let disabled = screen
+            .lines()
+            .find(|line| line.contains("Base64 Encode"))
+            .unwrap();
+        let not_run = screen
+            .lines()
+            .find(|line| line.contains("Hex Encode"))
+            .unwrap();
+
+        assert!(disabled.contains("[OFF] OFF"));
+        assert!(not_run.contains("[OFF] NOT RUN"));
+    }
+
+    #[test]
+    fn disabled_step_inspector_shows_trace_status_before_current_enablement() {
+        let mut app = App::new(now(), true);
+        app.steps.push(TransformStep {
+            definition: transform_by_id("hex-encode").unwrap(),
+            enabled: false,
+        });
+        app.output.traces.push(StepTrace {
+            step: 1,
+            transform_id: "hex-encode",
+            input_bytes: None,
+            output_bytes: None,
+            elapsed: None,
+            status: StepStatus::NotExecuted,
+            error: None,
+        });
+        app.modal = Some(Modal::StepInspector);
+
+        let screen = rendered_app(80, 20, &mut app);
+
+        assert!(screen.contains("Status: NOT RUN"));
+        assert!(!screen.contains("Status: OFF"));
+    }
+
+    #[test]
+    fn restoring_final_renders_cached_pipeline_and_trace_without_rerun() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.steps = ["base64-encode", "hex-encode"]
+            .into_iter()
+            .map(|id| TransformStep {
+                definition: transform_by_id(id).unwrap(),
+                enabled: true,
+            })
+            .collect();
+        let final_traces = vec![
+            StepTrace {
+                step: 1,
+                transform_id: "base64-encode",
+                input_bytes: Some(1),
+                output_bytes: Some(4),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            },
+            StepTrace {
+                step: 2,
+                transform_id: "hex-encode",
+                input_bytes: Some(4),
+                output_bytes: Some(8),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            },
+        ];
+        app.handle_event(AppEvent::PreviewFinished(PreviewResult {
+            report: ExecutionReport {
+                request_id: 0,
+                target: ExecutionTarget::Final,
+                outcome: ExecutionOutcome::Success(b"final".to_vec()),
+                traces: final_traces.clone(),
+            },
+        }));
+        app.focus = Pane::Output;
+        key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
+        app.handle_event(AppEvent::PreviewFinished(PreviewResult {
+            report: ExecutionReport {
+                request_id: 1,
+                target: ExecutionTarget::Step(0),
+                outcome: ExecutionOutcome::Success(b"step".to_vec()),
+                traces: vec![
+                    final_traces[0].clone(),
+                    StepTrace {
+                        step: 2,
+                        transform_id: "hex-encode",
+                        input_bytes: None,
+                        output_bytes: None,
+                        elapsed: None,
+                        status: StepStatus::NotExecuted,
+                        error: None,
+                    },
+                ],
+            },
+        }));
+        key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
+        app.output.view = ViewMode::Trace;
+        app.focus = Pane::Pipeline;
+
+        let screen = rendered_app(120, 20, &mut app);
+        let hex_row = screen
+            .lines()
+            .find(|line| line.contains("Hex Encode"))
+            .unwrap();
+
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert_eq!(app.output.status, OutputStatus::Ready);
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"final"
+        );
+        assert_eq!(app.output.traces, final_traces);
+        assert!(screen.contains("Output — FINAL — Trace"));
+        assert!(screen.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
+        assert!(screen.contains("#2 hex-encode"));
+        assert!(hex_row.contains("[ON] OK"));
+        assert!(!hex_row.contains("NOT RUN"));
+    }
+
+    #[test]
     fn running_pipeline_state_and_byte_sizes_follow_color_and_width_policy() {
         let mut app = App::new(now(), false);
         app.focus = Pane::Pipeline;
@@ -1724,7 +1942,7 @@ mod tests {
             let screen = rendered_app(width, height, &mut app);
             let context = screen.lines().last().unwrap();
 
-            assert!(context.starts_with("Clipboard unavailable"));
+            assert!(context.starts_with("FINAL | Clipboard unavailable"));
             assert!(!context.contains("Ctrl+P"));
         }
     }
@@ -1739,7 +1957,7 @@ mod tests {
                 .lines()
                 .last()
                 .unwrap()
-                .starts_with("chain exceeds 32 steps")
+                .starts_with("FINAL | chain exceeds 32 steps")
         );
 
         let mut cancelled = App::new(now(), true);
@@ -1750,7 +1968,7 @@ mod tests {
                 .lines()
                 .last()
                 .unwrap()
-                .starts_with("Cancelled")
+                .starts_with("FINAL | Cancelled")
         );
     }
     #[test]

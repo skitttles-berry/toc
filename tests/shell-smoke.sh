@@ -65,6 +65,9 @@ cleanup() {
             smoke_preserve_tmp=true
         fi
 
+        # macOS clipboard smoke requires exclusive clipboard use through restore;
+        # this last count check keeps cleanup fail-closed before the unavoidable
+        # check-to-pbcopy window.
         if [ "$smoke_restore_clipboard" = true ] &&
             ! pbcopy <"$smoke_clipboard_backup"; then
             printf 'shell smoke failed: could not restore macOS clipboard\n' >&2
@@ -258,6 +261,23 @@ tui_run() {
             }
             return $count
         }
+        proc macos_owned_transition {initial observed} {
+            if {![string is wideinteger -strict $initial] ||
+                ![string is wideinteger -strict $observed] ||
+                $initial < 0 || $observed < 0 ||
+                $initial == 9223372036854775807} {
+                return 0
+            }
+            return [expr {$observed == $initial + 1}]
+        }
+        proc verify_macos_owned_transition {failure_code} {
+            if {![macos_owned_transition 10 11] ||
+                [macos_owned_transition 10 12] ||
+                [macos_owned_transition invalid 11] ||
+                [macos_owned_transition 9223372036854775807 9223372036854775808]} {
+                exit $failure_code
+            }
+        }
         proc smoke {} {
             global env spawn_id spawn_out
             log_user 0
@@ -338,6 +358,11 @@ tui_run() {
                         timeout { exit 128 }
                     }
                     set observed_count [macos_change_count 150]
+                    if {![macos_owned_transition \
+                        $env(DOOP_SMOKE_CLIPBOARD_INITIAL_COUNT) \
+                        $observed_count]} {
+                        exit 154
+                    }
                     set copied [read_clipboard macos 124]
                     if {$copied ne $env(DOOP_SMOKE_CLIPBOARD_EXPECTED)} {
                         exit 125
@@ -389,6 +414,7 @@ tui_run() {
             }
             return [lindex $result 3]
         }
+        verify_macos_owned_transition 154
         if {[catch {smoke} result]} {
             puts stderr $result
             exit 118
@@ -628,6 +654,7 @@ case "${DOOP_SMOKE_CLIPBOARD_MODE:-skip}" in
             151) fail "macOS clipboard ownership count read failed" ;;
             152) fail "macOS clipboard changed during product copy verification" ;;
             153) fail "macOS clipboard ownership count could not be recorded" ;;
+            154) fail "macOS clipboard change count did not advance exactly once" ;;
         esac
         assert_eq '130' "$exit_status" "macOS clipboard path"
         ;;

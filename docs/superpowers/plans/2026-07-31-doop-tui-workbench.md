@@ -1016,9 +1016,9 @@ git diff --check
 
 Expected result: every available check passes, the release measurement reports one dirty redraw, package/install reports `doop 0.2.0`, and no GitHub Actions file exists.
 
-- [ ] Only after the candidate suite passes, change the design status from `사용자 승인` or verification-pending wording to `구현 완료`, and replace conditional “구현 완료 후 우선” wording in both PRDs with the active TUI precedence.
+- [ ] Add a new Task 9 verification record to README for this workbench candidate, naming its execution date and exact candidate commit SHA and listing only commands and platform paths actually run. Do not alter the historical 2026-07-30 records or claim unavailable paths passed.
 
-- [ ] Add a dated local verification record to README only for commands actually run. Do not alter the historical 2026-07-30 records and do not claim unavailable Linux/macOS paths passed.
+- [ ] Only after the candidate suite passes, evaluate that new candidate-specific record. If it contains actual macOS and Linux results for Bash and Zsh, real TUI paths and each platform's required clipboard path, change the design status to `구현 완료` and replace conditional precedence wording in both PRDs. Otherwise keep the status `기능 구현 완료·플랫폼 통합 검증 대기` and preserve the conditional precedence.
 
 - [ ] Re-index the significantly changed module tree using the `ccc` skill:
 

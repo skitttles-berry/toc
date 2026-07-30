@@ -115,6 +115,7 @@ pub(super) struct OutputState {
     pub(super) view: ViewMode,
     pub(super) status: OutputStatus,
     pub(super) final_artifact: Option<Artifact>,
+    pub(super) final_traces: Vec<StepTrace>,
     pub(super) active_artifact: Option<Artifact>,
     pub(super) traces: Vec<StepTrace>,
     pub(super) byte_offset: usize,
@@ -208,6 +209,7 @@ impl App {
                 view: ViewMode::Smart,
                 status: OutputStatus::Idle,
                 final_artifact: None,
+                final_traces: Vec::new(),
                 active_artifact: None,
                 traces: Vec::new(),
                 byte_offset: 0,
@@ -305,6 +307,7 @@ impl App {
             deadline: now + debounce_for(self.input_len()),
         };
         self.output.final_artifact = None;
+        self.output.final_traces.clear();
         self.output.active_artifact = None;
         self.output.traces.clear();
         self.output.byte_offset = 0;
@@ -315,6 +318,8 @@ impl App {
     fn insert_paste(&mut self, text: &str, now: Instant) -> bool {
         let retained = self.input_len().saturating_sub(self.selected_input_len());
         let remaining = self.input_limit.saturating_sub(retained);
+        // ponytail: the 1 MiB cap and 2x precheck bound normalization output to
+        // about 8 MiB; use a one-pass validator only if this ceiling measures poorly.
         if text.len() > remaining.saturating_mul(2) {
             self.reject_input();
             return false;
@@ -531,7 +536,7 @@ impl App {
             ExecutionTarget::Final => OutputSource::Final,
             ExecutionTarget::Step(index) => OutputSource::Step(index),
         };
-        self.output.traces = report.traces;
+        self.output.traces = report.traces.into_iter().take(MAX_STEPS).collect();
         self.output.byte_offset = 0;
         self.output.row_offset = 0;
         match report.outcome {
@@ -539,6 +544,7 @@ impl App {
                 let artifact = Artifact::new(bytes);
                 if report.target == ExecutionTarget::Final {
                     self.output.final_artifact = Some(artifact.clone());
+                    self.output.final_traces = self.output.traces.clone();
                 }
                 self.output.active_artifact = Some(artifact);
                 self.output.status = OutputStatus::Ready;
@@ -547,11 +553,16 @@ impl App {
                 self.output.active_artifact = None;
                 if report.target == ExecutionTarget::Final {
                     self.output.final_artifact = None;
+                    self.output.final_traces.clear();
                 }
                 self.output.status = OutputStatus::Failed(error);
             }
             ExecutionOutcome::Cancelled => {
                 self.output.active_artifact = None;
+                if report.target == ExecutionTarget::Final {
+                    self.output.final_artifact = None;
+                    self.output.final_traces.clear();
+                }
                 self.output.status = OutputStatus::Cancelled;
             }
         }
@@ -594,7 +605,7 @@ impl App {
         self.output.source = OutputSource::Final;
         self.output.status = OutputStatus::Ready;
         self.output.active_artifact = Some(final_artifact);
-        self.output.traces.clear();
+        self.output.traces.clone_from(&self.output.final_traces);
         self.output.byte_offset = 0;
         self.output.row_offset = 0;
         self.mark_dirty();
@@ -640,12 +651,12 @@ impl App {
             Some(Modal::TransformPicker { .. }) => {
                 let filtered_len = self.filtered_transforms().len();
                 match (key.code, key.modifiers) {
-                    (KeyCode::Esc, _) => {
+                    (KeyCode::Esc, KeyModifiers::NONE) => {
                         self.modal = None;
                         self.mark_dirty();
                     }
-                    (KeyCode::Enter, _) => self.confirm_picker(now),
-                    (KeyCode::Backspace, _) => {
+                    (KeyCode::Enter, KeyModifiers::NONE) => self.confirm_picker(now),
+                    (KeyCode::Backspace, KeyModifiers::NONE) => {
                         let mut changed = false;
                         if let Some(Modal::TransformPicker { query, selected }) = &mut self.modal {
                             changed = query.pop().is_some() || *selected != 0;
@@ -655,7 +666,7 @@ impl App {
                             self.mark_dirty();
                         }
                     }
-                    (KeyCode::Up, _) => {
+                    (KeyCode::Up, KeyModifiers::NONE) => {
                         let mut changed = false;
                         if let Some(Modal::TransformPicker { selected, .. }) = &mut self.modal {
                             let next = selected.saturating_sub(1);
@@ -666,7 +677,7 @@ impl App {
                             self.mark_dirty();
                         }
                     }
-                    (KeyCode::Down, _) => {
+                    (KeyCode::Down, KeyModifiers::NONE) => {
                         let mut changed = false;
                         if let Some(Modal::TransformPicker { selected, .. }) = &mut self.modal {
                             let next = selected
@@ -709,14 +720,14 @@ impl App {
                 None => Vec::new(),
             },
             Some(Modal::Help) => {
-                if key.code == KeyCode::Esc {
+                if key.code == KeyCode::Esc && key.modifiers == KeyModifiers::NONE {
                     self.modal = self.suspended_modal.take();
                     self.mark_dirty();
                 }
                 Vec::new()
             }
             Some(Modal::StepInspector) => {
-                if key.code == KeyCode::Esc {
+                if key.code == KeyCode::Esc && key.modifiers == KeyModifiers::NONE {
                     self.modal = None;
                     self.mark_dirty();
                 }
@@ -968,7 +979,7 @@ impl App {
         if self.modal.is_some() {
             return self.handle_modal_key(key, now);
         }
-        if key.code == KeyCode::Esc {
+        if key.code == KeyCode::Esc && key.modifiers == KeyModifiers::NONE {
             if self.zoom.take().is_some() {
                 self.mark_dirty();
             } else {
@@ -994,9 +1005,14 @@ impl App {
             }
             _ => {}
         }
-        if key.code == KeyCode::Char('?') && self.focus != Pane::Input {
-            self.open_help();
-            return Vec::new();
+        if key.code == KeyCode::Char('?') {
+            if !matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT) {
+                return Vec::new();
+            }
+            if self.focus != Pane::Input {
+                self.open_help();
+                return Vec::new();
+            }
         }
         match self.focus {
             Pane::Input => {
@@ -1945,6 +1961,16 @@ mod tests {
         let mut app = App::new(start, true);
         app.request_id = 2;
         app.output.status = OutputStatus::Ready;
+        app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+        app.output.final_traces.push(StepTrace {
+            step: 1,
+            transform_id: "hex-encode",
+            input_bytes: Some(3),
+            output_bytes: Some(6),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        });
         app.output.active_artifact = Some(Artifact::new(b"old".to_vec()));
         app.handle_event(AppEvent::PreviewFinished(preview_result(
             2,
@@ -1952,6 +1978,8 @@ mod tests {
             ExecutionOutcome::Failed(PipelineError::TooManySteps { max: 32 }),
         )));
         assert!(matches!(app.output.status, OutputStatus::Failed(_)));
+        assert!(app.output.final_artifact.is_none());
+        assert!(app.output.final_traces.is_empty());
         assert!(!app.can_copy());
     }
     #[test]
@@ -2081,6 +2109,54 @@ mod tests {
         );
         assert_eq!(app.status.as_deref(), Some("Input limit reached"));
     }
+
+    #[test]
+    fn cursor_and_selection_only_edits_keep_preview_ownership_and_cache() {
+        let start = now();
+        let mut app = App::new(start, true);
+        assert!(app.insert_paste("text", start));
+        let trace = StepTrace {
+            step: 1,
+            transform_id: "hex-encode",
+            input_bytes: Some(4),
+            output_bytes: Some(8),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        };
+        app.request_id = 7;
+        app.output.source = OutputSource::Step(0);
+        app.output.status = OutputStatus::Ready;
+        app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+        app.output.final_traces = vec![trace.clone()];
+        app.output.active_artifact = Some(Artifact::new(b"active".to_vec()));
+        app.output.traces = vec![trace.clone()];
+        app.status = Some("keep".to_string());
+
+        key(&mut app, KeyCode::Left, KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Left, KeyModifiers::SHIFT, start);
+
+        assert_eq!(app.input_text(), "text");
+        assert!(app.textarea.selection_range().is_some());
+        assert_eq!(app.request_id, 7);
+        assert_eq!(app.output.source, OutputSource::Step(0));
+        assert_eq!(app.output.status, OutputStatus::Ready);
+        assert_eq!(
+            app.output.final_artifact.as_ref().unwrap().bytes(),
+            b"final"
+        );
+        assert_eq!(
+            app.output.final_traces.as_slice(),
+            std::slice::from_ref(&trace)
+        );
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"active"
+        );
+        assert_eq!(app.output.traces, [trace]);
+        assert_eq!(app.status.as_deref(), Some("keep"));
+    }
+
     #[test]
     fn paste_can_replace_selected_multibyte_text_with_fewer_bytes() {
         let start = now();
@@ -2171,6 +2247,7 @@ mod tests {
             status: StepStatus::Succeeded,
             error: None,
         });
+        app.output.final_traces = app.output.traces.clone();
         assert!(app.can_copy());
 
         let effects = app.handle_event(AppEvent::Paste("x".to_string(), start));
@@ -2179,6 +2256,7 @@ mod tests {
         assert!(matches!(effects.as_slice(), [Effect::Cancel(1)]));
         assert_eq!(app.output.source, OutputSource::Final);
         assert!(app.output.final_artifact.is_none());
+        assert!(app.output.final_traces.is_empty());
         assert!(app.output.active_artifact.is_none());
         assert!(app.output.traces.is_empty());
         assert!(!app.can_copy());
@@ -2193,6 +2271,15 @@ mod tests {
             enabled: true,
         });
         app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+        app.output.final_traces.push(StepTrace {
+            step: 1,
+            transform_id: "base64-encode",
+            input_bytes: Some(3),
+            output_bytes: Some(4),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        });
         app.output.active_artifact = Some(Artifact::new(b"active".to_vec()));
         app.output.status = OutputStatus::Ready;
         app.focus = Pane::Pipeline;
@@ -2203,6 +2290,7 @@ mod tests {
         assert!(matches!(effects.as_slice(), [Effect::Cancel(1)]));
         assert_eq!(app.output.source, OutputSource::Final);
         assert!(app.output.final_artifact.is_none());
+        assert!(app.output.final_traces.is_empty());
         assert!(app.output.active_artifact.is_none());
         assert!(matches!(
             app.output.status,
@@ -2220,6 +2308,15 @@ mod tests {
             enabled: true,
         });
         app.output.final_artifact = Some(Artifact::new(b"cached".to_vec()));
+        app.output.final_traces.push(StepTrace {
+            step: 1,
+            transform_id: "base64-encode",
+            input_bytes: Some(3),
+            output_bytes: Some(4),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        });
         app.output.active_artifact = app.output.final_artifact.clone();
         app.output.status = OutputStatus::Ready;
         app.focus = Pane::Output;
@@ -2233,6 +2330,7 @@ mod tests {
             app.output.final_artifact.as_ref().unwrap().bytes(),
             b"cached"
         );
+        assert_eq!(app.output.final_traces.len(), 1);
         assert!(app.output.active_artifact.is_none());
         assert!(matches!(
             effects.as_slice(),
@@ -2281,6 +2379,136 @@ mod tests {
             app.output.active_artifact.as_ref().unwrap().bytes(),
             b"final"
         );
+    }
+
+    #[test]
+    fn final_key_restores_cached_artifact_and_traces_after_completed_step_preview() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.steps = ["base64-encode", "hex-encode"]
+            .into_iter()
+            .map(|id| TransformStep {
+                definition: transform_by_id(id).unwrap(),
+                enabled: true,
+            })
+            .collect();
+        let final_traces = vec![
+            StepTrace {
+                step: 1,
+                transform_id: "base64-encode",
+                input_bytes: Some(1),
+                output_bytes: Some(4),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            },
+            StepTrace {
+                step: 2,
+                transform_id: "hex-encode",
+                input_bytes: Some(4),
+                output_bytes: Some(8),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            },
+        ];
+        app.handle_event(AppEvent::PreviewFinished(PreviewResult {
+            report: ExecutionReport {
+                request_id: 0,
+                target: ExecutionTarget::Final,
+                outcome: ExecutionOutcome::Success(b"final".to_vec()),
+                traces: final_traces.clone(),
+            },
+        }));
+        app.focus = Pane::Output;
+
+        let effects = key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
+        assert!(matches!(effects.as_slice(), [Effect::Cancel(1)]));
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert_eq!(app.output.status, OutputStatus::Ready);
+        assert_eq!(app.output.traces, final_traces);
+
+        key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
+        app.handle_event(AppEvent::PreviewFinished(PreviewResult {
+            report: ExecutionReport {
+                request_id: 2,
+                target: ExecutionTarget::Step(0),
+                outcome: ExecutionOutcome::Success(b"step".to_vec()),
+                traces: vec![
+                    final_traces[0].clone(),
+                    StepTrace {
+                        step: 2,
+                        transform_id: "hex-encode",
+                        input_bytes: None,
+                        output_bytes: None,
+                        elapsed: None,
+                        status: StepStatus::NotExecuted,
+                        error: None,
+                    },
+                ],
+            },
+        }));
+        app.output.view = ViewMode::Trace;
+
+        let effects = key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
+
+        assert!(matches!(effects.as_slice(), [Effect::Cancel(3)]));
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert_eq!(app.output.status, OutputStatus::Ready);
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"final"
+        );
+        assert_eq!(app.output.traces, final_traces);
+        assert_eq!(
+            effective_view(app.output.view, app.output.active_artifact.as_ref(), false),
+            EffectiveView::Trace
+        );
+    }
+
+    #[test]
+    fn stale_or_cancelled_step_preview_does_not_change_cached_final() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.steps.push(TransformStep {
+            definition: transform_by_id("hex-encode").unwrap(),
+            enabled: true,
+        });
+        let final_trace = StepTrace {
+            step: 1,
+            transform_id: "hex-encode",
+            input_bytes: Some(1),
+            output_bytes: Some(2),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        };
+        app.handle_event(AppEvent::PreviewFinished(PreviewResult {
+            report: ExecutionReport {
+                request_id: 0,
+                target: ExecutionTarget::Final,
+                outcome: ExecutionOutcome::Success(b"61".to_vec()),
+                traces: vec![final_trace.clone()],
+            },
+        }));
+        app.focus = Pane::Output;
+        key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+        app.handle_event(AppEvent::PreviewFinished(PreviewResult {
+            report: ExecutionReport {
+                request_id: 1,
+                target: ExecutionTarget::Step(0),
+                outcome: ExecutionOutcome::Success(b"stale".to_vec()),
+                traces: Vec::new(),
+            },
+        }));
+
+        key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
+
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert_eq!(app.output.status, OutputStatus::Ready);
+        assert_eq!(app.output.active_artifact.as_ref().unwrap().bytes(), b"61");
+        assert_eq!(app.output.traces, [final_trace]);
     }
 
     #[test]
@@ -2637,6 +2865,74 @@ mod tests {
             key(&mut app, code, modifiers, start);
             assert_eq!(app.focus, Pane::Input);
         }
+    }
+
+    #[test]
+    fn transient_keys_accept_only_their_documented_modifiers() {
+        let start = now();
+        let mut running = App::new(start, true);
+        running.focus = Pane::Output;
+        running.output.status = OutputStatus::Running;
+        let request_id = running.request_id;
+        assert!(key(&mut running, KeyCode::Esc, KeyModifiers::ALT, start).is_empty());
+        assert_eq!(running.request_id, request_id);
+        assert_eq!(running.output.status, OutputStatus::Running);
+
+        for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT, KeyModifiers::META] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Pipeline;
+            key(&mut app, KeyCode::Char('?'), modifiers, start);
+            assert!(app.modal.is_none());
+
+            let mut input = App::new(start, true);
+            key(&mut input, KeyCode::Char('?'), modifiers, start);
+            assert_eq!(input.input_text(), "");
+            assert!(input.modal.is_none());
+        }
+        let mut shifted_question = App::new(start, true);
+        shifted_question.focus = Pane::Pipeline;
+        key(
+            &mut shifted_question,
+            KeyCode::Char('?'),
+            KeyModifiers::SHIFT,
+            start,
+        );
+        assert!(matches!(shifted_question.modal, Some(Modal::Help)));
+
+        for (code, modifiers) in [
+            (KeyCode::Esc, KeyModifiers::ALT),
+            (KeyCode::Enter, KeyModifiers::CONTROL),
+            (KeyCode::Backspace, KeyModifiers::META),
+            (KeyCode::Down, KeyModifiers::SHIFT),
+            (KeyCode::Up, KeyModifiers::ALT),
+        ] {
+            let mut picker = App::new(start, true);
+            picker.open_picker();
+            key(&mut picker, KeyCode::Char('z'), KeyModifiers::NONE, start);
+            key(&mut picker, code, modifiers, start);
+            assert!(matches!(
+                picker.modal,
+                Some(Modal::TransformPicker {
+                    ref query,
+                    selected: 0,
+                }) if query == "z"
+            ));
+            assert!(picker.steps.is_empty());
+        }
+
+        let mut help = App::new(start, true);
+        help.open_help();
+        key(&mut help, KeyCode::Esc, KeyModifiers::CONTROL, start);
+        assert!(matches!(help.modal, Some(Modal::Help)));
+
+        let mut inspector = App::new(start, true);
+        inspector.steps.push(TransformStep {
+            definition: transform_by_id("hex-encode").unwrap(),
+            enabled: true,
+        });
+        inspector.open_inspector();
+        key(&mut inspector, KeyCode::Esc, KeyModifiers::ALT, start);
+        assert!(matches!(inspector.modal, Some(Modal::StepInspector)));
     }
 
     #[test]
