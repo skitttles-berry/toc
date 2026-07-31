@@ -3,3 +3,5 @@
 /.cocoindex_code/
 # Superpowers visual brainstorming
 /.superpowers/brainstorm/
+# Superpowers isolated worktrees
+/.worktrees/
