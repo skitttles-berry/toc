@@ -5,8 +5,8 @@ use ratatui::style::{Color, Modifier, Style};
 use tui_textarea::{TextArea, WrapMode};
 
 use crate::{
-    MAX_STEPS, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT, TUI_UNDO_HISTORY_LIMIT,
-    error::PipelineError,
+    MAX_STEPS, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT, TUI_OUTPUT_LIMIT, TUI_UNDO_HISTORY_LIMIT,
+    error::{PipelineError, TransformError},
     pipeline::{ExecutionOutcome, ExecutionTarget, StepTrace, TransformStep},
     transforms::{TransformDefinition, transform_by_id, transforms},
 };
@@ -64,8 +64,15 @@ pub(super) enum OutputStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CopyMode {
+    Pretty,
+    Raw,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CopyKind {
-    Text,
+    Pretty,
+    Raw,
     Hex,
 }
 
@@ -92,17 +99,35 @@ fn binary_hex(bytes: &[u8]) -> Result<String, ()> {
     Ok(output)
 }
 
-fn clipboard_payload(artifact: &Artifact) -> Result<ClipboardPayload, ()> {
+fn copy_exact_text(raw: &str) -> Result<String, ()> {
+    let mut text = String::new();
+    text.try_reserve_exact(raw.len()).map_err(|_| ())?;
+    text.push_str(raw);
+    Ok(text)
+}
+
+fn format_text_for_copy(raw: &str, mode: CopyMode, output_limit: usize) -> Result<String, ()> {
+    let transform_id = match mode {
+        CopyMode::Pretty => "format-json",
+        CopyMode::Raw => "minify-json",
+    };
+    let transform = transform_by_id(transform_id).expect("registered JSON copy transform");
+    match (transform.apply)(raw.as_bytes(), output_limit) {
+        Ok(bytes) => String::from_utf8(bytes).map_err(|_| ()),
+        Err(TransformError::InvalidJson { .. }) => copy_exact_text(raw),
+        Err(_) => Err(()),
+    }
+}
+
+fn clipboard_payload(artifact: &Artifact, mode: CopyMode) -> Result<ClipboardPayload, ()> {
     match std::str::from_utf8(artifact.bytes()) {
-        Ok(raw) => {
-            let mut text = String::new();
-            text.try_reserve_exact(raw.len()).map_err(|_| ())?;
-            text.push_str(raw);
-            Ok(ClipboardPayload {
-                text,
-                kind: CopyKind::Text,
-            })
-        }
+        Ok(raw) => Ok(ClipboardPayload {
+            text: format_text_for_copy(raw, mode, TUI_OUTPUT_LIMIT)?,
+            kind: match mode {
+                CopyMode::Pretty => CopyKind::Pretty,
+                CopyMode::Raw => CopyKind::Raw,
+            },
+        }),
         Err(_) => Ok(ClipboardPayload {
             text: binary_hex(artifact.bytes())?,
             kind: CopyKind::Hex,
@@ -461,18 +486,18 @@ impl App {
         }
     }
 
-    fn request_copy(&mut self) -> Vec<Effect> {
+    fn request_copy(&mut self, mode: CopyMode) -> Vec<Effect> {
         if !self.can_copy() {
             return Vec::new();
         }
         let Some(artifact) = self.output.active_artifact.as_ref() else {
             return Vec::new();
         };
-        let Ok(payload) = clipboard_payload(artifact) else {
+        let Ok(payload) = clipboard_payload(artifact, mode) else {
             self.set_status(Some("Copy unavailable".to_string()));
             return Vec::new();
         };
-        if payload.kind == CopyKind::Text && crate::error::contains_dangerous_control(&payload.text)
+        if payload.kind != CopyKind::Hex && crate::error::contains_dangerous_control(&payload.text)
         {
             self.modal = Some(Modal::UnsafeCopyConfirm { payload });
             self.mark_dirty();
@@ -890,7 +915,9 @@ impl App {
 
     fn handle_output_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match (key.code, key.modifiers) {
-            (KeyCode::Enter | KeyCode::Char('y'), KeyModifiers::NONE) => self.request_copy(),
+            (KeyCode::Enter | KeyCode::Char('y'), KeyModifiers::NONE) => {
+                self.request_copy(CopyMode::Pretty)
+            }
             (KeyCode::Char('p'), KeyModifiers::NONE) => self.request_selected_step(),
             (KeyCode::Char('f'), KeyModifiers::NONE) => self.restore_final(),
             (KeyCode::Char('v'), KeyModifiers::NONE) => {
@@ -979,6 +1006,11 @@ impl App {
         if self.modal.is_some() {
             return self.handle_modal_key(key, now);
         }
+        match (key.code, key.modifiers) {
+            (KeyCode::F(3), KeyModifiers::NONE) => return self.request_copy(CopyMode::Pretty),
+            (KeyCode::F(4), KeyModifiers::NONE) => return self.request_copy(CopyMode::Raw),
+            _ => {}
+        }
         if key.code == KeyCode::Esc && key.modifiers == KeyModifiers::NONE {
             if self.zoom.take().is_some() {
                 self.mark_dirty();
@@ -1043,7 +1075,8 @@ impl App {
             AppEvent::ClipboardFinished { kind, result } => {
                 self.set_status(Some(match result {
                     Ok(()) if kind == CopyKind::Hex => "Copied as Hex".to_string(),
-                    Ok(()) => "Copied".to_string(),
+                    Ok(()) if kind == CopyKind::Raw => "Copied Raw".to_string(),
+                    Ok(()) => "Copied Pretty".to_string(),
                     Err(message) => crate::error::escape_external(&message, 512),
                 }));
                 Vec::new()
@@ -1299,19 +1332,43 @@ mod tests {
         assert_eq!(app.steps[0].definition.id, "base64-encode");
     }
     #[test]
-    fn utf8_artifact_copy_keeps_the_exact_original_text() {
-        let original = "한글 e\u{301}\n\t\\u0061";
-        let payload = clipboard_payload(&Artifact::new(original.as_bytes().to_vec())).unwrap();
+    fn copy_modes_format_json_without_rewriting_tokens_or_string_spaces() {
+        let pretty = clipboard_payload(
+            &Artifact::new(br#"{"\u0061":1.00,"s":"x y"}"#.to_vec()),
+            CopyMode::Pretty,
+        )
+        .unwrap();
+        assert_eq!(pretty.text, "{\n  \"\\u0061\": 1.00,\n  \"s\": \"x y\"\n}");
+        assert_eq!(pretty.kind, CopyKind::Pretty);
 
-        assert_eq!(payload.text, original);
-        assert_eq!(payload.kind, CopyKind::Text);
+        let raw = clipboard_payload(
+            &Artifact::new(b" { \"a\" : 1.00, \"s\" : \"x y\" } \n".to_vec()),
+            CopyMode::Raw,
+        )
+        .unwrap();
+        assert_eq!(raw.text, r#"{"a":1.00,"s":"x y"}"#);
+        assert_eq!(raw.kind, CopyKind::Raw);
     }
     #[test]
-    fn binary_artifact_copies_as_lowercase_hex() {
-        let payload = clipboard_payload(&Artifact::new(vec![0x00, 0xab, 0xff])).unwrap();
-
-        assert_eq!(payload.text, "00abff");
-        assert_eq!(payload.kind, CopyKind::Hex);
+    fn copy_modes_preserve_non_json_utf8_exactly() {
+        let original = "plain text\n\twith spaces";
+        for mode in [CopyMode::Pretty, CopyMode::Raw] {
+            let payload =
+                clipboard_payload(&Artifact::new(original.as_bytes().to_vec()), mode).unwrap();
+            assert_eq!(payload.text, original);
+        }
+    }
+    #[test]
+    fn pretty_copy_rejects_json_output_beyond_the_copy_limit() {
+        assert!(format_text_for_copy("[1]", CopyMode::Pretty, 4).is_err());
+    }
+    #[test]
+    fn both_copy_modes_encode_binary_as_lowercase_hex() {
+        for mode in [CopyMode::Pretty, CopyMode::Raw] {
+            let payload = clipboard_payload(&Artifact::new(vec![0x00, 0xab, 0xff]), mode).unwrap();
+            assert_eq!(payload.text, "00abff");
+            assert_eq!(payload.kind, CopyKind::Hex);
+        }
     }
     #[test]
     fn binary_copy_length_rejects_arithmetic_overflow() {
@@ -1324,7 +1381,7 @@ mod tests {
     #[test]
     fn copy_format_depends_on_artifact_validity_in_every_non_trace_view() {
         for (bytes, expected_text, expected_kind) in [
-            (b"plain".to_vec(), "plain", CopyKind::Text),
+            (b"plain".to_vec(), "plain", CopyKind::Pretty),
             (vec![0x00, 0xab, 0xff], "00abff", CopyKind::Hex),
         ] {
             for view in [ViewMode::Smart, ViewMode::Text, ViewMode::Hex] {
@@ -1334,7 +1391,7 @@ mod tests {
                 app.output.active_artifact = Some(Artifact::new(bytes.clone()));
 
                 assert!(matches!(
-                    app.request_copy().as_slice(),
+                    app.request_copy(CopyMode::Pretty).as_slice(),
                     [Effect::Copy(ClipboardPayload { text, kind })]
                         if text == expected_text && *kind == expected_kind
                 ));
@@ -1346,7 +1403,7 @@ mod tests {
             app.output.status = OutputStatus::Ready;
             app.output.view = ViewMode::Trace;
             app.output.active_artifact = Some(Artifact::new(bytes));
-            assert!(app.request_copy().is_empty());
+            assert!(app.request_copy(CopyMode::Pretty).is_empty());
         }
     }
     #[test]
@@ -1354,7 +1411,7 @@ mod tests {
         let mut app = App::new(now(), true);
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"x\x1b[2J".to_vec()));
-        assert!(app.request_copy().is_empty());
+        assert!(app.request_copy(CopyMode::Pretty).is_empty());
         assert!(matches!(app.modal, Some(Modal::UnsafeCopyConfirm { .. })));
         assert!(matches!(
             app.confirm_unsafe_copy().as_slice(),
@@ -1367,14 +1424,14 @@ mod tests {
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"old\x1b".to_vec()));
 
-        assert!(app.request_copy().is_empty());
+        assert!(app.request_copy(CopyMode::Pretty).is_empty());
         app.output.active_artifact = Some(Artifact::new(b"new".to_vec()));
 
         assert!(matches!(
             app.confirm_unsafe_copy().as_slice(),
             [Effect::Copy(ClipboardPayload {
                 text,
-                kind: CopyKind::Text,
+                kind: CopyKind::Pretty,
             })] if text == "old\x1b"
         ));
     }
@@ -1385,7 +1442,7 @@ mod tests {
             let mut app = App::new(start, true);
             app.output.status = OutputStatus::Ready;
             app.output.active_artifact = Some(Artifact::new(b"secret\x1b".to_vec()));
-            app.request_copy();
+            app.request_copy(CopyMode::Pretty);
 
             assert!(key(&mut app, key_code, KeyModifiers::NONE, start).is_empty());
             assert!(app.confirm_unsafe_copy().is_empty());
@@ -1394,7 +1451,7 @@ mod tests {
         let mut app = App::new(start, true);
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"secret\x1b".to_vec()));
-        app.request_copy();
+        app.request_copy(CopyMode::Pretty);
         key(&mut app, KeyCode::F(1), KeyModifiers::NONE, start);
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
 
@@ -1408,7 +1465,7 @@ mod tests {
         app.output.active_artifact = Some(Artifact::new(vec![0x00, 0x1b, 0xff]));
 
         assert!(matches!(
-            app.request_copy().as_slice(),
+            app.request_copy(CopyMode::Pretty).as_slice(),
             [Effect::Copy(ClipboardPayload {
                 text,
                 kind: CopyKind::Hex,
@@ -1421,22 +1478,25 @@ mod tests {
         let start = now();
         let mut app = App::new(start, true);
         app.output.active_artifact = Some(Artifact::new(b"stale".to_vec()));
-        assert!(app.request_copy().is_empty());
+        assert!(app.request_copy(CopyMode::Pretty).is_empty());
         app.output.status = OutputStatus::Debouncing {
             deadline: start + debounce_for(0),
         };
-        assert!(app.request_copy().is_empty());
+        assert!(app.request_copy(CopyMode::Pretty).is_empty());
         app.output.status = OutputStatus::Running;
-        assert!(app.request_copy().is_empty());
+        assert!(app.request_copy(CopyMode::Pretty).is_empty());
         app.output.status = OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
-        assert!(app.request_copy().is_empty());
+        assert!(app.request_copy(CopyMode::Pretty).is_empty());
         app.output.status = OutputStatus::Cancelled;
-        assert!(app.request_copy().is_empty());
+        assert!(app.request_copy(CopyMode::Pretty).is_empty());
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = None;
-        assert!(app.request_copy().is_empty());
+        assert!(app.request_copy(CopyMode::Pretty).is_empty());
         app.output.active_artifact = Some(Artifact::new(b"safe".to_vec()));
-        assert!(matches!(app.request_copy().as_slice(), [Effect::Copy(_)]));
+        assert!(matches!(
+            app.request_copy(CopyMode::Pretty).as_slice(),
+            [Effect::Copy(_)]
+        ));
     }
     #[test]
     fn confirmation_modal_keys_accept_or_cancel_explicit_actions() {
@@ -1445,11 +1505,11 @@ mod tests {
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(vec![0x1b]));
 
-        app.request_copy();
+        app.request_copy(CopyMode::Pretty);
         assert!(key(&mut app, KeyCode::Char('n'), KeyModifiers::NONE, start).is_empty());
         assert!(app.modal.is_none());
 
-        app.request_copy();
+        app.request_copy(CopyMode::Pretty);
         assert!(matches!(
             key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start).as_slice(),
             [Effect::Copy(_)]
@@ -1468,7 +1528,7 @@ mod tests {
         let mut app = App::new(start, true);
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"secret\x1b".to_vec()));
-        app.request_copy();
+        app.request_copy(CopyMode::Pretty);
         assert!(matches!(app.modal, Some(Modal::UnsafeCopyConfirm { .. })));
 
         for (code, modifiers) in [
@@ -1572,10 +1632,72 @@ mod tests {
             effects.as_slice(),
             [Effect::Copy(ClipboardPayload {
                 text,
-                kind: CopyKind::Text,
+                kind: CopyKind::Pretty,
             })] if text == "result"
         ));
         assert_eq!(app.input_text(), "source");
+    }
+    #[test]
+    fn global_copy_keys_use_the_active_output_from_every_pane() {
+        let start = now();
+        for pane in [Pane::Input, Pane::Pipeline, Pane::Output] {
+            for (code, expected_kind, expected_text) in [
+                (KeyCode::F(3), CopyKind::Pretty, "{\n  \"a\": 1\n}"),
+                (KeyCode::F(4), CopyKind::Raw, "{\"a\":1}"),
+            ] {
+                let mut app = App::new(start, true);
+                app.focus = pane;
+                app.output.status = OutputStatus::Ready;
+                app.output.active_artifact = Some(Artifact::new(b"{ \"a\" : 1 }".to_vec()));
+
+                assert!(matches!(
+                    key(&mut app, code, KeyModifiers::NONE, start).as_slice(),
+                    [Effect::Copy(ClipboardPayload { text, kind })]
+                        if text == expected_text && *kind == expected_kind
+                ));
+            }
+        }
+    }
+    #[test]
+    fn modal_keys_take_priority_over_global_copy_keys() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"{\"a\":1}".to_vec()));
+        app.open_picker();
+
+        assert!(key(&mut app, KeyCode::F(3), KeyModifiers::NONE, start).is_empty());
+        assert!(key(&mut app, KeyCode::F(4), KeyModifiers::NONE, start).is_empty());
+        assert!(matches!(app.modal, Some(Modal::TransformPicker { .. })));
+    }
+    #[test]
+    fn global_copy_uses_the_current_step_artifact_not_the_cached_final() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Pipeline;
+        app.output.source = OutputSource::Step(0);
+        app.output.status = OutputStatus::Ready;
+        app.output.final_artifact = Some(Artifact::new(b"{\"final\":true}".to_vec()));
+        app.output.active_artifact = Some(Artifact::new(b"{ \"step\" : 1 }".to_vec()));
+
+        assert!(matches!(
+            key(&mut app, KeyCode::F(4), KeyModifiers::NONE, start).as_slice(),
+            [Effect::Copy(ClipboardPayload { text, kind })]
+                if text == "{\"step\":1}" && *kind == CopyKind::Raw
+        ));
+    }
+    #[test]
+    fn trace_view_blocks_global_and_output_copy_keys() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.status = OutputStatus::Ready;
+        app.output.view = ViewMode::Trace;
+        app.output.active_artifact = Some(Artifact::new(b"hidden".to_vec()));
+
+        for code in [KeyCode::F(3), KeyCode::F(4), KeyCode::Enter] {
+            assert!(key(&mut app, code, KeyModifiers::NONE, start).is_empty());
+        }
     }
     #[test]
     fn chain_keys_select_toggle_reorder_and_delete_steps() {
@@ -1726,14 +1848,14 @@ mod tests {
             key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE, start).as_slice(),
             [Effect::Copy(ClipboardPayload {
                 text,
-                kind: CopyKind::Text,
+                kind: CopyKind::Pretty,
             })] if text == "final"
         ));
         assert!(matches!(
             key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start).as_slice(),
             [Effect::Copy(ClipboardPayload {
                 text,
-                kind: CopyKind::Text,
+                kind: CopyKind::Pretty,
             })] if text == "final"
         ));
 
@@ -1823,7 +1945,7 @@ mod tests {
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
         app.handle_event(AppEvent::ClipboardFinished {
-            kind: CopyKind::Text,
+            kind: CopyKind::Pretty,
             result: Err("Clipboard unavailable".to_string()),
         });
         assert!(matches!(app.output.status, OutputStatus::Ready));
@@ -1835,7 +1957,11 @@ mod tests {
     }
     #[test]
     fn clipboard_success_message_preserves_the_copy_kind() {
-        for (kind, expected) in [(CopyKind::Text, "Copied"), (CopyKind::Hex, "Copied as Hex")] {
+        for (kind, expected) in [
+            (CopyKind::Pretty, "Copied Pretty"),
+            (CopyKind::Raw, "Copied Raw"),
+            (CopyKind::Hex, "Copied as Hex"),
+        ] {
             let mut app = App::new(now(), true);
 
             app.handle_event(AppEvent::ClipboardFinished {
@@ -1953,7 +2079,7 @@ mod tests {
         )));
         assert!(matches!(app.output.status, OutputStatus::Running));
         assert!(app.output.active_artifact.is_none());
-        assert!(app.request_copy().is_empty());
+        assert!(app.request_copy(CopyMode::Pretty).is_empty());
     }
     #[test]
     fn an_error_hides_previous_result_and_disables_copy() {
@@ -2848,8 +2974,12 @@ mod tests {
             ),
             (KeyCode::Char('P'), KeyModifiers::CONTROL),
             (KeyCode::Char('Q'), KeyModifiers::CONTROL),
+            (KeyCode::F(3), KeyModifiers::SHIFT),
+            (KeyCode::F(4), KeyModifiers::CONTROL),
         ] {
             let mut app = App::new(start, true);
+            app.output.status = OutputStatus::Ready;
+            app.output.active_artifact = Some(Artifact::new(b"{\"a\":1}".to_vec()));
             let effects = key(&mut app, code, modifiers, start);
             assert!(effects.is_empty());
             assert!(app.modal.is_none());

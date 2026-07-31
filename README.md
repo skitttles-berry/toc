@@ -54,13 +54,16 @@ unset DOOP_INPUT
 Input·Output 분할을 사용하고, 40~89열에서는 포커스된 패널 하나만 표시합니다.
 
 Output은 `Smart`, `Text`, `Hex`, `Trace` 보기를 제공합니다. `p`는 선택
-단계까지 다시 계산하고 `f`는 보관된 최종 결과로 돌아갑니다. UTF-8 결과는
-표시 View와 무관하게 원문 그대로 복사하며, 비 UTF-8 결과는 공백 없는 소문자
-Hex로 복사합니다. 위험한 UTF-8 제어 문자는 복사 전에 확인합니다.
+단계까지 다시 계산하고 `f`는 보관된 최종 결과로 돌아갑니다. 유효한 JSON 결과는
+Pretty Copy에서 두 칸 들여쓰고 Raw Copy에서 구조 공백을 제거합니다. 그 밖의
+UTF-8은 원문, 비 UTF-8은 공백 없는 소문자 Hex로 복사합니다. 복사는 표시 View가
+아니라 현재 Output의 FINAL 또는 STEP 원본을 사용하며 Trace에서는 비활성입니다.
+위험한 UTF-8 제어 문자는 복사 전에 확인합니다.
 
-- 전역: `Tab`/`Shift+Tab` 패널 이동, `Ctrl+P` 변환 추가, `F1` 도움말
+- 전역: `Tab`/`Shift+Tab` 패널 이동, `F3` Pretty Copy, `F4` Raw Copy,
+  `Ctrl+P` 변환 추가, `F1` 도움말
 - Pipeline: `j`/`k` 선택, `J`/`K` 이동, `Space` 전환, `d` 삭제, `Enter` 검사
-- Output: `v`/`V` 보기, `p` 단계, `f` 최종, `Enter`/`y` 복사, `z` 확대
+- Output: `v`/`V` 보기, `p` 단계, `f` 최종, `Enter`/`y` Pretty Copy, `z` 확대
 - `Esc`: 창·확대 닫기 또는 실행 취소, `Ctrl+Q`: 정상 종료, `Ctrl+C`: 강제 종료
 
 256 KiB 이하 입력은 50 ms, 그보다 큰 입력은 200 ms 뒤에 단일 작업

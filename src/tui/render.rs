@@ -915,7 +915,7 @@ mod tests {
         assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
 
         app.handle_event(AppEvent::ClipboardFinished {
-            kind: CopyKind::Text,
+            kind: CopyKind::Pretty,
             result: Err("Clipboard unavailable".to_string()),
         });
         assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
@@ -1974,7 +1974,7 @@ mod tests {
         for (width, height) in [(120, 16), (90, 13), (40, 10)] {
             let mut app = App::new(now(), true);
             app.handle_event(AppEvent::ClipboardFinished {
-                kind: CopyKind::Text,
+                kind: CopyKind::Pretty,
                 result: Err("Clipboard unavailable".to_string()),
             });
 
@@ -2060,7 +2060,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(now(), true);
         app.handle_event(AppEvent::ClipboardFinished {
-            kind: CopyKind::Text,
+            kind: CopyKind::Pretty,
             result: Err("clipboard\n\u{1b}[2J".to_string()),
         });
         app.focus = Pane::Output;
@@ -2099,7 +2099,7 @@ mod tests {
         app.modal = Some(Modal::UnsafeCopyConfirm {
             payload: ClipboardPayload {
                 text: "\u{1b}".to_string(),
-                kind: CopyKind::Text,
+                kind: CopyKind::Pretty,
             },
         });
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
@@ -2131,7 +2131,7 @@ mod tests {
             unsafe_copy.modal = Some(Modal::UnsafeCopyConfirm {
                 payload: ClipboardPayload {
                     text: "hidden-payload\u{1b}".to_string(),
-                    kind: CopyKind::Text,
+                    kind: CopyKind::Pretty,
                 },
             });
             let screen = rendered_app(width, height, &mut unsafe_copy);
