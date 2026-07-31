@@ -207,7 +207,7 @@ Bash·Zsh shell smoke
 ccc index
 ```
 
-2026-07-31 같은 macOS 환경에서 일반 시험은 라이브러리 223개 통과·3개 무시와 CLI 통합 15개 통과로 합계 238개 통과·3개 무시였다. 형식, 경고 금지 Clippy, rustdoc, 잠금 패키징, 임시 경로 오프라인 잠금 설치, `doop 0.2.0` 실행, Bash·Zsh 기본 PTY와 실제 macOS 복사값 `ff` 확인이 통과했다. Linux 로컬 환경이 없어 미지원·X11·Wayland 경로는 미검증이며, GitHub Actions와 원격 CI는 추가하지 않는다.
+2026-07-31 같은 macOS 환경의 최종 리뷰에서 `cargo test --all-targets --all-features --locked`를 다시 실행했다. 일반 시험은 라이브러리 223개 통과·3개 무시와 CLI 통합 15개 통과로 합계 238개 통과·3개 무시였다. 형식, 경고 금지 Clippy, rustdoc, 잠금 패키징, 임시 경로 오프라인 잠금 설치, `doop 0.2.0` 실행, Bash·Zsh 기본 PTY와 실제 macOS 복사값 `ff` 확인이 통과했다. Linux 로컬 환경이 없어 미지원·X11·Wayland 경로는 미검증이며, GitHub Actions와 원격 CI는 추가하지 않는다.
 
 # 12. 완료 기준
 
