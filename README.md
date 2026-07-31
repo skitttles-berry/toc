@@ -129,6 +129,11 @@ Bash·Zsh 기본 PTY와 두 셸의 실제 macOS 복사 경로가 통과했고 `p
 소문자 `ff`를 확인했다. 이전 클립보드 내용은 복원하지 않는다. 이 장비에는
 Linux 로컬 환경이 없으므로 Linux 미지원·X11·Wayland 경로는 미검증이다.
 
+같은 환경의 마우스 고도화 검증에서 Crossterm 캡처 활성화·역순 해제, SGR 패널
+클릭·Add Transform 항목과 Add 동작·Pipeline 휠을 Bash와 Zsh PTY에서 확인했다.
+Ratatui TestBackend 시험은 Wide·Medium·Narrow·Tiny·Zoom·Modal 좌표와 Output
+3단위, Pipeline·Add Transform 1단위 휠 경계를 검증했다.
+
 자동 완성과 배포 패키지는 v0.2 범위에 포함하지 않습니다.
 GitHub Actions와 다른 CI 설정은 사용하지 않습니다.
 

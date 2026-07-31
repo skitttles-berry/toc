@@ -419,7 +419,8 @@ disable 순서다.
 * macOS와 Linux의 Bash·Zsh에서 CLI와 TUI Smoke 시험
 * 클립보드 사용 가능·불가능 상태와 X11 경로
 * macOS 필수 클립보드 Smoke는 제품 복사 뒤 `pbpaste`로 소문자 `ff`를 확인하며, 시험 전 내용을 백업하거나 시험 뒤 복원하지 않음
-* raw mode, 대체 화면과 bracketed paste의 정상·인터럽트·패닉 복구
+* raw mode, 대체 화면, bracketed paste와 mouse capture의 정상·인터럽트·패닉 복구
+* SGR 마우스로 패널 포커스, Pipeline·Add Transform 선택, Output·목록 휠과 Modal 동작
 
 필수 로컬 검증 명령은 기존 README의 형식, Clippy, 전체 시험, 릴리스 렌더 측정과 셸 Smoke 명령을 유지한다.
 

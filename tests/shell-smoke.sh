@@ -201,6 +201,7 @@ tui_run() {
             } else {
                 set replica $spawn_out(replica,name)
             }
+            expect_exact "\033\[?1000h\033\[?1002h\033\[?1003h\033\[?1015h\033\[?1006h" 148 149
             expect_exact "FOCUS:" 91 92
             expect_exact "INPUT" 91 92
             expect_exact "PIPELINE" 91 92
@@ -210,6 +211,20 @@ tui_run() {
             set mode $env(DOOP_SMOKE_TUI_MODE)
             if {$mode eq "normal"} {
                 prepare_text_preview
+                send -- "\033\[<0;5;3M"
+                send -- "a"
+                expect_exact "Search:" 150 151
+                send -- "\033\[<0;27;8M"
+                send -- "\033\[<0;40;20M"
+                expect_exact "\033\[4;12HBase64\033\[4;19HDecode" 156 157
+                send -- " "
+                expect_exact "\033\[4;6HFF" 152 153
+                send -- "\033\[<64;5;3M"
+                expect_exact "\033\[3;2H>" 156 157
+                send -- " "
+                expect_exact "\033\[3;6HFF" 154 155
+                send -- " "
+                send -- "\033\[<0;50;3M"
                 send -- "\t"
                 expect_exact "OUTPUT" 138 139
                 send -- "\t"
@@ -279,6 +294,7 @@ tui_run() {
             }
 
             expect_exact "\033\[?25h" 146 147
+            expect_exact "\033\[?1006l\033\[?1015l\033\[?1003l\033\[?1002l\033\[?1000l" 158 159
             expect_exact "\033\[?2004l" 112 113
             expect_exact "\033\[?1049l" 114 115
             expect {
