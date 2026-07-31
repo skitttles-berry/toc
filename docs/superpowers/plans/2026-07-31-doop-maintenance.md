@@ -76,7 +76,7 @@ docs/superpowers/plans/*.md
 - Consumes: `crate::MAX_STEPS`, `AppError::Pipeline`, `PipelineError::TooManySteps`
 - Produces: 변경 없는 `run_transform(...) -> Result<(), AppError>`와 입력 읽기 전 32단계 경계
 
-- [ ] **Step 1: 입력을 읽으면 실패하는 회귀 시험 작성**
+- [x] **Step 1: 입력을 읽으면 실패하는 회귀 시험 작성**
 
 `src/cli.rs` 시험 모듈에 다음 Reader와 시험을 추가한다.
 
@@ -117,7 +117,7 @@ fn too_many_steps_does_not_read_input() {
 }
 ```
 
-- [ ] **Step 2: 회귀 시험이 현재 입력 읽기 패닉으로 실패하는지 확인**
+- [x] **Step 2: 회귀 시험이 현재 입력 읽기 패닉으로 실패하는지 확인**
 
 Run:
 
@@ -127,7 +127,7 @@ cargo test --lib cli::tests::too_many_steps_does_not_read_input -- --exact
 
 Expected: FAIL with `step validation must happen before input is read`.
 
-- [ ] **Step 3: `run_transform` 시작에서 단계 수를 검증**
+- [x] **Step 3: `run_transform` 시작에서 단계 수를 검증**
 
 `then.len() + 1` 산술을 만들지 말고 다음 경계 검사를 `read_input`보다 앞에 둔다.
 
@@ -143,7 +143,7 @@ if then.len() >= crate::MAX_STEPS {
 
 Pipeline의 `execute_report` 안에 있는 기존 `steps.len() > MAX_STEPS` 검사는 제거하지 않는다.
 
-- [ ] **Step 4: PRD에 오류 우선순위를 기록**
+- [x] **Step 4: PRD에 오류 우선순위를 기록**
 
 `docs/prd/init-prd.md`의 임시 체인 규칙에서 최대 32단계 바로 뒤에 다음 계약을 추가한다.
 
@@ -152,7 +152,7 @@ Pipeline의 `execute_report` 안에 있는 기존 `steps.len() > MAX_STEPS` 검�
 * 단계 초과와 입력 오류가 동시에 있으면 단계 초과 오류가 우선한다.
 ```
 
-- [ ] **Step 5: 집중 시험과 전체 CLI 시험 실행**
+- [x] **Step 5: 집중 시험과 전체 CLI 시험 실행**
 
 Run:
 
@@ -164,7 +164,7 @@ cargo test --test cli
 
 Expected: 모두 PASS.
 
-- [ ] **Step 6: 변경 검토와 커밋**
+- [x] **Step 6: 변경 검토와 커밋**
 
 Run:
 
@@ -187,7 +187,7 @@ git commit -m "fix(cli): 단계 수 입력 전 검증"
 - Consumes: `base64::Engine::decode_slice`, 기존 네 종류 ASCII 공백 규칙
 - Produces: `compact_input(input: &[u8]) -> Cow<'_, [u8]>`; 공개 `decode` 서명과 오류는 불변
 
-- [ ] **Step 1: Borrowed와 Owned 경로를 구분하는 실패 시험 작성**
+- [x] **Step 1: Borrowed와 Owned 경로를 구분하는 실패 시험 작성**
 
 `base64.rs`에 `std::borrow::Cow`를 가져오고 시험 모듈에 다음 시험을 먼저 추가한다. 이 시점에는 `compact_input`이 없어 컴파일이 실패해야 한다.
 
@@ -206,7 +206,7 @@ fn borrows_plain_input_and_owns_only_whitespace_compaction() {
 }
 ```
 
-- [ ] **Step 2: 새 시험의 컴파일 실패 확인**
+- [x] **Step 2: 새 시험의 컴파일 실패 확인**
 
 Run:
 
@@ -216,7 +216,7 @@ cargo test --lib transforms::base64::tests::borrows_plain_input_and_owns_only_wh
 
 Expected: FAIL because `compact_input` is not defined.
 
-- [ ] **Step 3: 조건부 압축 함수를 최소 구현**
+- [x] **Step 3: 조건부 압축 함수를 최소 구현**
 
 파일 상단과 `original_offset` 앞에 다음 코드를 둔다.
 
@@ -256,7 +256,7 @@ let compact = compact_input(input);
 
 `decode_slice`에는 `compact.as_ref()`를 전달한다.
 
-- [ ] **Step 4: Borrowed 경로와 기존 Base64 계약 검증**
+- [x] **Step 4: Borrowed 경로와 기존 Base64 계약 검증**
 
 Run:
 
@@ -268,7 +268,7 @@ cargo test --test cli decoders_report_the_same_bounded_invalid_utf8_details
 
 Expected: 모두 PASS. 공백 포함 오류 위치도 원본 입력 기준으로 유지된다.
 
-- [ ] **Step 5: 형식과 정적 검사 후 커밋**
+- [x] **Step 5: 형식과 정적 검사 후 커밋**
 
 Run:
 
@@ -294,7 +294,7 @@ git commit -m "refactor(base64): 무공백 입력 복사 제거"
 - Consumes: `Artifact`, `TextWindow`, Unicode 그래핌·표시 폭과 `VISIBLE_TEXT_BYTE_BUDGET`
 - Produces: 원본을 바꾸지 않는 표시용 soft wrap과 마지막 완전 표시 그래핌 다음 `next_offset`
 
-- [ ] **Step 1: ASCII·넓은 문자·escape 줄바꿈 실패 시험 작성**
+- [x] **Step 1: ASCII·넓은 문자·escape 줄바꿈 실패 시험 작성**
 
 `views.rs` 시험 모듈에 다음 세 시험을 추가한다.
 
@@ -339,7 +339,7 @@ fn text_window_wraps_escaped_controls_without_changing_source() {
 }
 ```
 
-- [ ] **Step 2: 현재 첫 행에서 중단되어 시험이 실패하는지 확인**
+- [x] **Step 2: 현재 첫 행에서 중단되어 시험이 실패하는지 확인**
 
 Run:
 
@@ -349,7 +349,7 @@ cargo test --lib tui::views::tests::text_window_soft_wraps -- --nocapture
 
 Expected: FAIL because the current output contains only the first visual row.
 
-- [ ] **Step 3: 그래핌을 소비하기 전에 표시용 줄바꿈 적용**
+- [x] **Step 3: 그래핌을 소비하기 전에 표시용 줄바꿈 적용**
 
 `render_text_window`의 일반 그래핌 분기에서 기존 `used_width + rendered.width() > columns` 즉시 중단을 다음 흐름으로 바꾼다.
 
@@ -381,7 +381,7 @@ used_width += rendered_width;
 
 기존 실제 `LF`, `CRLF`, 잘린 UTF-8 조각, 첫 그래핌 전진 보장과 4 KiB 상한 분기는 유지한다. 행이나 예산 부족으로 표시하지 못한 정상 그래핌은 `cursor`를 전진시키지 않는다.
 
-- [ ] **Step 4: PRD와 TUI 설계 현행화**
+- [x] **Step 4: PRD와 TUI 설계 현행화**
 
 `docs/prd/init-prd.md`의 Text View 규칙과 TUI 설계의 `6.2 Text`에 다음 의미를 기록한다.
 
@@ -389,7 +389,7 @@ used_width += rendered_width;
 줄바꿈 없는 긴 행은 그래핌과 표시 폭을 기준으로 Viewport 안에서 자동 줄바꿈한다. 이 줄바꿈은 화면 표시 전용이며 원본 Artifact와 클립보드 내용에는 추가하지 않는다.
 ```
 
-- [ ] **Step 5: Text 경계와 전체 TUI 시험 실행**
+- [x] **Step 5: Text 경계와 전체 TUI 시험 실행**
 
 Run:
 
@@ -401,7 +401,7 @@ cargo test --lib tui::render::tests
 
 Expected: 모두 PASS. 기존 제어문자 비활성화와 4 KiB 예산 시험도 유지된다.
 
-- [ ] **Step 6: 형식·정적 검사와 커밋**
+- [x] **Step 6: 형식·정적 검사와 커밋**
 
 Run:
 
@@ -428,7 +428,7 @@ git commit -m "fix(tui): 긴 Text 결과 자동 줄바꿈"
 - Consumes: `mpsc::Receiver<PreviewResult>::try_recv`
 - Produces: `PreviewWorker::try_recv(&self) -> Result<PreviewResult, mpsc::TryRecvError>`
 
-- [ ] **Step 1: Empty와 Disconnected 보존 실패 시험 작성**
+- [x] **Step 1: Empty와 Disconnected 보존 실패 시험 작성**
 
 `worker.rs` 시험 모듈에 다음 시험을 추가한다.
 
@@ -457,7 +457,7 @@ fn try_recv_distinguishes_empty_from_disconnected() {
 }
 ```
 
-- [ ] **Step 2: 현재 `Option` 반환 때문에 시험이 실패하는지 확인**
+- [x] **Step 2: 현재 `Option` 반환 때문에 시험이 실패하는지 확인**
 
 Run:
 
@@ -467,7 +467,7 @@ cargo test --lib tui::worker::tests::try_recv_distinguishes_empty_from_disconnec
 
 Expected: FAIL with a type mismatch between `Option` and `Result`.
 
-- [ ] **Step 3: 작업자 수신 결과를 손실 없이 반환**
+- [x] **Step 3: 작업자 수신 결과를 손실 없이 반환**
 
 `PreviewWorker::try_recv`를 다음으로 바꾼다.
 
@@ -477,7 +477,7 @@ pub(super) fn try_recv(&self) -> Result<PreviewResult, mpsc::TryRecvError> {
 }
 ```
 
-- [ ] **Step 4: 이벤트 루프에서 세 채널 상태를 명시적으로 처리**
+- [x] **Step 4: 이벤트 루프에서 세 채널 상태를 명시적으로 처리**
 
 `src/tui.rs`의 `while let Some`을 다음 루프로 교체한다.
 
@@ -497,7 +497,7 @@ loop {
 
 오류 반환 뒤에는 `Tick`, Submit, Copy를 처리하지 않는다. `tui::run`의 기존 정리 경로와 `AppError::Tui` 종료 코드 1을 그대로 사용한다.
 
-- [ ] **Step 5: PRD와 TUI 후속 대장에서 구현 상태 반영**
+- [x] **Step 5: PRD와 TUI 후속 대장에서 구현 상태 반영**
 
 `docs/prd/init-prd.md` 작업자 규칙과 TUI 설계 작업자 절에 다음 계약을 추가한다.
 
@@ -507,7 +507,7 @@ loop {
 
 두 문서의 후속 아이디어에서 `Empty`·`Disconnected` 구분 항목은 제거한다.
 
-- [ ] **Step 6: 작업자·TUI 회귀 시험 실행**
+- [x] **Step 6: 작업자·TUI 회귀 시험 실행**
 
 Run:
 
@@ -519,7 +519,7 @@ cargo test --test cli tui_has_explicit_temporary_code_one_path
 
 Expected: 모두 PASS. Drop은 대기하지 않고 기존 취소·최신 요청 동작도 유지된다.
 
-- [ ] **Step 7: 형식·정적 검사와 커밋**
+- [x] **Step 7: 형식·정적 검사와 커밋**
 
 Run:
 
@@ -544,7 +544,7 @@ git commit -m "fix(tui): 작업자 종료 감지"
 - Consumes: TUI `Copy as Hex`, `pbpaste`, 기존 `read_clipboard macos`
 - Produces: `DOOP_SMOKE_CLIPBOARD_MODE=macos`가 `ff`를 검증하고 그대로 남기는 로컬 시험
 
-- [ ] **Step 1: 현재 복원 동작이 새 완료 조건과 다른지 실제 macOS에서 확인**
+- [x] **Step 1: 현재 복원 동작이 새 완료 조건과 다른지 실제 macOS에서 확인**
 
 현재 클립보드를 시험용 일반 문자열로 바꾸고 기존 Smoke를 실행한다.
 
@@ -556,7 +556,7 @@ test "$(pbpaste)" = ff
 
 Expected: 마지막 `test`가 FAIL. 기존 스크립트는 `doop-before-smoke`를 복원한다.
 
-- [ ] **Step 2: 복원 전용 셸 상태와 cleanup 분기 제거**
+- [x] **Step 2: 복원 전용 셸 상태와 cleanup 분기 제거**
 
 `tests/shell-smoke.sh`에서 다음 변수를 삭제한다.
 
@@ -571,7 +571,7 @@ smoke_preserve_tmp
 
 셸 함수 `macos_change_count`와 `cleanup`의 백업·소유권·복원 전체 분기를 삭제한다. `cleanup`은 일반 임시 입력·출력·오류·기대값 파일만 삭제하고 원래 종료 상태를 반환한다.
 
-- [ ] **Step 3: Expect의 changeCount와 소유권 검사를 제거**
+- [x] **Step 3: Expect의 changeCount와 소유권 검사를 제거**
 
 Tcl 코드에서 다음 프로시저와 호출을 삭제한다.
 
@@ -603,7 +603,7 @@ macOS 분기는 복사 성공 화면을 확인한 뒤 기존 `read_clipboard mac
 
 `DOOP_SMOKE_CLIPBOARD_INITIAL_COUNT`와 `DOOP_SMOKE_CLIPBOARD_OWNED_COUNT` 환경변수도 제거한다.
 
-- [ ] **Step 4: macOS 실행 분기를 복사값 검증만 남기도록 축소**
+- [x] **Step 4: macOS 실행 분기를 복사값 검증만 남기도록 축소**
 
 macOS case에서 `osascript`, `pbcopy`, pasteboard 형식 사전 검사, 백업 파일과 종료 코드 148~154 처리를 제거한다. `pbpaste` 존재만 확인하고 다음 순서를 유지한다.
 
@@ -621,7 +621,7 @@ esac
 assert_eq '130' "$exit_status" "macOS clipboard path"
 ```
 
-- [ ] **Step 5: 현재 문서에서 복원 필수 규약 제거**
+- [x] **Step 5: 현재 문서에서 복원 필수 규약 제거**
 
 README의 최신 macOS 검증 설명과 TUI 설계의 플랫폼 시험 규칙을 다음 의미로 바꾼다.
 
@@ -631,7 +631,7 @@ macOS 실제 클립보드 Smoke는 제품 복사 뒤 `pbpaste`로 소문자 `ff`
 
 과거 검증 전문 자체는 Task 7에서 삭제한다.
 
-- [ ] **Step 6: 셸 문법·기본 경로와 실제 macOS 경로 검증**
+- [x] **Step 6: 셸 문법·기본 경로와 실제 macOS 경로 검증**
 
 Run:
 
@@ -648,7 +648,7 @@ test "$(pbpaste)" = ff
 
 Expected: 모두 PASS. 마지막 클립보드 값은 `ff`다.
 
-- [ ] **Step 7: 복원 코드 부재 확인과 커밋**
+- [x] **Step 7: 복원 코드 부재 확인과 커밋**
 
 Run:
 
@@ -684,7 +684,7 @@ git commit -m "test(clipboard): 복원 없는 macOS 검증"
 - Produces: ignored release measurements `max_input_edit_release_measurement`, `utf8_validation_release_measurement`
 - Conditional Produces: `InputMetrics` cache 또는 `PreviewResult::new(report)`의 작업자 UTF-8 판정
 
-- [ ] **Step 1: 최대 입력 편집 릴리스 측정 추가**
+- [x] **Step 1: 최대 입력 편집 릴리스 측정 추가**
 
 `state.rs` 시험 모듈에 다음 측정을 추가한다.
 
@@ -730,7 +730,7 @@ fn max_input_edit_release_measurement() {
 }
 ```
 
-- [ ] **Step 2: 64 MiB UTF-8 판정 릴리스 측정 추가**
+- [x] **Step 2: 64 MiB UTF-8 판정 릴리스 측정 추가**
 
 `views.rs` 시험 모듈에 다음 측정을 추가한다.
 
@@ -762,7 +762,7 @@ fn utf8_validation_release_measurement() {
 }
 ```
 
-- [ ] **Step 3: 두 측정을 릴리스로 실행하고 중앙값 판정**
+- [x] **Step 3: 두 측정을 릴리스로 실행하고 중앙값 판정**
 
 Run:
 
@@ -963,11 +963,11 @@ cargo test --release utf8_validation_release_measurement -- --ignored --nocaptur
 
 Expected: 모두 PASS. UI `finish_preview`에서 64 MiB 전수 UTF-8 판정을 다시 하지 않는다.
 
-- [ ] **Step 6: 측정값과 조건부 적용 결과 문서화**
+- [x] **Step 6: 측정값과 조건부 적용 결과 문서화**
 
 README 로컬 검증 절과 안정화 설계 `# 8`에 두 측정 명령, 출력된 중앙값, 각 경로의 `최적화 적용` 또는 `현재 구현 유지` 결정을 정확히 기록한다. 시간 숫자를 성공 기준으로 표현하지 않는다.
 
-- [ ] **Step 7: 형식·정적 검사와 조건에 맞는 커밋**
+- [x] **Step 7: 형식·정적 검사와 조건에 맞는 커밋**
 
 Run:
 
@@ -1009,7 +1009,7 @@ git commit -m "test(perf): TUI 경계 측정 추가"
 - Consumes: Task 5 클립보드 결과와 Task 6 실제 측정 출력
 - Produces: README 사용법·현재 검증 명령·최신 결과 한 벌과 현재 구현 계획만 남는 문서 트리
 
-- [ ] **Step 1: 삭제 전 현재 문서의 중복 범위 확인**
+- [x] **Step 1: 삭제 전 현재 문서의 중복 범위 확인**
 
 Run:
 
@@ -1019,7 +1019,7 @@ rg --color=never -n "^### 2026-|검증 기준 코드|docker run|changeCount|원�
 
 Expected: README의 세 과거 검증 절과 완료 계획의 실행 전문이 검색된다.
 
-- [ ] **Step 2: README의 과거 세대별 검증 전문을 최신 요약 하나로 교체**
+- [x] **Step 2: README의 과거 세대별 검증 전문을 최신 요약 하나로 교체**
 
 README의 `## 로컬 검증` 명령은 유지하고, `2026-07-30 v0.1`, `2026-07-30 v0.2`, `2026-07-31 TUI 작업판` 절 전체를 삭제한다.
 
@@ -1040,7 +1040,7 @@ Linux의 미지원·X11과 Wayland 경로는 사용할 수 있는 로컬 환경�
 
 Task 6에서 얻은 정확한 중앙값과 적용 결정을 이 절 마지막에 한 문단으로 추가한다.
 
-- [ ] **Step 3: 완료된 과거 구현 계획 다섯 개 삭제**
+- [x] **Step 3: 완료된 과거 구현 계획 다섯 개 삭제**
 
 `apply_patch`로 다음 파일만 삭제한다.
 
@@ -1054,7 +1054,7 @@ docs/superpowers/plans/2026-07-31-doop-tui-workbench.md
 
 현재 파일 `docs/superpowers/plans/2026-07-31-doop-maintenance.md`와 `docs/superpowers/specs`는 삭제하지 않는다.
 
-- [ ] **Step 4: 현행 문서와 후속 아이디어가 남았는지 확인**
+- [x] **Step 4: 현행 문서와 후속 아이디어가 남았는지 확인**
 
 Run:
 
@@ -1070,7 +1070,7 @@ Expected:
 * specs와 PRD 및 후속 아이디어는 존재한다.
 * README에는 과거 검증 전문과 복원 문구가 없다.
 
-- [ ] **Step 5: 문서 차이와 링크 확인 후 커밋**
+- [x] **Step 5: 문서 차이와 링크 확인 후 커밋**
 
 Run:
 
@@ -1101,7 +1101,7 @@ git commit -m "docs(project): 완료 기록 현행화"
 - Consumes: Tasks 1~7의 커밋과 실제 로컬 검증 출력
 - Produces: 구현 완료 설계, 재현 가능한 최신 검증 요약, 최신 CCC 인덱스와 깨끗한 `main`
 
-- [ ] **Step 1: 형식, 정적 검사와 전체 시험**
+- [x] **Step 1: 형식, 정적 검사와 전체 시험**
 
 Run:
 
@@ -1114,7 +1114,7 @@ RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features
 
 Expected: 모두 exit 0. 일반 시험에서 릴리스 전용 ignored 측정만 제외된다.
 
-- [ ] **Step 2: 모든 릴리스 측정 실행**
+- [x] **Step 2: 모든 릴리스 측정 실행**
 
 Run:
 
@@ -1126,7 +1126,7 @@ cargo test --release utf8_validation_release_measurement -- --ignored --nocaptur
 
 Expected: 세 측정 PASS. README와 안정화 설계에 기록한 중앙값·적용 결정이 최종 실행 결과와 일치한다.
 
-- [ ] **Step 3: 패키징과 오프라인 잠금 설치**
+- [x] **Step 3: 패키징과 오프라인 잠금 설치**
 
 아직 문서 상태 변경이 남아 있으므로 첫 패키징에는 `--allow-dirty`를 사용한다.
 
@@ -1144,7 +1144,7 @@ cargo install --locked --offline --path . --root "$install_root"
 
 Expected: `doop 0.2.0`.
 
-- [ ] **Step 4: Bash·Zsh와 실제 macOS 클립보드 Smoke**
+- [x] **Step 4: Bash·Zsh와 실제 macOS 클립보드 Smoke**
 
 Run:
 
@@ -1169,7 +1169,7 @@ xvfb-run -a env DOOP_SMOKE_CLIPBOARD_MODE=x11 zsh tests/shell-smoke.sh
 
 Wayland 세션을 사용할 수 있으면 기존 `DOOP_SMOKE_CLIPBOARD_MODE=wayland` 경로를 실행한다. 사용할 수 없는 Linux 또는 Wayland 환경은 README 최신 요약에 미검증으로 남긴다.
 
-- [ ] **Step 5: 완료 문서 현행화와 자체 검토**
+- [x] **Step 5: 완료 문서 현행화와 자체 검토**
 
 안정화 설계 상태를 다음으로 바꾼다.
 
@@ -1189,7 +1189,7 @@ git diff --check
 
 Expected: 미완성 표시, 클립보드 복원 구현·현행 규약과 공백 오류가 없다. 후속 작업 대장의 승인된 보류 아이디어는 유지된다.
 
-- [ ] **Step 6: 최종 문서 커밋**
+- [x] **Step 6: 최종 문서 커밋**
 
 Run:
 
@@ -1198,7 +1198,7 @@ git add README.md docs/superpowers/specs/2026-07-31-doop-maintenance-design.md d
 git commit -m "docs(project): 정비 구현 완료 기록"
 ```
 
-- [ ] **Step 7: 깨끗한 커밋에서 패키징 재검증과 CCC 인덱싱**
+- [x] **Step 7: 깨끗한 커밋에서 패키징 재검증과 CCC 인덱싱**
 
 Run:
 
@@ -1216,7 +1216,7 @@ Expected:
 * `git status`는 `## main`만 출력
 * 최근 로그에 Tasks 1~8의 논리적 커밋이 순서대로 존재
 
-- [ ] **Step 8: 최종 전체 차이 리뷰**
+- [x] **Step 8: 최종 전체 차이 리뷰**
 
 설계 커밋 `9ea47c8` 다음부터 현재 HEAD까지 검토한다.
 

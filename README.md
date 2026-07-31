@@ -74,30 +74,40 @@ Hex로 복사합니다. 위험한 UTF-8 제어 문자는 복사 전에 확인합
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
+RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features
 cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
 cargo test --release max_input_edit_release_measurement -- --ignored --nocapture
 cargo test --release utf8_validation_release_measurement -- --ignored --nocapture
+cargo package --locked
+install_root=$(mktemp -d "${TMPDIR:-/tmp}/doop-install.XXXXXX")
+trap 'rm -rf -- "$install_root"' EXIT
+cargo install --locked --offline --path . --root "$install_root"
+"$install_root/bin/doop" --version
 bash tests/shell-smoke.sh
 zsh tests/shell-smoke.sh
-cargo install --locked --path . --root target/install-check
-target/install-check/bin/doop --version
+DOOP_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
+DOOP_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
 ```
 
 ### 최신 로컬 검증 요약
 
-현재 `main`에서 형식, 경고 금지 Clippy, 전체 단위·CLI 시험, rustdoc,
-패키징, 오프라인 잠금 설치, Bash·Zsh PTY를 검증한다. macOS 실제 복사는
-`pbpaste`로 소문자 `ff`를 확인하며 이전 클립보드 내용을 복원하지 않는다.
-Linux의 미지원·X11과 Wayland 경로는 사용할 수 있는 로컬 환경에서 별도로
-실행하고, 실행하지 못한 환경은 미검증으로 명시한다.
+2026-07-31 `main`을 macOS 26.5.2(25F84), Darwin 25.5.0 arm64,
+Rust·Cargo 1.97.1에서 검증했다. 전체 시험은 라이브러리 222개 통과·3개 무시,
+CLI 통합 15개 통과로 합계 237개 통과·3개 무시였고 실패는 없었다. 형식,
+경고 금지 Clippy, rustdoc, 잠금 패키징, 임시 경로 오프라인 잠금 설치와
+`doop 0.2.0` 실행도 통과했다.
 
-릴리스 측정은 렌더링, 최대 입력 편집과 64 MiB UTF-8 판정의 실제 값만
-기록하며 시간 자체를 시험 성공 기준으로 사용하지 않는다.
+렌더링 측정은 500회 반복 총계가 무조건 다시 그리기 `18.985583ms`,
+변경 시 다시 그리기 `39.958µs`, 실제 다시 그리기 1회였다. 이 측정은
+표본 중앙값을 만들지 않는다. 최대 입력 편집은 5회 준비 뒤 30표본
+최솟값 `2.788958ms`, 중앙값 `2.922958ms`, 최댓값 `3.025042ms`였고,
+64 MiB UTF-8 판정은 같은 규칙으로 각각 `2.15725ms`, `2.251334ms`,
+`2.575417ms`였다. 두 조건부 경로의 중앙값이 16 ms 이하이므로 현재
+구현을 유지하며, 시간은 시험 성공 기준이 아니다.
 
-2026-07-31 macOS 26.5.2(25F84), Darwin 25.5.0 arm64, Rust·Cargo 1.97.1에서
-5회 준비 실행 뒤 30표본 중앙값은 최대 입력 편집 `2.82475ms`, 64 MiB UTF-8
-판정 `2.262584ms`였다. 두 경로 모두 16 ms 이하이므로 조건부 최적화를 적용하지
-않고 현재 구현을 유지한다.
+Bash·Zsh 기본 PTY와 두 셸의 실제 macOS 복사 경로가 통과했고 `pbpaste`로
+소문자 `ff`를 확인했다. 이전 클립보드 내용은 복원하지 않는다. 이 장비에는
+Linux 로컬 환경이 없으므로 Linux 미지원·X11·Wayland 경로는 미검증이다.
 
 자동 완성과 배포 패키지는 v0.2 범위에 포함하지 않습니다.
 GitHub Actions와 다른 CI 설정은 사용하지 않습니다.
