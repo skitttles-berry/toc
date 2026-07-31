@@ -201,19 +201,22 @@ tui_run() {
             } else {
                 set replica $spawn_out(replica,name)
             }
-            expect_exact {[Input]} 91 92
-            expect_exact "Output" 91 92
-            expect_exact "Pipeline" 91 92
+            expect_exact "FOCUS:" 91 92
+            expect_exact "INPUT" 91 92
+            expect_exact "PIPELINE" 91 92
+            expect_exact "INPUT" 91 92
+            expect_exact "OUTPUT" 91 92
 
             set mode $env(DOOP_SMOKE_TUI_MODE)
             if {$mode eq "normal"} {
                 prepare_text_preview
                 send -- "\t"
-                expect_exact {[Output]} 138 139
+                expect_exact "OUTPUT" 138 139
                 send -- "\t"
-                expect_exact {[Pipeline]} 140 141
+                expect_exact "PIPELINE" 140 141
                 send -- "\t"
-                expect_exact {[Input]} 142 143
+                expect_exact "\033\[1;20HIN" 142 143
+                expect_exact "\033\[1;23HUT" 142 143
                 stty rows 5 columns 30 < $replica
                 expect_exact "Increase" 95 96
                 stty rows 24 columns 120 < $replica
@@ -225,7 +228,7 @@ tui_run() {
             } else {
                 prepare_binary_preview
                 send -- "\t"
-                expect_exact {[Output]} 144 145
+                expect_exact "OUTPUT" 144 145
                 send -- "y"
                 if {$mode eq "unavailable"} {
                     # The unchanged "C" is omitted by the incremental redraw.

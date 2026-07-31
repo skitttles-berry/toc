@@ -272,20 +272,20 @@ fn pane_label(pane: Pane) -> &'static str {
 }
 
 fn render_app_bar(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let title_style = (!app.no_color)
-        .then(|| {
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD)
-        })
-        .unwrap_or_default();
-    let focus_style = (!app.no_color)
-        .then(|| {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
-        })
-        .unwrap_or_default();
+    let title_style = if app.no_color {
+        Style::default()
+    } else {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    };
+    let focus_style = if app.no_color {
+        Style::default()
+    } else {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    };
     let line = Line::from(vec![
         Span::styled(">_ DOOP", title_style),
         Span::raw("  │  FOCUS: "),
