@@ -101,6 +101,13 @@ pub fn run_transform(
     stdout: &mut dyn Write,
     stdout_is_terminal: bool,
 ) -> Result<(), AppError> {
+    if then.len() >= crate::MAX_STEPS {
+        return Err(AppError::Pipeline(
+            crate::error::PipelineError::TooManySteps {
+                max: crate::MAX_STEPS,
+            },
+        ));
+    }
     let input = read_input(path, stdin, stdin_is_terminal, crate::CLI_INPUT_LIMIT)
         .map_err(AppError::Input)?;
     let mut steps = Vec::with_capacity(then.len().saturating_add(1));
@@ -233,6 +240,33 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct PanicReader;
+
+    impl std::io::Read for PanicReader {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("step validation must happen before input is read");
+        }
+    }
+
+    #[test]
+    fn too_many_steps_does_not_read_input() {
+        let first = crate::transforms::transform_by_id("base64-encode").unwrap();
+        let then = vec![first; crate::MAX_STEPS];
+        let mut stdin = PanicReader;
+        let mut stdout = Vec::new();
+
+        let error =
+            run_transform(first, &then, None, &mut stdin, false, &mut stdout, false).unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Pipeline(crate::error::PipelineError::TooManySteps {
+                max: crate::MAX_STEPS
+            })
+        ));
+        assert!(stdout.is_empty());
+    }
 
     #[test]
     fn requires_exactly_one_input_source() {
