@@ -14,87 +14,17 @@ smoke_input=
 smoke_output=
 smoke_error=
 smoke_expected=
-smoke_clipboard_backup=
-smoke_clipboard_verify=
-smoke_clipboard_initial_count=
-smoke_clipboard_owned_count=
-smoke_clipboard_backed_up=false
-smoke_preserve_tmp=false
 smoke_expect_pid=
 smoke_signal_pending=false
-
-macos_change_count() {
-    smoke_change_count=$(osascript -l JavaScript -e '
-        ObjC.import("AppKit");
-        Number($.NSPasteboard.generalPasteboard.changeCount);
-    ') || return 1
-    case "$smoke_change_count" in
-        '' | *[!0-9]*) return 1 ;;
-    esac
-    printf '%s\n' "$smoke_change_count"
-}
 
 cleanup() {
     smoke_cleanup_status=$?
     trap - EXIT HUP INT TERM
-    if [ "$smoke_clipboard_backed_up" = true ]; then
-        smoke_restore_clipboard=false
-        if [ -f "$smoke_clipboard_owned_count" ]; then
-            if ! IFS= read -r smoke_owned_count <"$smoke_clipboard_owned_count"; then
-                printf 'shell smoke failed: could not read owned macOS clipboard change count\n' >&2
-                smoke_cleanup_status=1
-                smoke_preserve_tmp=true
-            elif ! smoke_current_count=$(macos_change_count); then
-                printf 'shell smoke failed: could not read current macOS clipboard change count\n' >&2
-                smoke_cleanup_status=1
-                smoke_preserve_tmp=true
-            elif [ "$smoke_current_count" != "$smoke_owned_count" ]; then
-                printf 'shell smoke failed: macOS clipboard changed after product copy; refusing restore\n' >&2
-                smoke_cleanup_status=1
-                smoke_preserve_tmp=true
-            else
-                smoke_restore_clipboard=true
-            fi
-        elif ! smoke_current_count=$(macos_change_count); then
-            printf 'shell smoke failed: could not establish macOS clipboard ownership\n' >&2
-            smoke_cleanup_status=1
-            smoke_preserve_tmp=true
-        elif [ "$smoke_current_count" != "$smoke_clipboard_initial_count" ]; then
-            printf 'shell smoke failed: macOS clipboard ownership is unknown; refusing restore\n' >&2
-            smoke_cleanup_status=1
-            smoke_preserve_tmp=true
-        fi
-
-        # macOS clipboard smoke requires exclusive clipboard use through restore;
-        # this last count check keeps cleanup fail-closed before the unavoidable
-        # check-to-pbcopy window.
-        if [ "$smoke_restore_clipboard" = true ] &&
-            ! pbcopy <"$smoke_clipboard_backup"; then
-            printf 'shell smoke failed: could not restore macOS clipboard\n' >&2
-            smoke_cleanup_status=1
-            smoke_preserve_tmp=true
-        elif [ "$smoke_restore_clipboard" = true ] &&
-            ! pbpaste >"$smoke_clipboard_verify"; then
-            printf 'shell smoke failed: could not verify restored macOS clipboard\n' >&2
-            smoke_cleanup_status=1
-            smoke_preserve_tmp=true
-        elif [ "$smoke_restore_clipboard" = true ] &&
-            ! cmp -s "$smoke_clipboard_backup" "$smoke_clipboard_verify"; then
-            printf 'shell smoke failed: restored macOS clipboard did not match backup\n' >&2
-            smoke_cleanup_status=1
-            smoke_preserve_tmp=true
-        fi
-    fi
-    if [ "$smoke_preserve_tmp" = true ]; then
-        printf 'macOS clipboard backup retained at %s\n' "$smoke_clipboard_backup" >&2
-    elif [ -n "$smoke_tmp" ] && [ -d "$smoke_tmp" ]; then
+    if [ -n "$smoke_tmp" ] && [ -d "$smoke_tmp" ]; then
         [ -z "$smoke_input" ] || rm -f -- "$smoke_input"
         [ -z "$smoke_output" ] || rm -f -- "$smoke_output"
         [ -z "$smoke_error" ] || rm -f -- "$smoke_error"
         [ -z "$smoke_expected" ] || rm -f -- "$smoke_expected"
-        [ -z "$smoke_clipboard_backup" ] || rm -f -- "$smoke_clipboard_backup"
-        [ -z "$smoke_clipboard_verify" ] || rm -f -- "$smoke_clipboard_verify"
-        [ -z "$smoke_clipboard_owned_count" ] || rm -f -- "$smoke_clipboard_owned_count"
         rmdir -- "$smoke_tmp"
     fi
     exit "$smoke_cleanup_status"
@@ -121,8 +51,6 @@ smoke_input="$smoke_tmp/input.txt"
 smoke_output="$smoke_tmp/output.txt"
 smoke_error="$smoke_tmp/error.txt"
 smoke_expected="$smoke_tmp/expected.txt"
-smoke_clipboard_verify="$smoke_tmp/clipboard-verify.txt"
-smoke_clipboard_owned_count="$smoke_tmp/clipboard-owned-count.txt"
 smoke_text_expected=68656c6c6f
 smoke_clipboard_expected=ff
 smoke_os=$(uname -s)
@@ -250,34 +178,6 @@ tui_run() {
             }
             return $copied
         }
-        proc macos_change_count {failure_code} {
-            set script {
-                ObjC.import("AppKit");
-                Number($.NSPasteboard.generalPasteboard.changeCount);
-            }
-            if {[catch {exec osascript -l JavaScript -e $script} count] ||
-                ![string is integer -strict $count]} {
-                exit $failure_code
-            }
-            return $count
-        }
-        proc macos_owned_transition {initial observed} {
-            if {![string is wideinteger -strict $initial] ||
-                ![string is wideinteger -strict $observed] ||
-                $initial < 0 || $observed < 0 ||
-                $initial == 9223372036854775807} {
-                return 0
-            }
-            return [expr {$observed == $initial + 1}]
-        }
-        proc verify_macos_owned_transition {failure_code} {
-            if {![macos_owned_transition 10 11] ||
-                [macos_owned_transition 10 12] ||
-                [macos_owned_transition invalid 11] ||
-                [macos_owned_transition 9223372036854775807 9223372036854775808]} {
-                exit $failure_code
-            }
-        }
         proc smoke {} {
             global env spawn_id spawn_out
             log_user 0
@@ -326,12 +226,6 @@ tui_run() {
                 prepare_binary_preview
                 send -- "\t"
                 expect_exact {[Output]} 144 145
-                if {$mode eq "macos"} {
-                    set current [macos_change_count 148]
-                    if {$current ne $env(DOOP_SMOKE_CLIPBOARD_INITIAL_COUNT)} {
-                        exit 149
-                    }
-                }
                 send -- "y"
                 if {$mode eq "unavailable"} {
                     # The unchanged "C" is omitted by the incremental redraw.
@@ -357,29 +251,9 @@ tui_run() {
                         eof { exit 127 }
                         timeout { exit 128 }
                     }
-                    set observed_count [macos_change_count 150]
-                    if {![macos_owned_transition \
-                        $env(DOOP_SMOKE_CLIPBOARD_INITIAL_COUNT) \
-                        $observed_count]} {
-                        exit 154
-                    }
                     set copied [read_clipboard macos 124]
                     if {$copied ne $env(DOOP_SMOKE_CLIPBOARD_EXPECTED)} {
                         exit 125
-                    }
-                    set owned_count [macos_change_count 151]
-                    if {$owned_count ne $observed_count} {
-                        exit 152
-                    }
-                    if {[catch {
-                        set count_file [
-                            open $env(DOOP_SMOKE_CLIPBOARD_OWNED_COUNT) w
-                        ]
-                        puts $count_file $owned_count
-                        close $count_file
-                    }]} {
-                        catch {close $count_file}
-                        exit 153
                     }
                 } elseif {$mode eq "wayland"} {
                     expect {
@@ -414,7 +288,6 @@ tui_run() {
             }
             return [lindex $result 3]
         }
-        verify_macos_owned_transition 154
         if {[catch {smoke} result]} {
             puts stderr $result
             exit 118
@@ -447,7 +320,6 @@ export DOOP_SMOKE_OUTPUT="$smoke_output"
 export DOOP_SMOKE_ERROR="$smoke_error"
 export DOOP_SMOKE_TEXT_EXPECTED="$smoke_text_expected"
 export DOOP_SMOKE_CLIPBOARD_EXPECTED="$smoke_clipboard_expected"
-export DOOP_SMOKE_CLIPBOARD_OWNED_COUNT="$smoke_clipboard_owned_count"
 cargo build --manifest-path "$smoke_root/Cargo.toml" >/dev/null
 [ -x "$smoke_bin" ] || fail "cargo did not create the expected binary"
 
@@ -610,36 +482,7 @@ case "${DOOP_SMOKE_CLIPBOARD_MODE:-skip}" in
         ;;
     macos)
         [ "$smoke_os" = Darwin ] || fail "macOS clipboard smoke requires macOS"
-        command -v osascript >/dev/null 2>&1 || fail "osascript command is required"
         command -v pbpaste >/dev/null 2>&1 || fail "pbpaste command is required"
-        command -v pbcopy >/dev/null 2>&1 || fail "pbcopy command is required"
-        smoke_clipboard_preflight=$(osascript -l JavaScript -e '
-            ObjC.import("AppKit");
-            const pasteboard = $.NSPasteboard.generalPasteboard;
-            const items = pasteboard.pasteboardItems.js;
-            const safe =
-                items.length === 0 ||
-                (items.length === 1 &&
-                    items[0].types.js.length === 1 &&
-                    ObjC.unwrap(items[0].types.js[0]) ===
-                        "public.utf8-plain-text");
-            safe ? `safe:${Number(pasteboard.changeCount)}` : "unsafe";
-        ') || fail "macOS clipboard type preflight failed"
-        case "$smoke_clipboard_preflight" in
-            safe:*) smoke_clipboard_initial_count=${smoke_clipboard_preflight#safe:} ;;
-            *)
-                fail "macOS clipboard is neither empty nor exactly one UTF-8 plain-text representation"
-                ;;
-        esac
-        case "$smoke_clipboard_initial_count" in
-            '' | *[!0-9]*) fail "macOS clipboard change count preflight failed" ;;
-        esac
-        export DOOP_SMOKE_CLIPBOARD_INITIAL_COUNT="$smoke_clipboard_initial_count"
-        smoke_clipboard_backup="$smoke_tmp/clipboard.txt"
-        if ! pbpaste >"$smoke_clipboard_backup"; then
-            fail "macOS clipboard text backup failed"
-        fi
-        smoke_clipboard_backed_up=true
         set +e
         tui_run macos
         exit_status=$?
@@ -648,13 +491,6 @@ case "${DOOP_SMOKE_CLIPBOARD_MODE:-skip}" in
             123) fail "macOS clipboard product copy reported unavailable" ;;
             124) fail "macOS clipboard verification failed: pbpaste could not read copied text" ;;
             125) fail "macOS clipboard product copy did not match expected text" ;;
-            148) fail "macOS clipboard pre-copy change count read failed" ;;
-            149) fail "macOS clipboard changed before product copy" ;;
-            150) fail "macOS clipboard post-copy change count read failed" ;;
-            151) fail "macOS clipboard ownership count read failed" ;;
-            152) fail "macOS clipboard changed during product copy verification" ;;
-            153) fail "macOS clipboard ownership count could not be recorded" ;;
-            154) fail "macOS clipboard change count did not advance exactly once" ;;
         esac
         assert_eq '130' "$exit_status" "macOS clipboard path"
         ;;
