@@ -68,16 +68,28 @@ cargo test --all-targets --all-features --locked
 
 Expected: 작업 트리가 깨끗하고 일반 시험 255개 통과·3개 무시·실패 0이다.
 
-- [ ] **Step 2: 새 실행 파일 계약을 검증하는 실패 시험 추가**
+- [ ] **Step 2: 기존 버전 시험을 새 실행 파일 계약으로 변경**
 
-`tests/cli.rs`에 실제 Cargo 바이너리를 실행하는 다음 시험을 추가한다.
+`tests/cli.rs`의 공용 실행 helper가 새 Cargo 바이너리를 찾도록 바꾸되, 현재
+패키지에서도 시험이 컴파일되어 RED를 관찰할 수 있도록 `option_env!`를 사용한다.
 
 ```rust
-#[test]
-fn cargo_builds_a_toc_binary_that_identifies_itself() {
+fn run(args: &[&str], stdin: &[u8]) -> Output {
     let binary = option_env!("CARGO_BIN_EXE_toc").expect("Cargo must build the toc binary");
-    let output = Command::new(binary).arg("--version").output().unwrap();
+    let mut child = Command::new(binary)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    child.wait_with_output().unwrap()
+}
 
+#[test]
+fn version_reports_toc_v0_2_0() {
+    let output = run(&["--version"], b"");
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(output.stdout, b"toc 0.2.0\n");
     assert!(output.stderr.is_empty());
@@ -90,7 +102,7 @@ Mutation check: Cargo 실행 파일 이름이나 Clap 루트 이름이 다른 �
 - [ ] **Step 3: 실행 파일 시험이 올바른 이유로 실패하는지 확인**
 
 ```bash
-cargo test --locked --test cli cargo_builds_a_toc_binary_that_identifies_itself -- --exact
+cargo test --locked --test cli version_reports_toc_v0_2_0 -- --exact
 ```
 
 Expected: `Cargo must build the toc binary` panic으로 FAIL한다. 철자나 시험 설정이
@@ -152,7 +164,7 @@ let mut child = Command::new(env!("CARGO_BIN_EXE_toc"))
 - [ ] **Step 5: 새 Cargo 실행 파일 계약을 통과하는지 확인**
 
 ```bash
-cargo test --locked --test cli cargo_builds_a_toc_binary_that_identifies_itself -- --exact
+cargo test --locked --test cli version_reports_toc_v0_2_0 -- --exact
 ```
 
 Expected: 1개 시험이 실행되고 PASS한다.
@@ -180,7 +192,7 @@ assert_eq!(
 );
 ```
 
-버전 시험 이름은 `version_reports_toc_v0_2_0`으로 바꾼다. `src/tui.rs`의 시험은
+Step 2에서 바꾼 버전 시험은 그대로 유지한다. `src/tui.rs`의 시험은
 `TUI error: toc tui requires terminal stdin and stdout`을 기대한다.
 `src/tui/render.rs`의 상단 제목 시험은 `>_ TOC`를 기대하고 Tiny 화면에서는
 `TOC`가 렌더되지 않음을 확인한다.
@@ -268,7 +280,7 @@ bash tests/shell-smoke.sh
 zsh tests/shell-smoke.sh
 ```
 
-Expected: CLI 통합 시험 16개와 두 TUI 집중 시험이 PASS하고 Bash·Zsh가 각각
+Expected: CLI 통합 시험 15개와 두 TUI 집중 시험이 PASS하고 Bash·Zsh가 각각
 `shell smoke passed`로 끝난다.
 
 - [ ] **Step 10: 문서·메타데이터의 이전 식별자와 파일명 잔존 확인**
@@ -359,8 +371,8 @@ zsh tests/shell-smoke.sh
 cargo package --locked --allow-dirty
 ```
 
-Expected: 형식 차이·Clippy·rustdoc 경고와 시험 실패가 없다. 일반 시험은 새 CLI
-식별 시험을 포함해 256개 통과·3개 무시이고, 두 셸은 `shell smoke passed`,
+Expected: 형식 차이·Clippy·rustdoc 경고와 시험 실패가 없다. 일반 시험은 기존 CLI
+버전 시험을 재사용해 255개 통과·3개 무시이고, 두 셸은 `shell smoke passed`,
 패키지는 `toc v0.2.0`을 생성·검증한다.
 
 - [ ] **Step 14: 새 임시 설치 루트에서 단일 실행 파일 확인**
