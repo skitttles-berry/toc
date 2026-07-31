@@ -345,6 +345,11 @@ Smart는 실패 보고서에 Trace를 사용한다. Text나 Hex를 수동으로 
 * 외부 오류 문자열에 스타일 제어 코드를 허용하지 않는다.
 * TUI 종료, 인터럽트, 패닉과 렌더 오류에서도 기존 역순 터미널 복구를 유지한다.
 
+마우스 캡처는 raw mode, alternate screen, bracketed paste 다음에 활성화하고
+cursor hide 전에 완료한다. 정상 종료·오류·패닉 복구는 cursor show, mouse
+capture disable, bracketed paste disable, alternate screen leave, raw mode
+disable 순서다.
+
 ## 7.3 데이터와 자원
 
 * Input, Output, 단계 결과와 클립보드 내용을 로그에 기록하지 않는다.

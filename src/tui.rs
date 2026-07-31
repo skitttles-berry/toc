@@ -8,7 +8,8 @@ use std::{
 use crossterm::{
     cursor::{Hide, Show},
     event::{
-        DisableBracketedPaste, EnableBracketedPaste, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -52,6 +53,7 @@ struct TerminalSession {
     raw: bool,
     alternate: bool,
     paste: bool,
+    mouse: bool,
     cursor_hidden: bool,
 }
 
@@ -61,6 +63,7 @@ impl TerminalSession {
             raw: false,
             alternate: false,
             paste: false,
+            mouse: false,
             cursor_hidden: false,
         };
         enable_raw_mode().map_err(|error| AppError::Tui(error.to_string()))?;
@@ -70,6 +73,8 @@ impl TerminalSession {
         execute_tracked(&mut stdout, &mut session.alternate, EnterAlternateScreen)
             .map_err(|error| AppError::Tui(error.to_string()))?;
         execute_tracked(&mut stdout, &mut session.paste, EnableBracketedPaste)
+            .map_err(|error| AppError::Tui(error.to_string()))?;
+        execute_tracked(&mut stdout, &mut session.mouse, EnableMouseCapture)
             .map_err(|error| AppError::Tui(error.to_string()))?;
         execute_tracked(&mut stdout, &mut session.cursor_hidden, Hide)
             .map_err(|error| AppError::Tui(error.to_string()))?;
@@ -81,6 +86,10 @@ impl TerminalSession {
         if self.cursor_hidden {
             let _ = execute!(stdout, Show);
             self.cursor_hidden = false;
+        }
+        if self.mouse {
+            let _ = execute!(stdout, DisableMouseCapture);
+            self.mouse = false;
         }
         if self.paste {
             let _ = execute!(stdout, DisableBracketedPaste);
@@ -186,7 +195,13 @@ fn run_loop(
 
 fn best_effort_restore_terminal() {
     let mut stdout = io::stdout();
-    let _ = execute!(stdout, Show, DisableBracketedPaste, LeaveAlternateScreen);
+    let _ = execute!(
+        stdout,
+        Show,
+        DisableMouseCapture,
+        DisableBracketedPaste,
+        LeaveAlternateScreen
+    );
     let _ = disable_raw_mode();
     let _ = stdout.flush();
 }
@@ -261,6 +276,22 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(writer.bytes, b"\x1b[?1049h");
+        assert_eq!(writer.flushes, 1);
+        assert!(active);
+    }
+
+    #[test]
+    fn tracked_mouse_capture_marks_state_when_flush_fails_after_write() {
+        let mut writer = FlushFailWriter::default();
+        let mut active = false;
+
+        let result = execute_tracked(&mut writer, &mut active, EnableMouseCapture);
+
+        assert!(result.is_err());
+        assert_eq!(
+            writer.bytes,
+            b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1015h\x1b[?1006h"
+        );
         assert_eq!(writer.flushes, 1);
         assert!(active);
     }
