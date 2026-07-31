@@ -2962,4 +2962,44 @@ mod tests {
             }) if query == "decode"
         ));
     }
+
+    #[test]
+    #[ignore = "release-only maximum input edit measurement"]
+    fn max_input_edit_release_measurement() {
+        const WARMUPS: usize = 5;
+        const SAMPLES: usize = 30;
+
+        let mut input = "\n".repeat(TUI_INPUT_LINE_LIMIT - 1);
+        input.push_str(&"a".repeat(TUI_INPUT_LIMIT - 1 - input.len()));
+
+        let measure = || {
+            let event_time = now();
+            let mut app = App::new(event_time, true);
+            app.handle_event(AppEvent::Paste(input.clone(), event_time));
+            assert_eq!(app.input_len(), TUI_INPUT_LIMIT - 1);
+
+            let started = Instant::now();
+            std::hint::black_box(key(
+                &mut app,
+                KeyCode::Char('x'),
+                KeyModifiers::NONE,
+                event_time,
+            ));
+            let elapsed = started.elapsed();
+            assert_eq!(app.input_len(), TUI_INPUT_LIMIT);
+            elapsed
+        };
+
+        for _ in 0..WARMUPS {
+            std::hint::black_box(measure());
+        }
+        let mut samples = (0..SAMPLES).map(|_| measure()).collect::<Vec<_>>();
+        samples.sort_unstable();
+        eprintln!(
+            "max input edit release measurement: warmups={WARMUPS}, samples={SAMPLES}, min={:?}, median={:?}, max={:?}",
+            samples[0],
+            samples[SAMPLES / 2],
+            samples[SAMPLES - 1]
+        );
+    }
 }

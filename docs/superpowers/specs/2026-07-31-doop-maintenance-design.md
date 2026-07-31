@@ -133,6 +133,8 @@ UTF-8 판정이 기준을 넘으면 작업자가 성공 결과의 UTF-8 여부�
 
 기준을 넘지 않은 경로는 현재 구조를 유지한다. 측정값과 최적화 적용 여부는 README의 최신 로컬 검증 요약에 기록한다.
 
+2026-07-31 macOS 26.5.2(25F84), Darwin 25.5.0 arm64, Rust·Cargo 1.97.1에서 `cargo test --release max_input_edit_release_measurement -- --ignored --nocapture`와 `cargo test --release utf8_validation_release_measurement -- --ignored --nocapture`를 실행했다. 5회 준비 실행 뒤 30표본 중앙값은 각각 2.82475 ms와 2.262584 ms였다. 두 경로 모두 16 ms 이하이므로 조건부 최적화를 적용하지 않고 현재 구현을 유지한다. 시간 숫자는 시험 합격 기준이 아니다.
+
 # 9. 클립보드 Smoke 단순화
 
 제품의 클립보드 복사 동작은 변경하지 않는다. 변경 대상은 `DOOP_SMOKE_CLIPBOARD_MODE=macos` 시험뿐이다.

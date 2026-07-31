@@ -75,14 +75,20 @@ cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
 cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
+cargo test --release max_input_edit_release_measurement -- --ignored --nocapture
+cargo test --release utf8_validation_release_measurement -- --ignored --nocapture
 bash tests/shell-smoke.sh
 zsh tests/shell-smoke.sh
 cargo install --locked --path . --root target/install-check
 target/install-check/bin/doop --version
 ```
 
-릴리스 렌더링 측정은 시간 합격 기준 없이 무조건 렌더 기준과 변경 기반
-렌더링 경로의 실제 측정값만 출력합니다. 셸 점검에는 `expect`가 필요하며
+릴리스 측정은 시간 자체로 시험을 실패시키지 않고 실제 측정값만 출력합니다.
+2026-07-31 macOS 26.5.2(25F84), Darwin 25.5.0 arm64, Rust·Cargo
+1.97.1에서 5회 준비 실행 뒤 30표본 중앙값은 최대 입력 편집
+`2.82475ms`, 64 MiB UTF-8 판정 `2.262584ms`였습니다. 두 값 모두 조건부
+최적화 기준인 16 ms 이하이므로 입력 통계 캐시와 작업자 UTF-8 판정 전달을
+추가하지 않고 현재 구현을 유지합니다. 셸 점검에는 `expect`가 필요하며
 호출한 Bash 또는 Zsh 자체를 의사 터미널 안에서 실행합니다.
 
 고도화한 작업판의 macOS·Linux 셸 및 실제 클립보드 통합 검증 결과는

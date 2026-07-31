@@ -743,4 +743,30 @@ mod tests {
         assert_eq!(rendered, "#32 transfor");
         assert!(!rendered.contains("#33"));
     }
+
+    #[test]
+    #[ignore = "release-only UTF-8 validation measurement"]
+    fn utf8_validation_release_measurement() {
+        const WARMUPS: usize = 5;
+        const SAMPLES: usize = 30;
+
+        let bytes = vec![b'a'; crate::TUI_OUTPUT_LIMIT];
+        let measure = || {
+            let started = std::time::Instant::now();
+            assert!(std::str::from_utf8(std::hint::black_box(bytes.as_slice())).is_ok());
+            started.elapsed()
+        };
+
+        for _ in 0..WARMUPS {
+            std::hint::black_box(measure());
+        }
+        let mut samples = (0..SAMPLES).map(|_| measure()).collect::<Vec<_>>();
+        samples.sort_unstable();
+        eprintln!(
+            "UTF-8 validation release measurement: warmups={WARMUPS}, samples={SAMPLES}, min={:?}, median={:?}, max={:?}",
+            samples[0],
+            samples[SAMPLES / 2],
+            samples[SAMPLES - 1]
+        );
+    }
 }
