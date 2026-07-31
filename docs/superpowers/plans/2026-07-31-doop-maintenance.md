@@ -1124,7 +1124,7 @@ cargo test --release max_input_edit_release_measurement -- --ignored --nocapture
 cargo test --release utf8_validation_release_measurement -- --ignored --nocapture
 ```
 
-Expected: 세 측정 PASS. README와 안정화 설계에 기록한 중앙값·적용 결정이 최종 실행 결과와 일치한다.
+Expected: 세 측정 모두 5회 준비 실행 뒤 30표본의 중앙값을 출력하고 PASS. README와 안정화 설계에 기록한 중앙값·적용 결정이 최종 실행 결과와 일치한다.
 
 - [x] **Step 3: 패키징과 오프라인 잠금 설치**
 

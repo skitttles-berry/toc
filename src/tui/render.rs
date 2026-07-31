@@ -923,16 +923,13 @@ mod tests {
         app.handle_event(AppEvent::Resize);
         assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
     }
-    #[test]
-    #[ignore = "release-only rendering measurement"]
-    fn dirty_redraw_release_measurement() {
-        const ITERATIONS: usize = 500;
 
+    fn measure_dirty_preview_render(iterations: usize) -> (Duration, Duration) {
         let baseline_backend = TestBackend::new(80, 20);
         let mut baseline_terminal = Terminal::new(baseline_backend).unwrap();
         let mut baseline_app = App::new(now(), true);
         let baseline_start = Instant::now();
-        for _ in 0..ITERATIONS {
+        for _ in 0..iterations {
             baseline_terminal
                 .draw(|frame| render(frame, &mut baseline_app))
                 .unwrap();
@@ -944,14 +941,56 @@ mod tests {
         let mut dirty_app = App::new(now(), true);
         let dirty_start = Instant::now();
         let mut redraws = 0;
-        for _ in 0..ITERATIONS {
+        for _ in 0..iterations {
             redraws += usize::from(draw_if_dirty(&mut dirty_terminal, &mut dirty_app).unwrap());
         }
         let dirty = dirty_start.elapsed();
         assert_eq!(redraws, 1);
 
+        (baseline, dirty)
+    }
+
+    fn measure_dirty_preview_render_samples(
+        warmups: usize,
+        samples: usize,
+        iterations: usize,
+    ) -> Vec<(Duration, Duration)> {
+        for _ in 0..warmups {
+            std::hint::black_box(measure_dirty_preview_render(iterations));
+        }
+        (0..samples)
+            .map(|_| measure_dirty_preview_render(iterations))
+            .collect()
+    }
+
+    #[test]
+    fn dirty_preview_render_measurement_collects_requested_samples() {
+        let samples = measure_dirty_preview_render_samples(1, 3, 2);
+
+        assert_eq!(samples.len(), 3);
+    }
+
+    #[test]
+    #[ignore = "release-only rendering measurement"]
+    fn dirty_redraw_release_measurement() {
+        const WARMUPS: usize = 5;
+        const SAMPLES: usize = 30;
+        const ITERATIONS: usize = 500;
+
+        let samples = measure_dirty_preview_render_samples(WARMUPS, SAMPLES, ITERATIONS);
+        let mut unconditional = samples.iter().map(|sample| sample.0).collect::<Vec<_>>();
+        unconditional.sort_unstable();
+        let mut dirty = samples.iter().map(|sample| sample.1).collect::<Vec<_>>();
+        dirty.sort_unstable();
+
         eprintln!(
-            "dirty redraw release measurement: iterations={ITERATIONS}, unconditional={baseline:?}, dirty={dirty:?}, redraws={redraws}"
+            "dirty redraw release measurement: warmups={WARMUPS}, samples={SAMPLES}, iterations={ITERATIONS}, unconditional_min={:?}, unconditional_median={:?}, unconditional_max={:?}, dirty_min={:?}, dirty_median={:?}, dirty_max={:?}, redraws=1",
+            unconditional[0],
+            unconditional[SAMPLES / 2],
+            unconditional[SAMPLES - 1],
+            dirty[0],
+            dirty[SAMPLES / 2],
+            dirty[SAMPLES - 1]
         );
     }
 
