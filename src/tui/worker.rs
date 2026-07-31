@@ -114,8 +114,8 @@ impl PreviewWorker {
         }
     }
 
-    pub(super) fn try_recv(&self) -> Option<PreviewResult> {
-        self.results.try_recv().ok()
+    pub(super) fn try_recv(&self) -> Result<PreviewResult, mpsc::TryRecvError> {
+        self.results.try_recv()
     }
 }
 
@@ -155,6 +155,29 @@ mod tests {
     static BETWEEN_STEPS_CONTROL: OnceLock<BlockingTransformControl> = OnceLock::new();
     static CANCEL_PENDING_CONTROL: OnceLock<BlockingTransformControl> = OnceLock::new();
     static SECOND_STEP_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn try_recv_distinguishes_empty_from_disconnected() {
+        let live = PreviewWorker::new();
+        assert!(matches!(live.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+        let shared = Arc::new(WorkerShared {
+            state: Mutex::new(WorkerState {
+                pending: None,
+                shutdown: false,
+            }),
+            pending_changed: Condvar::new(),
+            latest_request_id: AtomicU64::new(0),
+        });
+        let (sender, results) = mpsc::channel();
+        drop(sender);
+        let disconnected = PreviewWorker { shared, results };
+
+        assert!(matches!(
+            disconnected.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+    }
 
     fn block(
         control: &OnceLock<BlockingTransformControl>,

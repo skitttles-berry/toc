@@ -156,8 +156,16 @@ fn run_loop(
             }
         }
 
-        while let Some(result) = worker.try_recv() {
-            effects.extend(app.handle_event(AppEvent::PreviewFinished(result)));
+        loop {
+            match worker.try_recv() {
+                Ok(result) => effects.extend(app.handle_event(AppEvent::PreviewFinished(result))),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    return Err(AppError::Tui(
+                        "Preview worker stopped unexpectedly".to_string(),
+                    ));
+                }
+            }
         }
         effects.extend(app.handle_event(AppEvent::Tick(Instant::now())));
 
