@@ -204,15 +204,27 @@ pub(super) fn render_text_window(
                     .replace('\r', "\\x0d")
             });
             let rendered = escaped.as_deref().unwrap_or(grapheme);
-            if output.len() + rendered.len() > VISIBLE_TEXT_BYTE_BUDGET
-                || used_width + rendered.width() > columns
-            {
+            let rendered_width = rendered.width();
+            if output.len() + rendered.len() > VISIBLE_TEXT_BYTE_BUDGET {
                 fallback = Some((start + relative + grapheme.len(), false));
                 break;
             }
+            if rendered_width > columns {
+                fallback = Some((start + relative + grapheme.len(), false));
+                break;
+            }
+            if used_width + rendered_width > columns {
+                if row + 1 >= rows || output.len() + 1 + rendered.len() > VISIBLE_TEXT_BYTE_BUDGET {
+                    fallback = Some((start + relative, false));
+                    break;
+                }
+                output.push('\n');
+                row += 1;
+                used_width = 0;
+            }
             output.push_str(rendered);
             cursor = start + relative + grapheme.len();
-            used_width += rendered.width();
+            used_width += rendered_width;
         }
     }
 
@@ -459,6 +471,45 @@ mod tests {
         assert_eq!(window.next_offset, artifact.bytes().len());
         assert!(window.inspected_bytes <= VISIBLE_TEXT_BYTE_BUDGET);
         assert!(window.text.len() <= VISIBLE_TEXT_BYTE_BUDGET);
+    }
+
+    #[test]
+    fn text_window_soft_wraps_across_all_visible_rows() {
+        let artifact = Artifact::new(b"abcdefgh".to_vec());
+
+        let full = render_text_window(&artifact, 0, 3, 3);
+        assert_eq!(full.text, "abc\ndef\ngh");
+        assert_eq!(full.next_offset, 8);
+
+        let first = render_text_window(&artifact, 0, 1, 3);
+        assert_eq!(first.text, "abc");
+        assert_eq!(first.next_offset, 3);
+
+        let second = render_text_window(&artifact, first.next_offset, 1, 3);
+        assert_eq!(second.text, "def");
+        assert_eq!(second.next_offset, 6);
+    }
+
+    #[test]
+    fn text_window_soft_wraps_wide_graphemes_by_display_width() {
+        let artifact = Artifact::new("界界界".as_bytes().to_vec());
+
+        let window = render_text_window(&artifact, 0, 2, 4);
+
+        assert_eq!(window.text, "界界\n界");
+        assert_eq!(window.next_offset, artifact.bytes().len());
+    }
+
+    #[test]
+    fn text_window_wraps_escaped_controls_without_changing_source() {
+        let source = b"a\x1bb".to_vec();
+        let artifact = Artifact::new(source.clone());
+
+        let window = render_text_window(&artifact, 0, 2, 4);
+
+        assert_eq!(window.text, "a\n\\x1b");
+        assert_eq!(window.next_offset, 2);
+        assert_eq!(artifact.bytes(), source.as_slice());
     }
 
     #[test]
