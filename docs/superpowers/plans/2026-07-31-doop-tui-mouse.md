@@ -47,6 +47,7 @@
 - Modify: `src/tui.rs:51-101`
 - Modify: `src/tui.rs:177-183`
 - Test: `src/tui.rs:235-267`
+- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:340-350`
 
 **Interfaces:**
 - Consumes: 기존 `execute_tracked<W, C>(writer: &mut W, active: &mut bool, command: C) -> io::Result<()>`, `TerminalSession::restore(&mut self)`, `best_effort_restore_terminal()`
@@ -138,10 +139,21 @@ Run: `cargo test --locked tui::tests`
 
 Expected: 기존 `tracked_command_marks_state_when_flush_fails_after_write`와 새 마우스 추적 시험을 포함한 `tui::tests`가 모두 통과한다.
 
-- [ ] **Step 5: 첫 변경 커밋**
+- [ ] **Step 5: 터미널 수명주기 문서 동기화**
+
+`docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`의 터미널 안전성에 다음 문단을 추가한다.
+
+```markdown
+마우스 캡처는 raw mode, alternate screen, bracketed paste 다음에 활성화하고
+cursor hide 전에 완료한다. 정상 종료·오류·패닉 복구는 cursor show, mouse
+capture disable, bracketed paste disable, alternate screen leave, raw mode
+disable 순서다.
+```
+
+- [ ] **Step 6: 첫 변경 커밋**
 
 ```bash
-git add src/tui.rs
+git add src/tui.rs docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
 git commit -m "feat(tui): 마우스 캡처 수명주기"
 ```
 
@@ -156,6 +168,7 @@ git commit -m "feat(tui): 마우스 캡처 수명주기"
 - Test: `src/tui/state.rs:1113-1333`
 - Modify: `src/tui/render.rs:1-18,94-264,354-405,648-731`
 - Test: `src/tui/render.rs:751-874,945-1019,1860-1892`
+- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:134-185,204-220`
 
 **Interfaces:**
 - Consumes: `Rect::contains(Position) -> bool`, `App::mark_dirty()`, 기존 패널 렌더 함수와 `draw_if_dirty`
@@ -557,10 +570,24 @@ Run: `cargo test --locked tui::render::tests::zoomed_tab_keeps_the_visible_pane_
 
 Expected: 기존 zoom·focus 연동 시험이 통과한다.
 
-- [ ] **Step 10: 두 번째 변경 커밋**
+- [ ] **Step 10: 이벤트 흐름과 클릭 문서 동기화**
+
+`docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`의 상태·이벤트 흐름과 화면 조작에 다음 문단을 추가한다.
+
+```markdown
+`tui.rs`는 Crossterm 마우스 이벤트를 `AppEvent::Mouse`로 전달한다. 렌더러는 매
+프레임 실제로 표시한 패널과 Pipeline 행의 `Rect`만 `MouseRegions`에 저장하며,
+resize·zoom 뒤 이전 좌표를 유지하지 않는다.
+
+패널 클릭은 포커스만 바꾸고 Pipeline의 실제 표시 행 클릭은 선택도 바꾼다.
+Input 클릭은 caret과 selection을 바꾸지 않으며 Output 클릭은 복사, View와
+결과 원본을 바꾸지 않는다.
+```
+
+- [ ] **Step 11: 두 번째 변경 커밋**
 
 ```bash
-git add src/tui.rs src/tui/state.rs src/tui/render.rs
+git add src/tui.rs src/tui/state.rs src/tui/render.rs docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
 git commit -m "feat(tui): 마우스 패널 탐색"
 ```
 
@@ -573,6 +600,8 @@ git commit -m "feat(tui): 마우스 패널 탐색"
 - Test: `src/tui/state.rs:1302-1333,1723-1921`
 - Modify: `src/tui/render.rs:354-665`
 - Test: `src/tui/render.rs:1087-1305,2023-2074`
+- Modify: `README.md:50-75`
+- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:204-277,326-352`
 
 **Interfaces:**
 - Consumes: Task 2의 `MouseRegions`·`App::handle_mouse(MouseEvent, Instant)`, 기존 `App::handle_modal_key(KeyEvent, Instant)`, `App::handle_pipeline_key(KeyEvent, Instant)`, `App::scroll_output(i8, usize)`
@@ -1250,21 +1279,50 @@ Run: `cargo test --locked tui::render::tests::forty_by_ten_help_keeps_copy_keys_
 
 Expected: `[Esc Close]`를 포함한 40×10 Help가 통과한다.
 
-- [ ] **Step 13: 세 번째 변경 커밋**
+- [ ] **Step 13: 사용자 안내와 마우스 상호작용 문서 동기화**
+
+`README.md`의 TUI 단축키 목록 다음에 아래 문단을 추가한다.
+
+```markdown
+마우스는 `doop tui` 실행 중 항상 활성화됩니다. 패널 클릭은 포커스를 바꾸고,
+Pipeline과 Add Transform 항목 클릭은 표시된 항목을 선택합니다. Output 휠은
+결과를 스크롤하고 Pipeline·Add Transform 휠은 선택을 한 항목씩 이동합니다.
+Modal에서는 대괄호로 표시된 Add·Confirm·Cancel·Close만 클릭할 수 있습니다.
+Input caret 이동, 드래그 선택, Output 마우스 복사와 Pipeline 직접 변경은 지원하지
+않습니다. 마우스 캡처 중에는 터미널의 일반 드래그 텍스트 선택이 제한될 수 있으며,
+키보드 조작은 마우스를 보고하지 않는 터미널에서도 그대로 사용할 수 있습니다.
+```
+
+`docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`의 화면 조작과 도움말 설명에 다음 문단을 추가한다.
+
+```markdown
+Modal이 열려 있으면 Modal 영역만 입력 판정에 사용한다. Pipeline·Input·Output의
+테두리와 내용 클릭은 해당 패널에 포커스를 주고, Pipeline·Add Transform의 실제
+표시 행 클릭은 선택도 바꾼다. Output 휠은 기존 스크롤 3단위, Pipeline·Add
+Transform 휠은 선택 1개를 이동하며 포커스는 유지한다. Modal은 표시된
+Add·Confirm·Cancel·Close 동작만 클릭으로 실행한다. Input caret, 드래그 선택,
+Output 마우스 복사, Pipeline 직접 편집, Hover와 Footer 클릭은 지원하지 않는다.
+
+일반 크기 F1 도움말은 Input의 focus-only 클릭, Pipeline의 클릭 선택·휠 이동,
+Output의 focus-only 클릭·휠 스크롤을 안내한다. compact Help와 두 줄 Footer는
+기존 키 정보를 유지한다.
+```
+
+- [ ] **Step 14: 세 번째 변경 커밋**
 
 ```bash
-git add src/tui/state.rs src/tui/render.rs
+git add src/tui/state.rs src/tui/render.rs README.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
 git commit -m "feat(tui): 마우스 모달과 스크롤"
 ```
 
 ---
 
-### Task 4: PTY 통합 검증과 사용자 문서
+### Task 4: PTY 통합 검증과 검증 문서
 
 **Files:**
 - Modify: `tests/shell-smoke.sh:175-305`
-- Modify: `README.md:50-75,102-115`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:134-185,204-277,340-380,397-408`
+- Modify: `README.md:102-115`
+- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:397-408`
 
 **Interfaces:**
 - Consumes: Task 1의 캡처 수명주기, Task 2의 SGR click 전달, Task 3의 Modal·wheel 처리와 기존 Expect `expect_exact` helper
@@ -1307,21 +1365,9 @@ Run: `bash tests/shell-smoke.sh`
 
 Expected: 캡처 enable Sequence, 패널 클릭, Picker 둘째 항목·Add 클릭, Pipeline 휠과 역순 disable Sequence가 모두 관찰되고 종료 코드 0으로 끝난다.
 
-- [ ] **Step 3: README 사용자 안내 현행화**
+- [ ] **Step 3: README 검증 근거 현행화**
 
-`README.md`의 TUI 단축키 목록 다음에 아래 문단을 추가한다.
-
-```markdown
-마우스는 `doop tui` 실행 중 항상 활성화됩니다. 패널 클릭은 포커스를 바꾸고,
-Pipeline과 Add Transform 항목 클릭은 표시된 항목을 선택합니다. Output 휠은
-결과를 스크롤하고 Pipeline·Add Transform 휠은 선택을 한 항목씩 이동합니다.
-Modal에서는 대괄호로 표시된 Add·Confirm·Cancel·Close만 클릭할 수 있습니다.
-Input caret 이동, 드래그 선택, Output 마우스 복사와 Pipeline 직접 변경은 지원하지
-않습니다. 마우스 캡처 중에는 터미널의 일반 드래그 텍스트 선택이 제한될 수 있으며,
-키보드 조작은 마우스를 보고하지 않는 터미널에서도 그대로 사용할 수 있습니다.
-```
-
-`최신 로컬 검증 요약` 끝에 최종 명령이 통과한 뒤 아래 문단을 추가한다.
+`README.md`의 `최신 로컬 검증 요약` 끝에 최종 명령이 통과한 뒤 아래 문단을 추가한다.
 
 ```markdown
 같은 환경의 마우스 고도화 검증에서 Crossterm 캡처 활성화·역순 해제, SGR 패널
@@ -1330,27 +1376,7 @@ Ratatui TestBackend 시험은 Wide·Medium·Narrow·Tiny·Zoom·Modal 좌표와 
 3단위, Pipeline·Add Transform 1단위 휠 경계를 검증했다.
 ```
 
-- [ ] **Step 4: 작업판 설계 문서 현행화**
-
-`docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`에 다음 내용을 기존 구조에 맞춰 삽입한다.
-
-```markdown
-`tui.rs`는 Crossterm 마우스 이벤트를 `AppEvent::Mouse`로 전달한다. 렌더러는 매
-프레임 실제로 표시한 패널·목록·Modal 동작의 `Rect`만 `MouseRegions`에 저장하며,
-resize·zoom·Modal 전환 뒤 이전 좌표를 유지하지 않는다. Modal이 열려 있으면
-아래 패널의 좌표는 입력 판정에서 제외한다.
-
-마우스 캡처는 raw mode, alternate screen, bracketed paste 다음에 활성화하고
-cursor hide 전에 완료한다. 정상 종료·오류·패닉 복구는 cursor show, mouse
-capture disable, bracketed paste disable, alternate screen leave, raw mode
-disable 순서다.
-
-패널 클릭은 포커스만 바꾸고 Pipeline·Add Transform의 실제 표시 행 클릭은
-선택도 바꾼다. Output 휠은 기존 스크롤 3단위, Pipeline·Add Transform 휠은
-선택 1개를 이동하며 포커스는 유지한다. Modal은 표시된 Add·Confirm·Cancel·Close
-동작만 클릭으로 실행한다. Input caret, 드래그 선택, Output 마우스 복사,
-Pipeline 직접 편집, Hover와 Footer 클릭은 지원하지 않는다.
-```
+- [ ] **Step 4: 작업판 검증 전략 현행화**
 
 회귀 시험 목록의 터미널 복구 항목을 다음 문장으로 바꾼다.
 
