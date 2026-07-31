@@ -201,27 +201,31 @@ Modal과 Zoom이 없는 상태에서 `Esc`를 누르면 현재 요청 ID를 무�
 
 ### 120열 이상
 
-Pipeline은 왼쪽 30%를 사용하되 28~42열로 제한한다. 오른쪽은 Input 42%, Output 58%의 세로 구조다. App Bar, Navigation Bar, Step Summary와 Context Bar를 표시한다.
+Pipeline은 왼쪽 30%를 사용하되 28~42열로 제한한다. 오른쪽은 Input 42%, Output 58%의 세로 구조다. 상단에는 박스 없는 한 줄 App Bar를 표시하고, 각 패널은 굵은 Neon Console 테두리와 제목을 사용한다. 최하단 두 줄 Footer는 포커스별 도움말과 공통 도움말을 고정 표시한다.
 
 ### 90~119열
 
-Pipeline은 28~32열로 줄이고 같은 분할 구조를 유지한다. 단계별 크기 변화, 긴 설명과 낮은 우선순위 도움말부터 숨긴다. Inspector는 Overlay로 표시한다.
+Pipeline은 28~32열로 줄이고 같은 분할 구조를 유지한다. Inspector는 Overlay로 표시한다.
 
 ### 40~89열
 
-Pipeline, Input, Output을 한 번에 하나씩 표시한다. `Tab`과 `Shift+Tab`으로 패널을 전환하며 현재 패널 이름을 App Bar에 텍스트로 표시한다.
+Pipeline, Input, Output을 차례대로 30%, 30%, 40%로 쌓아 표시한다. `Tab`과 `Shift+Tab`으로 패널을 전환하며 현재 포커스는 App Bar에 텍스트로 표시한다.
+
+### 10~11행
+
+포커스된 패널 하나만 표시한다. 상단 App Bar와 두 줄 Footer는 유지한다.
 
 ### 40열 미만 또는 10행 미만
 
 편집기와 결과를 렌더링하지 않고 터미널 크기를 늘리라는 안내만 표시한다.
 
-높이가 부족하면 각 보이는 패널에 최소 3개의 내용 행을 남길 때까지 Step Summary, Navigation 설명, 낮은 우선순위 Context 도움말 순서로 숨긴다.
+높이 12행 이상에서는 각 패널에 최소 3개의 테두리 행을 남긴다. Pipeline 실패, 취소 또는 일반 상태는 Footer 첫째 줄만 대체하며, 둘째 줄 공통 도움말은 항상 표시한다.
 
 ## 5.2 스타일과 접근성
 
 기본 배경은 터미널 배경을 그대로 사용한다. Accent, Success, Warning, Error와 Selection 역할만 제한된 16색 계열로 표현한다. 패널 제목과 상태에는 표시 폭이 안정적인 Unicode 기호를 사용할 수 있지만 상태는 항상 영어 텍스트를 함께 제공한다.
 
-`NO_COLOR`에서는 장식 색상을 제거하고 `OK`, `ERROR`, `OFF`, `RUNNING` 같은 텍스트 상태를 사용한다. 이모지 전용 제목, 고정 RGB 배경과 사용자 테마 설정은 이번 범위에 포함하지 않는다.
+`NO_COLOR`에서는 색상만 제거하고 패널·상태 기호와 `OK`, `ERROR`, `OFF`, `RUNNING` 같은 텍스트 상태를 유지한다. 이모지 전용 제목, 고정 RGB 배경과 사용자 테마 설정은 이번 범위에 포함하지 않는다.
 
 ## 5.3 키 바인딩
 

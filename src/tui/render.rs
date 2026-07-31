@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Clear, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Clear, List, ListItem, Paragraph},
 };
 
 use crate::{error::AppError, pipeline::StepStatus};
@@ -24,14 +24,6 @@ enum WidthMode {
     Medium,
     Narrow,
     Tiny,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ChromeVisibility {
-    navigation: bool,
-    step_summary: bool,
-    full_context: bool,
-    all_panes: bool,
 }
 
 fn width_mode(area: Rect) -> WidthMode {
@@ -55,21 +47,16 @@ fn pipeline_width(width: u16, mode: WidthMode) -> u16 {
     }
 }
 
-fn chrome_visibility(height: u16) -> ChromeVisibility {
-    ChromeVisibility {
-        navigation: height >= 14,
-        step_summary: height >= 16,
-        full_context: height >= 12,
-        all_panes: height >= 12,
-    }
-}
-
 fn pane_style(app: &App, focused: bool) -> Style {
-    if app.no_color || !focused {
+    if app.no_color {
         Style::default()
+    } else if focused {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
-            .fg(Color::Cyan)
+            .fg(Color::Green)
             .add_modifier(Modifier::BOLD)
     }
 }
@@ -85,10 +72,18 @@ fn selection_style(app: &App) -> Style {
 fn pane_block<'a>(app: &App, title: &'a str, focused: bool) -> Block<'a> {
     let style = pane_style(app, focused);
     Block::bordered()
+        .border_type(BorderType::Thick)
         .title(title)
-        .style(Style::default())
         .border_style(style)
         .title_style(style)
+}
+
+fn stacked_pane_heights(height: u16) -> [u16; 3] {
+    let remaining = height.saturating_sub(9);
+    let pipeline = 3 + remaining.saturating_mul(3) / 10;
+    let input = 3 + remaining.saturating_mul(3) / 10;
+    let output = height.saturating_sub(pipeline).saturating_sub(input);
+    [pipeline, input, output]
 }
 
 fn source_label(source: OutputSource) -> String {
@@ -99,7 +94,7 @@ fn source_label(source: OutputSource) -> String {
 }
 
 fn render_input(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let block = pane_block(app, "Input", app.focus == Pane::Input);
+    let block = pane_block(app, "> INPUT", app.focus == Pane::Input);
     app.textarea.set_block(block);
     frame.render_widget(&app.textarea, area);
 }
@@ -112,7 +107,7 @@ fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect) {
         ViewMode::Hex => "Hex",
         ViewMode::Trace => "Trace",
     };
-    let title = format!("Output — {source} — {view}");
+    let title = format!("» OUTPUT / {source} / {}", view.to_ascii_uppercase());
     let block = pane_block(app, &title, app.focus == Pane::Output);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -188,7 +183,7 @@ fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: bool) {
-    let block = pane_block(app, "Pipeline", app.focus == Pane::Pipeline);
+    let block = pane_block(app, "$ PIPELINE", app.focus == Pane::Pipeline);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -220,10 +215,8 @@ fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: boo
             } else if matches!(app.output.status, OutputStatus::Running)
                 && matches!(app.output.source, OutputSource::Step(target) if target == index)
             {
-                let mark = (!app.no_color).then_some("› ");
                 let text = format!(
-                    "{prefix} [{enabled}] {}RUNNING {}",
-                    mark.unwrap_or_default(),
+                    "{prefix} [{enabled}] › RUNNING {}",
                     step.definition.display_name
                 );
                 return ListItem::new(Span::styled(
@@ -254,7 +247,6 @@ fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: boo
             } else {
                 String::new()
             };
-            let mark = if app.no_color { "" } else { mark };
             let text = format!(
                 "{prefix} [{enabled}] {mark}{label} {}{sizes}",
                 step.definition.display_name
@@ -274,17 +266,6 @@ fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: boo
     frame.render_widget(List::new(items).style(Style::default()), inner);
 }
 
-fn preview_label(status: &OutputStatus) -> &'static str {
-    match status {
-        OutputStatus::Idle => "Idle",
-        OutputStatus::Debouncing { .. } => "Waiting",
-        OutputStatus::Running => "Running",
-        OutputStatus::Ready => "Ready",
-        OutputStatus::Failed(_) => "Error",
-        OutputStatus::Cancelled => "Cancelled",
-    }
-}
-
 fn pane_label(pane: Pane) -> &'static str {
     match pane {
         Pane::Input => "Input",
@@ -294,94 +275,82 @@ fn pane_label(pane: Pane) -> &'static str {
 }
 
 fn render_app_bar(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let tabs = [Pane::Input, Pane::Output, Pane::Pipeline]
-        .into_iter()
-        .map(|pane| {
-            if pane == app.focus {
-                format!("[{}]", pane_label(pane))
-            } else {
-                pane_label(pane).to_string()
-            }
+    let title_style = (!app.no_color)
+        .then(|| {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
         })
-        .collect::<Vec<_>>()
-        .join(" ");
-    let style = if app.no_color {
-        Style::default()
-    } else {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
-    };
-    frame.render_widget(Paragraph::new(format!("doop | {tabs}")).style(style), area);
+        .unwrap_or_default();
+    let focus_style = (!app.no_color)
+        .then(|| {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        })
+        .unwrap_or_default();
+    let line = Line::from(vec![
+        Span::styled(">_ DOOP", title_style),
+        Span::raw("  │  FOCUS: "),
+        Span::styled(pane_label(app.focus).to_ascii_uppercase(), focus_style),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
-fn render_navigation(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let text = match app.focus {
-        Pane::Input => "Navigation | Tab focus | Ctrl+P add | Ctrl+Q quit",
-        Pane::Output if app.can_copy() => "Navigation | Tab focus | Enter copy | p step | f final",
-        Pane::Output => "Navigation | Tab focus | p step | f final",
-        Pane::Pipeline => "Navigation | Tab focus | Space toggle | Shift+Up/Down move",
-    };
-    frame.render_widget(Paragraph::new(text).style(Style::default()), area);
+fn focused_help(app: &App) -> &'static str {
+    match app.focus {
+        Pane::Input => "[INPUT] Text editing · Esc Cancel",
+        Pane::Pipeline => "[PIPELINE] ↑/↓ Select · Shift+↑/↓ Move · Space Toggle · Enter Inspect",
+        Pane::Output if app.can_copy() => {
+            "[OUTPUT] Enter Pretty · v/V View · p Step · f Final · z Zoom"
+        }
+        Pane::Output => "[OUTPUT] v/V View · p Step · f Final · z Zoom",
+    }
 }
 
-fn render_step_summary(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let enabled = app.steps.iter().filter(|step| step.enabled).count();
-    let selected = if app.steps.is_empty() {
-        "-".to_string()
-    } else {
-        format!("{:02}", app.selected_step + 1)
-    };
-    frame.render_widget(
-        Paragraph::new(format!(
-            "Step Summary | selected {selected} | {enabled}/{} enabled | {}",
-            app.steps.len(),
-            preview_label(&app.output.status)
-        ))
-        .style(Style::default()),
-        area,
-    );
+fn common_help() -> &'static str {
+    "[COMMON] Tab Focus · F3 Pretty · F4 Raw · Ctrl+P Add · F1 Help · Ctrl+Q Quit"
 }
 
-fn render_context(frame: &mut Frame<'_>, app: &App, area: Rect, full: bool) {
-    let prefix = format!("{} | ", source_label(app.output.source));
-    let body_width = (area.width as usize).saturating_sub(prefix.len());
-    let body = match &app.output.status {
+fn footer_first_line(app: &App, width: usize) -> String {
+    match &app.output.status {
         OutputStatus::Failed(error) => {
-            crate::error::escape_external(&render_pipeline_error_summary(error), body_width)
+            crate::error::escape_external(&render_pipeline_error_summary(error), width)
         }
         OutputStatus::Cancelled => "Cancelled".to_string(),
-        _ => {
-            if let Some(message) = &app.status {
-                crate::error::escape_external(message, body_width)
-            } else {
-                match &app.output.status {
-                    _ if app.can_copy()
-                        && app
-                            .output
-                            .active_artifact
-                            .as_ref()
-                            .is_some_and(|artifact| !artifact.is_utf8()) =>
-                    {
-                        if full {
-                            "Copy as Hex | Tab focus | Ctrl+Q quit".to_string()
-                        } else {
-                            "Copy as Hex".to_string()
-                        }
-                    }
-                    _ if full => "Tab focus | Ctrl+P add | Ctrl+Q quit".to_string(),
-                    _ => "Ctrl+Q quit".to_string(),
-                }
-            }
-        }
-    };
-    let text = format!("{prefix}{body}");
-    let style = if app.no_color {
-        Style::default()
-    } else {
-        Style::default().fg(Color::Cyan)
-    };
-    frame.render_widget(Paragraph::new(text).style(style), area);
+        _ => app
+            .status
+            .as_ref()
+            .map(|status| crate::error::escape_external(status, width))
+            .unwrap_or_else(|| focused_help(app).to_string()),
+    }
+}
+
+fn render_footer(
+    frame: &mut Frame<'_>,
+    app: &App,
+    focused_help_area: Rect,
+    common_help_area: Rect,
+) {
+    frame.render_widget(
+        Paragraph::new(footer_first_line(app, focused_help_area.width as usize)),
+        focused_help_area,
+    );
+    frame.render_widget(Paragraph::new(common_help()), common_help_area);
+}
+
+fn render_focused_pane(
+    frame: &mut Frame<'_>,
+    app: &mut App,
+    area: Rect,
+    pane: Pane,
+    mode: WidthMode,
+) {
+    match pane {
+        Pane::Input => render_input(frame, app, area),
+        Pane::Output => render_output(frame, app, area),
+        Pane::Pipeline => render_pipeline(frame, app, area, mode == WidthMode::Wide),
+    }
 }
 
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
@@ -577,16 +546,16 @@ fn render_help(frame: &mut Frame<'_>, app: &App) {
     let (title, body) = match app.focus {
         Pane::Input => (
             "Input Help",
-            "Text editing: tui-textarea defaults\nTab / Shift+Tab  Next / previous pane\nCtrl+P  Add transform\nF1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit\nEsc  Close zoom or cancel request".to_string(),
+            "Text editing: tui-textarea defaults\nTab / Shift+Tab  Next / previous pane\nCtrl+P  Add transform · F3/F4 Pretty/Raw Copy\nF1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit\nEsc  Close zoom or cancel request".to_string(),
         ),
         Pane::Pipeline => (
             "Pipeline Help",
-            "Up/Down or j/k  Select step\nShift+Up/Down or J/K  Reorder\nSpace  Toggle step\nDelete or d  Delete step\nEnter  Inspect step\na / Ctrl+P  Add transform\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit".to_string(),
+            "Up/Down or j/k  Select step\nShift+Up/Down or J/K  Reorder\nSpace  Toggle step\nDelete or d  Delete step\nEnter  Inspect step\na / Ctrl+P  Add transform · F3/F4 Pretty/Raw Copy\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit".to_string(),
         ),
         Pane::Output => (
             "Output Help",
             format!(
-                "v/V  Next / previous view\np  Show selected step\nf  Restore final\nEnter/y  {}\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+P  Add transform\n? / F1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit",
+                "v/V  Next / previous view\np  Show selected step\nf  Restore final\nEnter/y  {} · F3/F4 Pretty/Raw Copy\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+P  Add transform\n? / F1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit",
                 if app.can_copy() {
                     "Copy whole result"
                 } else {
@@ -686,54 +655,43 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
         return;
     }
 
-    let chrome = chrome_visibility(area.height);
-    let mut top = area.y;
-    let app_bar = Rect::new(area.x, top, area.width, 1);
-    top += 1;
+    let [app_bar, content, focused_help, common_help] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(area);
     render_app_bar(frame, app, app_bar);
-    if chrome.navigation {
-        let navigation = Rect::new(area.x, top, area.width, 1);
-        top += 1;
-        render_navigation(frame, app, navigation);
-    }
-    if chrome.step_summary {
-        let step_summary = Rect::new(area.x, top, area.width, 1);
-        top += 1;
-        render_step_summary(frame, app, step_summary);
-    }
-    let context = Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1);
-    let content = Rect::new(area.x, top, area.width, context.y.saturating_sub(top));
 
     let focused = app.zoom.unwrap_or(app.focus);
-    if matches!(mode, WidthMode::Narrow) || !chrome.all_panes || app.zoom.is_some() {
-        match focused {
-            Pane::Input => render_input(frame, app, content),
-            Pane::Output => render_output(frame, app, content),
-            Pane::Pipeline => render_pipeline(frame, app, content, mode == WidthMode::Wide),
-        }
+    if area.height < 12 || app.zoom.is_some() {
+        render_focused_pane(frame, app, content, focused, mode);
+    } else if mode == WidthMode::Narrow {
+        let [pipeline_rows, input_rows, output_rows] = stacked_pane_heights(content.height);
+        let [pipeline, input, output] = Layout::vertical([
+            Constraint::Length(pipeline_rows),
+            Constraint::Length(input_rows),
+            Constraint::Length(output_rows),
+        ])
+        .areas(content);
+        render_pipeline(frame, app, pipeline, false);
+        render_input(frame, app, input);
+        render_output(frame, app, output);
     } else {
         let pipeline_columns = pipeline_width(area.width, mode);
-        let pipeline = Rect::new(content.x, content.y, pipeline_columns, content.height);
-        let right = Rect::new(
-            content.x + pipeline_columns,
-            content.y,
-            content.width.saturating_sub(pipeline_columns),
-            content.height,
-        );
+        let [pipeline, right] =
+            Layout::horizontal([Constraint::Length(pipeline_columns), Constraint::Min(0)])
+                .areas(content);
         let input_rows = (u32::from(right.height) * 42 / 100) as u16;
-        let input_rows = input_rows.clamp(5, right.height.saturating_sub(5));
-        let input = Rect::new(right.x, right.y, right.width, input_rows);
-        let output = Rect::new(
-            right.x,
-            right.y + input_rows,
-            right.width,
-            right.height.saturating_sub(input_rows),
-        );
+        let input_rows = input_rows.clamp(3, right.height.saturating_sub(3));
+        let [input, output] =
+            Layout::vertical([Constraint::Length(input_rows), Constraint::Min(3)]).areas(right);
         render_pipeline(frame, app, pipeline, mode == WidthMode::Wide);
         render_input(frame, app, input);
         render_output(frame, app, output);
     }
-    render_context(frame, app, context, chrome.full_context);
+    render_footer(frame, app, focused_help, common_help);
     render_modal(frame, app);
 }
 
@@ -842,44 +800,10 @@ mod tests {
     }
 
     #[test]
-    fn height_boundaries_hide_chrome_in_order() {
-        assert_eq!(
-            chrome_visibility(16),
-            ChromeVisibility {
-                navigation: true,
-                step_summary: true,
-                full_context: true,
-                all_panes: true,
-            }
-        );
-        assert_eq!(
-            chrome_visibility(15),
-            ChromeVisibility {
-                navigation: true,
-                step_summary: false,
-                full_context: true,
-                all_panes: true,
-            }
-        );
-        assert_eq!(
-            chrome_visibility(13),
-            ChromeVisibility {
-                navigation: false,
-                step_summary: false,
-                full_context: true,
-                all_panes: true,
-            }
-        );
-        assert_eq!(
-            chrome_visibility(11),
-            ChromeVisibility {
-                navigation: false,
-                step_summary: false,
-                full_context: false,
-                all_panes: false,
-            }
-        );
-        assert_eq!(chrome_visibility(10), chrome_visibility(11));
+    fn stacked_pane_heights_keep_minimums_and_give_remainder_to_output() {
+        assert_eq!(stacked_pane_heights(9), [3, 3, 3]);
+        assert_eq!(stacked_pane_heights(13), [4, 4, 5]);
+        assert_eq!(stacked_pane_heights(25), [7, 7, 11]);
     }
 
     #[test]
@@ -998,27 +922,41 @@ mod tests {
     fn wide_and_medium_layouts_put_bounded_pipeline_left_of_split_content() {
         for (width, expected_pipeline_width) in [(120, 36), (119, 32), (90, 28)] {
             let lines = rendered_lines(width, 16, Pane::Input);
-            let pane_starts = lines[3]
+            let pane_starts = lines[1]
                 .chars()
                 .enumerate()
-                .filter_map(|(index, character)| (character == '┌').then_some(index))
+                .filter_map(|(index, character)| (character == '┏').then_some(index))
                 .collect::<Vec<_>>();
 
             assert_eq!(pane_starts, vec![0, expected_pipeline_width as usize]);
-            assert!(lines[3].contains("Pipeline"));
-            assert!(lines[3].contains("Input"));
-            assert!(lines[8].contains("Output"));
+            assert!(lines[1].contains("$ PIPELINE"));
+            assert!(lines[1].contains("> INPUT"));
+            assert!(lines[6].contains("» OUTPUT"));
         }
     }
 
     #[test]
-    fn narrow_width_boundaries_show_only_the_focused_pane_and_text_tabs() {
+    fn narrow_layout_stacks_pipeline_input_and_output_in_order() {
         for width in [89, 40] {
-            let screen = rendered(width, 16, Pane::Output);
-            assert!(screen.contains("[Output]"));
-            assert_eq!(screen.matches("Output").count(), 2);
-            assert_eq!(screen.matches("Input").count(), 1);
-            assert_eq!(screen.matches("Pipeline").count(), 1);
+            let lines = rendered_lines(width, 16, Pane::Output);
+            let pipeline = lines
+                .iter()
+                .position(|line| line.contains("$ PIPELINE"))
+                .unwrap();
+            let input = lines
+                .iter()
+                .position(|line| line.contains("> INPUT"))
+                .unwrap();
+            let output = lines
+                .iter()
+                .position(|line| line.contains("» OUTPUT"))
+                .unwrap();
+
+            assert!(pipeline < input && input < output);
+            assert!(lines[0].contains(">_ DOOP"));
+            assert!(lines[0].contains("FOCUS: OUTPUT"));
+            assert!(lines[14].contains("[OUTPUT]"));
+            assert!(lines[15].contains("[COMMON]"));
         }
     }
 
@@ -1034,59 +972,59 @@ mod tests {
     }
 
     #[test]
-    fn height_boundaries_remove_summary_navigation_and_extra_panes_in_order() {
-        let full = rendered(120, 16, Pane::Output);
-        assert!(full.contains("Navigation"));
-        assert!(full.contains("Step Summary"));
-        assert!(full.contains("Pipeline"));
-        assert!(full.contains("Input"));
-        assert!(full.contains("Output"));
-
-        for height in [15, 14] {
-            let without_summary = rendered(120, height, Pane::Output);
-            assert!(without_summary.contains("Navigation"));
-            assert!(!without_summary.contains("Step Summary"));
-        }
-
-        for height in [13, 12] {
-            let without_navigation = rendered(120, height, Pane::Output);
-            assert!(!without_navigation.contains("Navigation"));
-            assert!(!without_navigation.contains("Step Summary"));
-            assert!(without_navigation.contains("Pipeline"));
-            assert!(without_navigation.contains("Input"));
-            assert!(
-                without_navigation
-                    .lines()
-                    .last()
-                    .unwrap()
-                    .contains("Ctrl+P")
-            );
-        }
-
-        for height in [11, 10] {
-            let focused = rendered(120, height, Pane::Output);
-            assert!(focused.contains("[Output]"));
-            assert_eq!(focused.matches("Pipeline").count(), 1);
-            assert_eq!(focused.matches("Input").count(), 1);
-            assert_eq!(focused.matches("Output").count(), 2);
+    fn ten_and_eleven_rows_show_only_the_focused_pane() {
+        for height in [10, 11] {
+            let screen = rendered(120, height, Pane::Output);
+            assert!(screen.contains("» OUTPUT"));
+            assert!(!screen.contains("$ PIPELINE"));
+            assert!(!screen.contains("> INPUT"));
         }
     }
 
     #[test]
-    fn twelve_row_layout_keeps_both_right_panes_at_five_bordered_rows() {
+    fn app_bar_is_unboxed_and_footer_has_exactly_two_roles() {
+        let lines = rendered_lines(120, 16, Pane::Output);
+        assert!(lines[0].starts_with(">_ DOOP"));
+        assert!(lines[0].contains("│  FOCUS: OUTPUT"));
+        assert!(!lines[0].contains('┏'));
+        assert!(lines[14].starts_with("[OUTPUT]"));
+        assert!(lines[15].starts_with("[COMMON]"));
+        assert!(!lines.iter().any(|line| line.contains("Navigation")));
+        assert!(!lines.iter().any(|line| line.contains("Step Summary")));
+    }
+
+    #[test]
+    fn status_replaces_only_the_focused_help_line() {
+        let mut app = App::new(now(), true);
+        app.handle_event(AppEvent::ClipboardFinished {
+            kind: CopyKind::Pretty,
+            result: Err("Clipboard unavailable".to_string()),
+        });
+        let screen = rendered_app(80, 16, &mut app);
+        let lines: Vec<_> = screen.lines().collect();
+
+        assert!(lines[14].contains("Clipboard unavailable"));
+        assert!(!lines[14].contains("[INPUT]"));
+        assert!(lines[15].starts_with("[COMMON]"));
+        assert!(lines[15].contains("F3 Pretty"));
+        assert!(lines[15].contains("F4 Raw"));
+    }
+
+    #[test]
+    fn twelve_row_layout_keeps_both_right_panes_at_three_bordered_rows() {
         let lines = rendered_lines(120, 12, Pane::Input);
-        assert!(lines[1].contains("Input"));
-        assert!(lines[6].contains("Output"));
-        assert!(lines[5].contains("└"));
-        assert!(lines[10].contains("└"));
+        assert!(lines[1].contains("> INPUT"));
+        assert!(lines[4].contains("» OUTPUT"));
+        assert!(lines[3].contains('┛'));
+        assert!(lines[9].contains('┛'));
     }
 
     #[test]
     fn large_height_keeps_the_right_split_at_forty_two_percent() {
         let lines = rendered_lines(120, 2_004, Pane::Input);
 
-        assert!(lines[3].contains("Input"));
-        assert!(lines[843].contains("Output"));
+        assert!(lines[1].contains("> INPUT"));
+        assert!(lines[841].contains("» OUTPUT"));
     }
 
     #[test]
@@ -1096,13 +1034,13 @@ mod tests {
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"valid text".to_vec()));
         let text = rendered_app(89, 20, &mut app);
-        assert!(text.contains("Output — FINAL — Smart"));
+        assert!(text.contains("» OUTPUT / FINAL / SMART"));
         assert!(text.contains("valid text"));
 
         app.output.source = OutputSource::Step(1);
         app.output.active_artifact = Some(Artifact::new(vec![0, 0xff]));
         let hex = rendered_app(89, 20, &mut app);
-        assert!(hex.contains("Output — STEP 02 — Smart"));
+        assert!(hex.contains("» OUTPUT / STEP 02 / SMART"));
         assert!(hex.contains("OFFSET"));
         assert!(hex.contains("ASCII"));
 
@@ -1117,7 +1055,7 @@ mod tests {
             error: None,
         }];
         let trace = rendered_app(89, 20, &mut app);
-        assert!(trace.contains("Output — STEP 02 — Trace"));
+        assert!(trace.contains("» OUTPUT / STEP 02 / TRACE"));
         assert!(trace.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
         assert!(trace.contains("#2 hex-decode OK"));
     }
@@ -1342,8 +1280,8 @@ mod tests {
 
         assert_eq!(app.focus, Pane::Input);
         assert_eq!(app.zoom, Some(Pane::Input));
-        assert_eq!(screen.matches("Input").count(), 2);
-        assert_eq!(screen.matches("Pipeline").count(), 1);
+        assert_eq!(screen.matches("> INPUT").count(), 1);
+        assert_eq!(screen.matches("$ PIPELINE").count(), 0);
     }
 
     #[test]
@@ -1373,7 +1311,7 @@ mod tests {
             let screen = rendered_app(80, 20, &mut app);
             assert!(!screen.contains("Copy whole result"));
             assert!(screen.contains("Copy unavailable"));
-            assert!(!screen.contains("Enter copy"));
+            assert!(!screen.contains("Enter/y  Copy whole result"));
         }
 
         let mut copyable = App::new(start, true);
@@ -1384,7 +1322,7 @@ mod tests {
         let screen = rendered_app(80, 20, &mut copyable);
         assert!(screen.contains("Copy whole result"));
         assert!(!screen.contains("Copy unavailable"));
-        assert!(screen.contains("Enter copy"));
+        assert!(screen.contains("Enter/y"));
     }
 
     #[test]
@@ -1395,7 +1333,7 @@ mod tests {
         app.output.active_artifact = Some(Artifact::new(b"stale secret".to_vec()));
 
         let smart = rendered_app(89, 20, &mut app);
-        assert!(smart.contains("Output — FINAL — Smart"));
+        assert!(smart.contains("» OUTPUT / FINAL / SMART"));
         assert!(smart.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
         assert!(smart.contains("chain exceeds 32 steps"));
         assert!(!smart.contains("stale secret"));
@@ -1417,7 +1355,7 @@ mod tests {
             failed.status = Some("stale clipboard status".to_string());
             failed.output.status = OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
             let failed_screen = rendered_app(width, height, &mut failed);
-            let failed_context = failed_screen.lines().last().unwrap();
+            let failed_context = failed_screen.lines().rev().nth(1).unwrap();
             assert!(failed_context.contains("chain exceeds 32 steps"));
             assert!(!failed_context.contains("stale clipboard status"));
 
@@ -1425,63 +1363,9 @@ mod tests {
             cancelled.status = Some("stale general status".to_string());
             cancelled.output.status = OutputStatus::Cancelled;
             let cancelled_screen = rendered_app(width, height, &mut cancelled);
-            let cancelled_context = cancelled_screen.lines().last().unwrap();
+            let cancelled_context = cancelled_screen.lines().rev().nth(1).unwrap();
             assert!(cancelled_context.contains("Cancelled"));
             assert!(!cancelled_context.contains("stale general status"));
-        }
-    }
-
-    #[test]
-    fn context_bar_prefixes_source_for_every_status_branch_and_usable_width() {
-        for (source, prefix) in [
-            (OutputSource::Final, "FINAL | "),
-            (OutputSource::Step(1), "STEP 02 | "),
-        ] {
-            for (width, height) in [(120, 16), (90, 13), (40, 10)] {
-                let mut normal = App::new(now(), true);
-                normal.output.source = source;
-                let context = rendered_app(width, height, &mut normal);
-                assert!(context.lines().last().unwrap().starts_with(prefix));
-
-                let mut status = App::new(now(), true);
-                status.output.source = source;
-                status.status = Some("Copied\u{1b}[2J".to_string());
-                let context = rendered_app(width, height, &mut status);
-                let context = context.lines().last().unwrap();
-                assert!(context.starts_with(prefix));
-                assert!(context.contains("Copied\\x1b[2J"));
-                assert!(!context.contains('\u{1b}'));
-
-                let mut failed = App::new(now(), true);
-                failed.output.source = source;
-                failed.status = Some("stale".to_string());
-                failed.output.status =
-                    OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
-                let context = rendered_app(width, height, &mut failed);
-                let context = context.lines().last().unwrap();
-                assert!(context.starts_with(prefix));
-                assert!(context.contains("chain exceeds 32 steps"));
-                assert!(!context.contains("stale"));
-
-                let mut cancelled = App::new(now(), true);
-                cancelled.output.source = source;
-                cancelled.status = Some("stale".to_string());
-                cancelled.output.status = OutputStatus::Cancelled;
-                let context = rendered_app(width, height, &mut cancelled);
-                let context = context.lines().last().unwrap();
-                assert!(context.starts_with(prefix));
-                assert!(context.contains("Cancelled"));
-                assert!(!context.contains("stale"));
-
-                let mut copy_hint = App::new(now(), true);
-                copy_hint.output.source = source;
-                copy_hint.output.status = OutputStatus::Ready;
-                copy_hint.output.active_artifact = Some(Artifact::new(vec![0xff]));
-                let context = rendered_app(width, height, &mut copy_hint);
-                let context = context.lines().last().unwrap();
-                assert!(context.starts_with(prefix));
-                assert!(context.contains("Copy as Hex"));
-            }
         }
     }
 
@@ -1522,7 +1406,7 @@ mod tests {
         });
 
         let screen = rendered_app(120, 10, &mut app);
-        let context = screen.lines().last().unwrap();
+        let context = screen.lines().rev().nth(1).unwrap();
 
         assert!(context.contains("output is not valid UTF-8 (6 bytes)"));
         assert!(!context.contains("736563726574"));
@@ -1537,37 +1421,12 @@ mod tests {
         app.output.view = ViewMode::Text;
         app.output.active_artifact = Some(Artifact::new(vec![0xff, b's', b'e', b'c']));
 
-        let screen = rendered_app(89, 20, &mut app);
+        let screen = rendered_app(120, 20, &mut app);
 
-        assert!(screen.contains("Output — FINAL — Text"));
+        assert!(screen.contains("» OUTPUT / FINAL / TEXT"));
         assert!(screen.contains("Switch to Hex view"));
         assert!(!screen.contains("sec"));
         assert_eq!(app.output.view, ViewMode::Text);
-    }
-
-    #[test]
-    fn binary_artifact_context_offers_copy_as_hex_only_when_copyable() {
-        for width in [120, 90, 40] {
-            for mode in [ViewMode::Smart, ViewMode::Text, ViewMode::Hex] {
-                let mut app = App::new(now(), true);
-                app.focus = Pane::Output;
-                app.output.status = OutputStatus::Ready;
-                app.output.view = mode;
-                app.output.active_artifact = Some(Artifact::new(vec![0xff]));
-
-                let screen = rendered_app(width, 10, &mut app);
-
-                assert!(screen.lines().last().unwrap().contains("Copy as Hex"));
-            }
-
-            let mut trace = App::new(now(), true);
-            trace.focus = Pane::Output;
-            trace.output.status = OutputStatus::Ready;
-            trace.output.view = ViewMode::Trace;
-            trace.output.active_artifact = Some(Artifact::new(vec![0xff]));
-            let screen = rendered_app(width, 10, &mut trace);
-            assert!(!screen.lines().last().unwrap().contains("Copy as Hex"));
-        }
     }
 
     #[test]
@@ -1689,7 +1548,7 @@ mod tests {
             },
         ];
 
-        let screen = rendered_app(89, 20, &mut app);
+        let screen = rendered_app(120, 20, &mut app);
 
         for status in ["OK", "ERROR", "OFF", "CANCELLED", "NOT RUN"] {
             assert!(screen.contains(status));
@@ -1743,8 +1602,8 @@ mod tests {
             .find(|line| line.contains("Hex Encode"))
             .unwrap();
 
-        assert!(disabled.contains("[OFF] OFF"));
-        assert!(not_run.contains("[OFF] NOT RUN"));
+        assert!(disabled.contains("[OFF] ○ OFF"));
+        assert!(not_run.contains("[OFF] · NOT RUN"));
     }
 
     #[test]
@@ -1848,10 +1707,10 @@ mod tests {
             b"final"
         );
         assert_eq!(app.output.traces, final_traces);
-        assert!(screen.contains("Output — FINAL — Trace"));
+        assert!(screen.contains("» OUTPUT / FINAL / TRACE"));
         assert!(screen.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
         assert!(screen.contains("#2 hex-encode"));
-        assert!(hex_row.contains("[ON] OK"));
+        assert!(hex_row.contains("[ON] ✓ OK"));
         assert!(!hex_row.contains("NOT RUN"));
     }
 
@@ -1946,10 +1805,7 @@ mod tests {
 
         let screen = rendered_app(89, 20, &mut app);
 
-        assert!(screen.contains("> [ON] RUNNING"));
-        for mark in ["✓", "×", "○", "›", "−", "·"] {
-            assert!(!screen.contains(mark));
-        }
+        assert!(screen.contains("> [ON] › RUNNING"));
     }
 
     #[test]
@@ -1961,10 +1817,26 @@ mod tests {
 
             let screen = rendered_app(120, 16, &mut app);
 
-            assert_eq!(screen.matches(pane_label(pane)).count(), 2);
+            assert!(screen.contains(&format!(
+                "{} {}",
+                match pane {
+                    Pane::Input => ">",
+                    Pane::Output => "»",
+                    Pane::Pipeline => "$",
+                },
+                pane_label(pane).to_ascii_uppercase()
+            )));
             for hidden in [Pane::Input, Pane::Output, Pane::Pipeline] {
                 if hidden != pane {
-                    assert_eq!(screen.matches(pane_label(hidden)).count(), 1);
+                    assert!(!screen.contains(&format!(
+                        "{} {}",
+                        match hidden {
+                            Pane::Input => ">",
+                            Pane::Output => "»",
+                            Pane::Pipeline => "$",
+                        },
+                        pane_label(hidden).to_ascii_uppercase()
+                    )));
                 }
             }
         }
@@ -1979,9 +1851,9 @@ mod tests {
             });
 
             let screen = rendered_app(width, height, &mut app);
-            let context = screen.lines().last().unwrap();
+            let context = screen.lines().rev().nth(1).unwrap();
 
-            assert!(context.starts_with("FINAL | Clipboard unavailable"));
+            assert!(context.starts_with("Clipboard unavailable"));
             assert!(!context.contains("Ctrl+P"));
         }
     }
@@ -1994,9 +1866,10 @@ mod tests {
         assert!(
             failed_screen
                 .lines()
-                .last()
+                .rev()
+                .nth(1)
                 .unwrap()
-                .starts_with("FINAL | chain exceeds 32 steps")
+                .starts_with("chain exceeds 32 steps")
         );
 
         let mut cancelled = App::new(now(), true);
@@ -2005,9 +1878,10 @@ mod tests {
         assert!(
             cancelled_screen
                 .lines()
-                .last()
+                .rev()
+                .nth(1)
                 .unwrap()
-                .starts_with("FINAL | Cancelled")
+                .starts_with("Cancelled")
         );
     }
     #[test]
@@ -2023,14 +1897,20 @@ mod tests {
             app.textarea.selection_style(),
             Style::default().add_modifier(Modifier::REVERSED)
         );
-        app.open_picker();
+        app.focus = Pane::Pipeline;
+        app.steps.push(TransformStep {
+            definition: transform_by_id("url-encode").unwrap(),
+            enabled: true,
+        });
+        app.output.source = OutputSource::Step(0);
+        app.output.status = OutputStatus::Running;
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
         let buffer = terminal.backend().buffer();
         let screen: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
-        assert!(screen.contains("Idle"));
-        assert!(screen.contains("0 enabled"));
-        assert!(screen.contains("Add transform"));
+        assert!(screen.contains("[ON] › RUNNING"));
+        assert!(screen.contains(">_ DOOP"));
+        assert!(screen.contains("[COMMON]"));
         assert!(
             buffer
                 .content()
