@@ -323,11 +323,11 @@ STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS
 
 ## 6.5 결과 원본과 복사
 
-기본 원본은 최종 결과다. Pipeline 선택 이동만으로 Output은 바뀌지 않는다. `p`를 누르면 선택 단계 결과를 표시하고 `f`를 누르면 최종 결과로 돌아간다. Context Bar와 Output 제목은 `FINAL` 또는 `STEP NN`을 항상 표시한다.
+기본 원본은 최종 결과다. Pipeline 선택 이동만으로 Output은 바뀌지 않는다. `p`를 누르면 선택 단계 결과를 표시하고 `f`를 누르면 최종 결과로 돌아간다. 현재 Context Bar는 없으며 Output 제목이 `FINAL` 또는 `STEP NN`과 View를 표시한다. 두 줄 Footer의 첫 줄은 포커스 도움말 또는 완료·오류 상태를, 둘째 줄은 공통 키 도움말을 표시한다.
 
-유효한 JSON 결과는 Pretty Copy에서 두 칸 들여쓰고 Raw Copy에서 구조 공백을 제거한다. JSON 변환은 숫자 토큰과 문자열 안 공백을 다시 쓰지 않으며, Pretty Copy도 리터럴 `\u0061`을 `a`로 바꾸지 않는다. 유효하지 않은 UTF-8 JSON 이외의 텍스트는 두 복사 모드에서 원문 전체를 유지하고 기존 위험한 제어 문자 확인 절차를 적용한다. 비 UTF-8 결과는 공백 없는 소문자 Hex 문자열로 복사하며 `Copied Pretty`, `Copied Raw`, `Copied as Hex` 상태를 각각 표시한다. Trace와 실패·취소·실행·지연 중인 상태, 오래되거나 없는 Artifact에는 복사를 허용하지 않는다.
+유효한 JSON 결과는 Pretty Copy에서 두 칸 들여쓰고 Raw Copy에서 구조 공백을 제거한다. JSON 변환은 숫자 토큰과 문자열 안 공백을 다시 쓰지 않으며, Pretty Copy도 리터럴 `\u0061`을 `a`로 바꾸지 않는다. JSON으로 해석할 수 없는 유효한 UTF-8 결과는 두 복사 모드에서 원문 전체를 유지하고 기존 위험한 제어 문자 확인 절차를 적용한다. 비 UTF-8 결과는 공백 없는 소문자 Hex 문자열로 복사하며 Footer 첫 줄에 `Copied Pretty`, `Copied Raw`, `Copied as Hex` 완료 상태를 각각 표시한다. Trace와 실패·취소·실행·지연 중인 상태, 오래되거나 없는 Artifact에는 복사를 허용하지 않는다.
 
-복사 형식은 현재 View가 아니라 원본 Artifact와 선택한 Pretty 또는 Raw 모드로 결정한다. 따라서 Text를 수동 고정한 상태에서 바이너리 결과가 나오더라도 Context Bar는 `Copy as Hex`를 표시한다. Hex 문자열의 두 배 길이는 검사된 산술로 계산한다. 위험한 UTF-8은 한 번 만든 payload를 확인 Modal이 소유하고 승인 시 운영체제 쓰기 효과로 이동하며, 취소나 다른 Modal 전환 시 폐기한다. 그 사이 활성 Artifact가 바뀌어도 승인 대상은 처음 확인한 payload다. 할당, JSON 출력 한도 또는 운영체제 클립보드 작업이 실패하면 Input, Pipeline, Artifact, 결과 원본과 Trace를 유지한 채 안전한 화면 오류로 처리한다.
+복사 형식은 현재 View가 아니라 원본 Artifact와 선택한 Pretty 또는 Raw 모드로 결정한다. 따라서 Text를 수동 고정한 상태에서 바이너리 결과가 나오더라도 복사 payload는 소문자 compact Hex이고 완료 상태는 `Copied as Hex`다. Hex 문자열의 두 배 길이는 검사된 산술로 계산한다. 위험한 UTF-8은 한 번 만든 payload를 확인 Modal이 소유하고 승인 시 운영체제 쓰기 효과로 이동하며, 취소나 다른 Modal 전환 시 폐기한다. 그 사이 활성 Artifact가 바뀌어도 승인 대상은 처음 확인한 payload다. 할당, JSON 출력 한도 또는 운영체제 클립보드 작업이 실패하면 Input, Pipeline, Artifact, 결과 원본과 Trace를 유지한 채 안전한 화면 오류로 처리한다.
 
 # 7. 오류와 보안
 
