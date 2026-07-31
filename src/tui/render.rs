@@ -6,6 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, Wrap},
 };
+use unicode_width::UnicodeWidthStr as _;
 
 use crate::{error::AppError, pipeline::StepStatus};
 
@@ -402,7 +403,30 @@ fn separator(width: u16) -> String {
     "─".repeat(width as usize)
 }
 
-fn render_picker(frame: &mut Frame<'_>, app: &App, query: &str, selected: usize) {
+fn action_rect(area: Rect, line: &str, label: &str, centered: bool) -> Rect {
+    let label_start = line
+        .find(label)
+        .expect("rendered action line contains its label");
+    let line_width = line.width().min(area.width as usize) as u16;
+    let base_x = if centered {
+        area.x + area.width.saturating_sub(line_width) / 2
+    } else {
+        area.x
+    };
+    let offset = line[..label_start].width().min(area.width as usize) as u16;
+    let width = label
+        .width()
+        .min(area.width.saturating_sub(offset) as usize) as u16;
+    Rect::new(base_x.saturating_add(offset), area.y, width, 1)
+}
+
+fn render_picker(
+    frame: &mut Frame<'_>,
+    app: &App,
+    query: &str,
+    selected: usize,
+    mouse_regions: &mut MouseRegions,
+) {
     let area = centered(frame.area(), 72, 18);
     let style = if app.no_color {
         Style::default()
@@ -482,6 +506,25 @@ fn render_picker(frame: &mut Frame<'_>, app: &App, query: &str, selected: usize)
             })
         })
         .collect();
+    mouse_regions.picker_content = Some(list_area);
+    mouse_regions
+        .picker_rows
+        .extend(
+            (start..start + items.len())
+                .enumerate()
+                .map(|(row, index)| {
+                    let y = list_area.y + row as u16 * 2;
+                    (
+                        Rect::new(
+                            list_area.x,
+                            y,
+                            list_area.width,
+                            list_area.bottom().saturating_sub(y).min(2),
+                        ),
+                        index,
+                    )
+                }),
+        );
     frame.render_widget(List::new(items).style(Style::default()), list_area);
     if !compact {
         frame.render_widget(
@@ -499,15 +542,14 @@ fn render_picker(frame: &mut Frame<'_>, app: &App, query: &str, selected: usize)
         Paragraph::new(separator(hint_separator.width)).style(Style::default()),
         hint_separator,
     );
-    frame.render_widget(
-        Paragraph::new(if compact {
-            "Enter Add · Esc Cancel"
-        } else {
-            "↑/↓ Select · Enter Add · Backspace Search · Esc Cancel"
-        })
-        .style(Style::default()),
-        hint_area,
-    );
+    let hint = if compact {
+        "[Enter Add] · [Esc Cancel]"
+    } else {
+        "↑/↓ Select · [Enter Add] · Backspace Search · [Esc Cancel]"
+    };
+    frame.render_widget(Paragraph::new(hint).style(Style::default()), hint_area);
+    mouse_regions.add_action = Some(action_rect(hint_area, hint, "[Enter Add]", false));
+    mouse_regions.cancel_action = Some(action_rect(hint_area, hint, "[Esc Cancel]", false));
 }
 
 fn step_status(status: StepStatus) -> &'static str {
@@ -520,7 +562,7 @@ fn step_status(status: StepStatus) -> &'static str {
     }
 }
 
-fn render_inspector(frame: &mut Frame<'_>, app: &App) {
+fn render_inspector(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegions) {
     let Some(step) = app.steps.get(app.selected_step) else {
         return;
     };
@@ -568,12 +610,12 @@ fn render_inspector(frame: &mut Frame<'_>, app: &App) {
     let compact = area.height <= 8;
     let text = if compact {
         format!(
-            "{} ({})\nStatus: {status}\nOutput: {output}\nError: {compact_error}\nEsc close",
+            "{} ({})\nStatus: {status}\nOutput: {output}\nError: {compact_error}\n[Esc Close]",
             step.definition.display_name, step.definition.id,
         )
     } else {
         format!(
-            "{}\nID: {}\n{}\nStatus: {status}\nInput: {input}\nOutput: {output}\nElapsed: {elapsed}\nError: {error}\n\nEsc close",
+            "{}\nID: {}\n{}\nStatus: {status}\nInput: {input}\nOutput: {output}\nElapsed: {elapsed}\nError: {error}\n\n[Esc Close]",
             step.definition.display_name,
             step.definition.id,
             input_condition(step.definition.accepts_binary),
@@ -592,23 +634,30 @@ fn render_inspector(frame: &mut Frame<'_>, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
+    let close_line = Rect::new(
+        inner.x,
+        inner.y + text.lines().count().saturating_sub(1) as u16,
+        inner.width,
+        1,
+    );
+    mouse_regions.close_action = Some(action_rect(close_line, "[Esc Close]", "[Esc Close]", false));
     frame.render_widget(Paragraph::new(text).style(Style::default()), inner);
 }
 
-fn render_help(frame: &mut Frame<'_>, app: &App) {
+fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegions) {
     let (title, body) = match app.focus {
         Pane::Input => (
             "Input Help",
-            "Text editing: tui-textarea defaults\nTab / Shift+Tab  Next / previous pane\nCtrl+P  Add transform · F3/F4 Pretty/Raw Copy\nF1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit\nEsc  Close zoom or cancel request".to_string(),
+            "Text editing: tui-textarea defaults\nTab / Shift+Tab  Next / previous pane\nCtrl+P  Add transform · F3/F4 Pretty/Raw Copy\nF1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit\nEsc  Close zoom or cancel request\nMouse Click  Focus only".to_string(),
         ),
         Pane::Pipeline => (
             "Pipeline Help",
-            "Up/Down or j/k  Select step\nShift+Up/Down or J/K  Reorder\nSpace  Toggle step\nDelete or d  Delete step\nEnter  Inspect step\na / Ctrl+P  Add transform · F3/F4 Pretty/Raw Copy\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit".to_string(),
+            "Up/Down or j/k  Select step\nShift+Up/Down or J/K  Reorder\nSpace  Toggle step\nDelete or d  Delete step\nEnter  Inspect step\na / Ctrl+P  Add transform · F3/F4 Pretty/Raw Copy\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit\nMouse Click  Focus/select · Wheel  Move selection".to_string(),
         ),
         Pane::Output => (
             "Output Help",
             format!(
-                "v/V  Next / previous view\np  Show selected step\nf  Restore final\nEnter/y  {} · F3/F4 Pretty/Raw Copy\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+P  Add transform\n? / F1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit",
+                "v/V  Next / previous view\np  Show selected step\nf  Restore final\nEnter/y  {} · F3/F4 Pretty/Raw Copy\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+P  Add transform\n? / F1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit\nMouse Click  Focus only · Wheel  Scroll",
                 if app.can_copy() {
                     "Copy whole result"
                 } else {
@@ -617,14 +666,14 @@ fn render_help(frame: &mut Frame<'_>, app: &App) {
             ),
         ),
     };
-    let area = centered(frame.area(), 68, 16);
-    let compact = area.height <= 8;
+    let area = centered(frame.area(), 68, 17);
+    let compact = area.height < 17;
     let body = if compact {
         match app.focus {
-            Pane::Input => "Text edit · Tab focus\nF3/F4 Pretty/Raw\nCtrl+P Add · F1 Help\nCtrl+Q Quit · Ctrl+C Force\nEsc close".to_string(),
-            Pane::Pipeline => "j/k Select · J/K Move\nSpace Toggle · d Delete\nF3/F4 Pretty/Raw\nEnter Inspect · a Add · z Zoom\nEsc close".to_string(),
+            Pane::Input => "Text edit · Tab focus\nF3/F4 Pretty/Raw\nCtrl+P Add · F1 Help\nCtrl+Q Quit · Ctrl+C Force\n[Esc Close]".to_string(),
+            Pane::Pipeline => "j/k Select · J/K Move\nSpace Toggle · d Delete\nF3/F4 Pretty/Raw\nEnter Inspect · a Add · z Zoom\n[Esc Close]".to_string(),
             Pane::Output => format!(
-                "v/V View · p Step · f Final\nF3/F4 Pretty/Raw\nEnter/y {}\nArrows/Page Scroll · z Zoom\nEsc close",
+                "v/V View · p Step · f Final\nF3/F4 Pretty/Raw\nEnter/y {}\nArrows/Page Scroll · z Zoom\n[Esc Close]",
                 if app.can_copy() {
                     "Copy"
                 } else {
@@ -633,7 +682,7 @@ fn render_help(frame: &mut Frame<'_>, app: &App) {
             ),
         }
     } else {
-        format!("{body}\n\nEsc close")
+        format!("{body}\n\n[Esc Close]")
     };
     let style = if app.no_color {
         Style::default()
@@ -648,10 +697,22 @@ fn render_help(frame: &mut Frame<'_>, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
+    let close_line = Rect::new(
+        inner.x,
+        inner.y + body.lines().count().saturating_sub(1) as u16,
+        inner.width,
+        1,
+    );
+    mouse_regions.close_action = Some(action_rect(close_line, "[Esc Close]", "[Esc Close]", false));
     frame.render_widget(Paragraph::new(body).style(Style::default()), inner);
 }
 
-fn render_confirmation(frame: &mut Frame<'_>, app: &App, message: &'static str) {
+fn render_confirmation(
+    frame: &mut Frame<'_>,
+    app: &App,
+    message: &'static str,
+    mouse_regions: &mut MouseRegions,
+) {
     let area = centered(frame.area(), 42, 5);
     let style = if app.no_color {
         Style::default()
@@ -666,26 +727,31 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &App, message: &'static str) 
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
+    let actions = "[Enter/y Confirm] · [n/Esc Cancel]";
     frame.render_widget(
-        Paragraph::new(format!("{message}\nEnter/y confirm · n/Esc cancel"))
+        Paragraph::new(format!("{message}\n{actions}"))
             .alignment(Alignment::Center)
             .style(Style::default()),
         inner,
     );
+    let action_line = Rect::new(inner.x, inner.y + 1, inner.width, 1);
+    mouse_regions.confirm_action =
+        Some(action_rect(action_line, actions, "[Enter/y Confirm]", true));
+    mouse_regions.cancel_action = Some(action_rect(action_line, actions, "[n/Esc Cancel]", true));
 }
 
-fn render_modal(frame: &mut Frame<'_>, app: &App) {
+fn render_modal(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegions) {
     match &app.modal {
         Some(Modal::TransformPicker { query, selected }) => {
-            render_picker(frame, app, query, *selected);
+            render_picker(frame, app, query, *selected, mouse_regions);
         }
-        Some(Modal::StepInspector) => render_inspector(frame, app),
-        Some(Modal::Help) => render_help(frame, app),
+        Some(Modal::StepInspector) => render_inspector(frame, app, mouse_regions),
+        Some(Modal::Help) => render_help(frame, app, mouse_regions),
         Some(Modal::UnsafeCopyConfirm { .. }) => {
-            render_confirmation(frame, app, "Copy raw control characters?");
+            render_confirmation(frame, app, "Copy raw control characters?", mouse_regions);
         }
         Some(Modal::QuitConfirm) => {
-            render_confirmation(frame, app, "Discard input and quit?");
+            render_confirmation(frame, app, "Discard input and quit?", mouse_regions);
         }
         None => {}
     }
@@ -704,7 +770,7 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
             app.modal.as_ref(),
             Some(Modal::UnsafeCopyConfirm { .. }) | Some(Modal::QuitConfirm)
         ) {
-            render_modal(frame, app);
+            render_modal(frame, app, &mut mouse_regions);
         }
         app.mouse_regions = mouse_regions;
         return;
@@ -753,7 +819,7 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
         render_output(frame, app, output, &mut mouse_regions);
     }
     render_footer(frame, app, focused_help, common_help);
-    render_modal(frame, app);
+    render_modal(frame, app, &mut mouse_regions);
     app.mouse_regions = mouse_regions;
 }
 
@@ -773,7 +839,7 @@ pub(super) fn draw_if_dirty<B: Backend>(
 mod tests {
     use super::super::{
         state::{
-            AppEvent, ClipboardPayload, CopyKind, Modal, OutputSource, OutputStatus, Pane,
+            AppEvent, ClipboardPayload, CopyKind, Effect, Modal, OutputSource, OutputStatus, Pane,
             debounce_for,
         },
         views::{Artifact, ViewMode},
@@ -788,7 +854,9 @@ mod tests {
         },
         transforms::transform_by_id,
     };
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use ratatui::{
         backend::TestBackend,
         style::{Color, Modifier},
@@ -830,6 +898,18 @@ mod tests {
             .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn click(app: &mut App, area: Rect, now: Instant) -> Vec<Effect> {
+        app.handle_event(AppEvent::Mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: area.x + area.width.saturating_sub(1) / 2,
+                row: area.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            now,
+        ))
     }
 
     #[test]
@@ -889,6 +969,111 @@ mod tests {
         assert!(app.mouse_regions.input.is_none());
         assert!(app.mouse_regions.output.is_none());
         assert!(app.mouse_regions.pipeline.is_none());
+    }
+
+    #[test]
+    fn picker_click_selects_then_explicit_add_and_cancel_regions_act() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.open_picker();
+        let screen = rendered_app(120, 24, &mut app);
+        assert!(screen.contains("[Enter Add]"));
+        assert!(screen.contains("[Esc Cancel]"));
+        let second = app.mouse_regions.picker_rows[1].0;
+        assert!(click(&mut app, second, start).is_empty());
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker { selected: 1, .. })
+        ));
+        let add = app.mouse_regions.add_action.unwrap();
+        assert!(matches!(
+            click(&mut app, add, start).as_slice(),
+            [Effect::Cancel(_)]
+        ));
+        assert_eq!(app.steps[0].definition.id, "base64-decode");
+        assert!(app.modal.is_none());
+
+        app.open_picker();
+        rendered_app(120, 24, &mut app);
+        let cancel = app.mouse_regions.cancel_action.unwrap();
+        assert!(click(&mut app, cancel, start).is_empty());
+        assert!(app.modal.is_none());
+
+        app.open_picker();
+        if let Some(Modal::TransformPicker { selected, .. }) = &mut app.modal {
+            *selected = 7;
+        }
+        rendered_app(120, 24, &mut app);
+        assert_eq!(app.mouse_regions.picker_rows.first().unwrap().1, 4);
+        assert_eq!(app.mouse_regions.picker_rows.last().unwrap().1, 7);
+        let first_visible = app.mouse_regions.picker_rows.first().unwrap().0;
+        assert!(click(&mut app, first_visible, start).is_empty());
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker { selected: 4, .. })
+        ));
+    }
+
+    #[test]
+    fn confirmation_and_close_regions_reuse_the_keyboard_actions() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.modal = Some(Modal::QuitConfirm);
+        let screen = rendered_app(120, 24, &mut app);
+        assert!(screen.contains("[Enter/y Confirm] · [n/Esc Cancel]"));
+        let confirm = app.mouse_regions.confirm_action.unwrap();
+        let effects = click(&mut app, confirm, start);
+        assert!(matches!(effects.as_slice(), [Effect::Quit(0)]));
+
+        app.modal = Some(Modal::QuitConfirm);
+        rendered_app(120, 24, &mut app);
+        let cancel = app.mouse_regions.cancel_action.unwrap();
+        assert!(click(&mut app, cancel, start).is_empty());
+        assert!(app.modal.is_none());
+
+        app.modal = Some(Modal::UnsafeCopyConfirm {
+            payload: ClipboardPayload {
+                text: "exact\u{1b}payload".to_string(),
+                kind: CopyKind::Pretty,
+            },
+        });
+        rendered_app(120, 24, &mut app);
+        let confirm = app.mouse_regions.confirm_action.unwrap();
+        let effects = click(&mut app, confirm, start);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Copy(ClipboardPayload { text, .. })] if text == "exact\u{1b}payload"
+        ));
+
+        app.modal = Some(Modal::Help);
+        let screen = rendered_app(120, 24, &mut app);
+        assert!(screen.contains("[Esc Close]"));
+        let close = app.mouse_regions.close_action.unwrap();
+        assert!(click(&mut app, close, start).is_empty());
+        assert!(app.modal.is_none());
+
+        app.steps.push(TransformStep {
+            definition: transform_by_id("base64-encode").unwrap(),
+            enabled: true,
+        });
+        app.modal = Some(Modal::StepInspector);
+        rendered_app(120, 24, &mut app);
+        let close = app.mouse_regions.close_action.unwrap();
+        assert!(click(&mut app, close, start).is_empty());
+        assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn tiny_confirmation_records_only_modal_actions() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.modal = Some(Modal::QuitConfirm);
+        rendered_app(39, 9, &mut app);
+        assert!(app.mouse_regions.pipeline.is_none());
+        assert!(app.mouse_regions.input.is_none());
+        assert!(app.mouse_regions.output.is_none());
+        assert!(app.mouse_regions.confirm_action.is_some());
+        assert!(app.mouse_regions.cancel_action.is_some());
     }
 
     fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, now: Instant) {
@@ -1257,7 +1442,7 @@ mod tests {
     #[test]
     fn one_context_help_modal_lists_only_real_keys_for_each_pane() {
         let start = now();
-        for (pane, expected) in [
+        for (pane, expected, mouse_help) in [
             (
                 Pane::Input,
                 &[
@@ -1269,6 +1454,7 @@ mod tests {
                     "Ctrl+C",
                     "Esc",
                 ][..],
+                "Mouse Click  Focus only",
             ),
             (
                 Pane::Pipeline,
@@ -1283,6 +1469,7 @@ mod tests {
                     "Ctrl+P",
                     "Ctrl+C",
                 ][..],
+                "Mouse Click  Focus/select · Wheel  Move selection",
             ),
             (
                 Pane::Output,
@@ -1297,6 +1484,7 @@ mod tests {
                     "Ctrl+P",
                     "Ctrl+C",
                 ][..],
+                "Mouse Click  Focus only · Wheel  Scroll",
             ),
         ] {
             let mut app = App::new(start, true);
@@ -1310,8 +1498,12 @@ mod tests {
                     "missing {key_name} for {pane:?}: {screen}"
                 );
             }
+            assert!(
+                screen.contains(mouse_help),
+                "missing {mouse_help}: {screen}"
+            );
             assert!(screen.contains("F1"));
-            assert!(screen.contains("Esc close"));
+            assert!(screen.contains("[Esc Close]"));
         }
     }
 
@@ -1355,7 +1547,7 @@ mod tests {
             "Status: ERROR",
             "Output: —",
             "Error: invalid Base64 at byte 2",
-            "Esc close",
+            "[Esc Close]",
         ] {
             assert!(screen.contains(expected), "missing {expected}: {screen}");
         }
@@ -1378,7 +1570,7 @@ mod tests {
 
             let screen = rendered_app(40, 10, &mut app);
 
-            for expected in [title, "F3/F4 Pretty/Raw", "Esc close"] {
+            for expected in [title, "F3/F4 Pretty/Raw", "[Esc Close]"] {
                 assert!(screen.contains(expected), "missing {expected}: {screen}");
             }
         }
@@ -2163,8 +2355,8 @@ mod tests {
             let screen = rendered_app(width, height, &mut unsafe_copy);
 
             assert!(screen.contains("Copy raw control characters?"));
-            assert!(screen.contains("Enter/y confirm"));
-            assert!(screen.contains("n/Esc cancel"));
+            assert!(screen.contains("[Enter/y Confirm]"));
+            assert!(screen.contains("[n/Esc Cancel]"));
             assert!(!screen.contains("hidden-payload"));
 
             let mut quit = App::new(now(), true);
@@ -2172,8 +2364,8 @@ mod tests {
             let screen = rendered_app(width, height, &mut quit);
 
             assert!(screen.contains("Discard input and quit?"));
-            assert!(screen.contains("Enter/y confirm"));
-            assert!(screen.contains("n/Esc cancel"));
+            assert!(screen.contains("[Enter/y Confirm]"));
+            assert!(screen.contains("[n/Esc Cancel]"));
         }
     }
 }

@@ -700,46 +700,143 @@ impl App {
         self.mark_dirty();
     }
 
-    fn handle_mouse(&mut self, event: MouseEvent, _: Instant) -> Vec<Effect> {
-        if event.modifiers != KeyModifiers::NONE || self.modal.is_some() {
-            return Vec::new();
-        }
-        let MouseEventKind::Down(MouseButton::Left) = event.kind else {
-            return Vec::new();
-        };
+    fn handle_modal_mouse(&mut self, event: MouseEvent, now: Instant) -> Vec<Effect> {
         let position = Position::new(event.column, event.row);
-        let pipeline_row = self
-            .mouse_regions
-            .pipeline_rows
-            .iter()
-            .find(|(area, _)| area.contains(position))
-            .map(|(_, index)| *index);
-        if self
-            .mouse_regions
-            .pipeline
-            .is_some_and(|area| area.contains(position))
-        {
-            self.focus_pane(Pane::Pipeline);
-            if let Some(index) = pipeline_row
-                && self.selected_step != index
-            {
-                self.selected_step = index;
-                self.mark_dirty();
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let picker_row = self
+                    .mouse_regions
+                    .picker_rows
+                    .iter()
+                    .find(|(area, _)| area.contains(position))
+                    .map(|(_, index)| *index);
+                if let Some(index) = picker_row {
+                    if let Some(Modal::TransformPicker { selected, .. }) = &mut self.modal
+                        && *selected != index
+                    {
+                        *selected = index;
+                        self.mark_dirty();
+                    }
+                    return Vec::new();
+                }
+                let key = if self
+                    .mouse_regions
+                    .add_action
+                    .is_some_and(|area| area.contains(position))
+                    || self
+                        .mouse_regions
+                        .confirm_action
+                        .is_some_and(|area| area.contains(position))
+                {
+                    Some(KeyCode::Enter)
+                } else if self
+                    .mouse_regions
+                    .cancel_action
+                    .is_some_and(|area| area.contains(position))
+                    || self
+                        .mouse_regions
+                        .close_action
+                        .is_some_and(|area| area.contains(position))
+                {
+                    Some(KeyCode::Esc)
+                } else {
+                    None
+                };
+                key.map_or_else(Vec::new, |code| {
+                    self.handle_modal_key(KeyEvent::new(code, KeyModifiers::NONE), now)
+                })
             }
-        } else if self
-            .mouse_regions
-            .input
-            .is_some_and(|area| area.contains(position))
-        {
-            self.focus_pane(Pane::Input);
-        } else if self
-            .mouse_regions
-            .output
-            .is_some_and(|area| area.contains(position))
-        {
-            self.focus_pane(Pane::Output);
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if matches!(self.modal, Some(Modal::TransformPicker { .. }))
+                    && self
+                        .mouse_regions
+                        .picker_content
+                        .is_some_and(|area| area.contains(position)) =>
+            {
+                let code = if event.kind == MouseEventKind::ScrollUp {
+                    KeyCode::Up
+                } else {
+                    KeyCode::Down
+                };
+                self.handle_modal_key(KeyEvent::new(code, KeyModifiers::NONE), now)
+            }
+            _ => Vec::new(),
         }
-        Vec::new()
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent, now: Instant) -> Vec<Effect> {
+        if event.modifiers != KeyModifiers::NONE {
+            return Vec::new();
+        }
+        if self.modal.is_some() {
+            return self.handle_modal_mouse(event, now);
+        }
+        let position = Position::new(event.column, event.row);
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let pipeline_row = self
+                    .mouse_regions
+                    .pipeline_rows
+                    .iter()
+                    .find(|(area, _)| area.contains(position))
+                    .map(|(_, index)| *index);
+                if self
+                    .mouse_regions
+                    .pipeline
+                    .is_some_and(|area| area.contains(position))
+                {
+                    self.focus_pane(Pane::Pipeline);
+                    if let Some(index) = pipeline_row
+                        && self.selected_step != index
+                    {
+                        self.selected_step = index;
+                        self.mark_dirty();
+                    }
+                } else if self
+                    .mouse_regions
+                    .input
+                    .is_some_and(|area| area.contains(position))
+                {
+                    self.focus_pane(Pane::Input);
+                } else if self
+                    .mouse_regions
+                    .output
+                    .is_some_and(|area| area.contains(position))
+                {
+                    self.focus_pane(Pane::Output);
+                }
+                Vec::new()
+            }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if self
+                    .mouse_regions
+                    .output_content
+                    .is_some_and(|area| area.contains(position)) =>
+            {
+                let direction = if event.kind == MouseEventKind::ScrollUp {
+                    -1
+                } else {
+                    1
+                };
+                self.scroll_output(direction, 3);
+                Vec::new()
+            }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if self
+                    .mouse_regions
+                    .pipeline_content
+                    .is_some_and(|area| area.contains(position)) =>
+            {
+                let code = if event.kind == MouseEventKind::ScrollUp {
+                    KeyCode::Up
+                } else {
+                    KeyCode::Down
+                };
+                self.handle_pipeline_key(KeyEvent::new(code, KeyModifiers::NONE), now);
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn toggle_zoom(&mut self, pane: Pane) {
@@ -1339,6 +1436,146 @@ mod tests {
             assert!(!app.take_dirty());
         }
         assert_eq!(app.focus, Pane::Input);
+    }
+
+    #[test]
+    fn wheel_uses_scoped_units_without_changing_focus() {
+        let mut app = App::new(now(), true);
+        app.steps = ["base64-encode", "base64-decode"]
+            .into_iter()
+            .map(|id| TransformStep {
+                definition: transform_by_id(id).unwrap(),
+                enabled: true,
+            })
+            .collect();
+        let artifact = Artifact::new(b"0\n1\n2\n3\n4".to_vec());
+        let mut expected = 0;
+        for _ in 0..3 {
+            expected = next_text_offset(&artifact, expected);
+        }
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(artifact);
+        app.mouse_regions.pipeline_content = Some(Rect::new(0, 0, 10, 10));
+        app.mouse_regions.output_content = Some(Rect::new(20, 0, 10, 10));
+        app.focus = Pane::Input;
+
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 21, 1, KeyModifiers::NONE));
+        assert_eq!(app.output.byte_offset, expected);
+        assert_eq!(app.focus, Pane::Input);
+
+        app.handle_event(mouse(MouseEventKind::ScrollUp, 21, 1, KeyModifiers::NONE));
+        assert_eq!(app.output.byte_offset, 0);
+        assert_eq!(app.focus, Pane::Input);
+
+        for _ in 0..32 {
+            app.handle_event(mouse(MouseEventKind::ScrollDown, 21, 1, KeyModifiers::NONE));
+        }
+        assert_eq!(
+            app.output.byte_offset,
+            last_text_offset(app.output.active_artifact.as_ref().unwrap())
+        );
+        app.take_dirty();
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 21, 1, KeyModifiers::NONE));
+        assert!(!app.take_dirty());
+
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 1, 1, KeyModifiers::NONE));
+        assert_eq!(app.selected_step, 1);
+        assert_eq!(app.focus, Pane::Input);
+
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 1, 1, KeyModifiers::NONE));
+        assert_eq!(app.selected_step, 1);
+
+        app.handle_event(mouse(MouseEventKind::ScrollUp, 1, 1, KeyModifiers::NONE));
+        assert_eq!(app.selected_step, 0);
+
+        app.steps.clear();
+        app.take_dirty();
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 1, 1, KeyModifiers::NONE));
+        assert_eq!(app.selected_step, 0);
+        assert!(!app.take_dirty());
+    }
+
+    #[test]
+    fn input_wheel_and_modal_background_wheel_are_true_no_ops() {
+        let mut app = App::new(now(), true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"0\n1\n2".to_vec()));
+        app.mouse_regions.input = Some(Rect::new(0, 0, 10, 10));
+        app.mouse_regions.output_content = Some(Rect::new(20, 0, 10, 10));
+        app.take_dirty();
+
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 1, 1, KeyModifiers::NONE));
+        assert_eq!(app.output.byte_offset, 0);
+        assert!(!app.take_dirty());
+
+        app.modal = Some(Modal::Help);
+        app.mouse_regions.output_content = Some(Rect::new(0, 0, 10, 10));
+        app.mouse_regions.close_action = Some(Rect::new(20, 20, 5, 1));
+        app.handle_event(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            1,
+            1,
+            KeyModifiers::NONE,
+        ));
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 1, 1, KeyModifiers::NONE));
+        assert_eq!(app.output.byte_offset, 0);
+        assert!(matches!(app.modal, Some(Modal::Help)));
+        assert!(!app.take_dirty());
+    }
+
+    #[test]
+    fn picker_wheel_moves_one_item_and_clamps() {
+        let mut app = App::new(now(), true);
+        app.open_picker();
+        app.mouse_regions.picker_content = Some(Rect::new(10, 10, 20, 8));
+
+        app.handle_event(mouse(
+            MouseEventKind::ScrollDown,
+            11,
+            11,
+            KeyModifiers::NONE,
+        ));
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker { selected: 1, .. })
+        ));
+
+        for _ in 0..32 {
+            app.handle_event(mouse(
+                MouseEventKind::ScrollDown,
+                11,
+                11,
+                KeyModifiers::NONE,
+            ));
+        }
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker { selected: 7, .. })
+        ));
+
+        for _ in 0..32 {
+            app.handle_event(mouse(MouseEventKind::ScrollUp, 11, 11, KeyModifiers::NONE));
+        }
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker { selected: 0, .. })
+        ));
+
+        if let Some(Modal::TransformPicker { query, .. }) = &mut app.modal {
+            *query = "no-such-transform".to_string();
+        }
+        app.take_dirty();
+        app.handle_event(mouse(
+            MouseEventKind::ScrollDown,
+            11,
+            11,
+            KeyModifiers::NONE,
+        ));
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker { selected: 0, .. })
+        ));
+        assert!(!app.take_dirty());
     }
 
     #[test]

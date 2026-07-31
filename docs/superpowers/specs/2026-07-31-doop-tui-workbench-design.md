@@ -225,9 +225,16 @@ Pipeline, Input, Output을 차례대로 30%, 30%, 40%로 쌓아 표시한다. `T
 
 높이 12행 이상에서는 각 패널에 최소 3개의 테두리 행을 남긴다. Pipeline 실패, 취소 또는 일반 상태는 Footer 첫째 줄만 대체하며, 둘째 줄 공통 도움말은 항상 표시한다.
 
-패널 클릭은 포커스만 바꾸고 Pipeline의 실제 표시 행 클릭은 선택도 바꾼다.
-Input 클릭은 caret과 selection을 바꾸지 않으며 Output 클릭은 복사, View와
-결과 원본을 바꾸지 않는다.
+Modal이 열려 있으면 Modal 영역만 입력 판정에 사용한다. Pipeline·Input·Output의
+테두리와 내용 클릭은 해당 패널에 포커스를 주고, Pipeline·Add Transform의 실제
+표시 행 클릭은 선택도 바꾼다. Output 휠은 기존 스크롤 3단위, Pipeline·Add
+Transform 휠은 선택 1개를 이동하며 포커스는 유지한다. Modal은 표시된
+Add·Confirm·Cancel·Close 동작만 클릭으로 실행한다. Input caret, 드래그 선택,
+Output 마우스 복사, Pipeline 직접 편집, Hover와 Footer 클릭은 지원하지 않는다.
+
+일반 크기 F1 도움말은 Input의 focus-only 클릭, Pipeline의 클릭 선택·휠 이동,
+Output의 focus-only 클릭·휠 스크롤을 안내한다. compact Help와 두 줄 Footer는
+기존 키 정보를 유지한다.
 
 ## 5.2 스타일과 접근성
 

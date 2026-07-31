@@ -69,6 +69,14 @@ UTF-8은 원문, 비 UTF-8은 공백 없는 소문자 Hex로 복사합니다. �
 - Output: `v`/`V` 보기, `p` 단계, `f` 최종, `Enter`/`y` Pretty Copy, `z` 확대
 - `Esc`: 창·확대 닫기 또는 실행 취소, `Ctrl+Q`: 정상 종료, `Ctrl+C`: 강제 종료
 
+마우스는 `doop tui` 실행 중 항상 활성화됩니다. 패널 클릭은 포커스를 바꾸고,
+Pipeline과 Add Transform 항목 클릭은 표시된 항목을 선택합니다. Output 휠은
+결과를 스크롤하고 Pipeline·Add Transform 휠은 선택을 한 항목씩 이동합니다.
+Modal에서는 대괄호로 표시된 Add·Confirm·Cancel·Close만 클릭할 수 있습니다.
+Input caret 이동, 드래그 선택, Output 마우스 복사와 Pipeline 직접 변경은 지원하지
+않습니다. 마우스 캡처 중에는 터미널의 일반 드래그 텍스트 선택이 제한될 수 있으며,
+키보드 조작은 마우스를 보고하지 않는 터미널에서도 그대로 사용할 수 있습니다.
+
 256 KiB 이하 입력은 50 ms, 그보다 큰 입력은 200 ms 뒤에 단일 작업
 스레드로 실행합니다. 최신 대기 요청 하나만 유지하며 오래된 결과는 폐기합니다.
 화면은 변경 때만 다시 그리고, Text·Hex·Trace 렌더링은 보이는 범위와
