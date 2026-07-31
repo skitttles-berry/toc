@@ -1,7 +1,8 @@
-# doop
+# toc — TUI Object Converter
 
-`doop`은 로컬에서 동작하는 텍스트 변환 CLI이자 비파괴 TUI 작업판입니다.
-입력과 변환 결과를 네트워크로 전송하지 않습니다.
+`toc`은 TUI Object Converter의 약자이며 한글 발음은 톡 (`toc`)입니다.
+로컬에서 동작하는 텍스트 변환 CLI이자 비파괴 TUI 작업판이며, 입력과 변환
+결과를 네트워크로 전송하지 않습니다.
 
 ## 설치
 
@@ -14,13 +15,13 @@ cargo install --locked --path .
 ## CLI
 
 ```bash
-printf 'hello' | doop base64-encode
-doop base64-encode --input input.txt
-printf '%s' '%7B%22a%22%3A1%7D' | doop url-decode --then format-json
-printf '%s' '48 65 6c 6c 6f' | doop hex-decode
-printf 'hello' | doop hex-encode --then hex-decode
-doop --list
-doop --help
+printf 'hello' | toc base64-encode
+toc base64-encode --input input.txt
+printf '%s' '%7B%22a%22%3A1%7D' | toc url-decode --then format-json
+printf '%s' '48 65 6c 6c 6f' | toc hex-decode
+printf 'hello' | toc hex-encode --then hex-decode
+toc --list
+toc --help
 ```
 
 변환 명령은 `base64-encode`, `base64-decode`, `url-encode`,
@@ -34,22 +35,22 @@ doop --help
 처음부터 접근 권한을 제한해 만든 파일을 `--input`으로 전달합니다.
 
 ```bash
-IFS= read -r -s DOOP_INPUT
-printf '%s' "$DOOP_INPUT" | doop base64-encode
-unset DOOP_INPUT
+IFS= read -r -s TOC_INPUT
+printf '%s' "$TOC_INPUT" | toc base64-encode
+unset TOC_INPUT
 
 (
-  secret_file=$(mktemp "${TMPDIR:-/tmp}/doop-secret.XXXXXX")
+  secret_file=$(mktemp "${TMPDIR:-/tmp}/toc-secret.XXXXXX")
   trap 'rm -f -- "$secret_file"' EXIT
   chmod 600 "$secret_file" || exit
   "${EDITOR:-vi}" "$secret_file"
-  doop format-json --input "$secret_file"
+  toc format-json --input "$secret_file"
 )
 ```
 
 ## TUI
 
-터미널에서 `doop tui`를 실행합니다. 빈 Input과 빈 Pipeline으로 시작하며
+터미널에서 `toc tui`를 실행합니다. 빈 Input과 빈 Pipeline으로 시작하며
 실행 결과가 원문을 덮어쓰지 않습니다. 넓은 화면은 왼쪽 Pipeline과 오른쪽
 Input·Output 분할을 사용하고, 40~89열에서는 Pipeline 30%, Input 30%, Output
 40%의 세로 배치를 사용합니다. 높이 10~11행에서는 포커스된 패널 하나만 표시하고,
@@ -69,7 +70,7 @@ UTF-8은 원문, 비 UTF-8은 공백 없는 소문자 Hex로 복사합니다. �
 - Output: `v`/`V` 보기, `p` 단계, `f` 최종, `Enter`/`y` Pretty Copy, `z` 확대
 - `Esc`: 창·확대 닫기 또는 실행 취소, `Ctrl+Q`: 정상 종료, `Ctrl+C`: 강제 종료
 
-마우스는 `doop tui` 실행 중 항상 활성화됩니다. 패널 클릭은 포커스를 바꾸고,
+마우스는 `toc tui` 실행 중 항상 활성화됩니다. 패널 클릭은 포커스를 바꾸고,
 Pipeline과 Add Transform 항목 클릭은 표시된 항목을 선택합니다. Output 휠은
 결과를 스크롤하고 Pipeline·Add Transform 휠은 선택을 한 항목씩 이동합니다.
 Modal에서는 대괄호로 표시된 Add·Confirm·Cancel·Close만 클릭할 수 있습니다.
@@ -93,15 +94,15 @@ cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
 cargo test --release max_input_edit_release_measurement -- --ignored --nocapture
 cargo test --release utf8_validation_release_measurement -- --ignored --nocapture
 cargo package --locked
-install_root=$(mktemp -d "${TMPDIR:-/tmp}/doop-install.XXXXXX")
+install_root=$(mktemp -d "${TMPDIR:-/tmp}/toc-install.XXXXXX")
 trap 'rm -rf -- "$install_root"' EXIT
 cargo install --locked --offline --path . --root "$install_root"
-"$install_root/bin/doop" --version
+"$install_root/bin/toc" --version
 bash tests/shell-smoke.sh
 zsh tests/shell-smoke.sh
-DOOP_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
+TOC_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
 test "$(pbpaste)" = ff
-DOOP_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
+TOC_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
 test "$(pbpaste)" = ff
 ```
 
@@ -113,7 +114,7 @@ Rust·Cargo 1.97.1에서 검증하고, 최종 리뷰에서
 전체 시험은 라이브러리 230개 통과·3개 무시, CLI 통합 15개 통과로
 합계 245개 통과·3개 무시였고 실패는 없었다. 형식,
 경고 금지 Clippy, rustdoc, 잠금 패키징, 임시 경로 오프라인 잠금 설치와
-`doop 0.2.0` 실행도 통과했다.
+`toc 0.2.0` 실행도 통과했다.
 
 이번 최종 검증에서는 `dirty_redraw_release_measurement`만 다시 실행했다.
 5회 준비 뒤 30표본을 수집했으며, 표본당 500회 반복한 렌더링의 무조건

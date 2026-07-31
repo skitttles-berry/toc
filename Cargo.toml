@@ -1,10 +1,10 @@
 [package]
-name = "doop"
+name = "toc"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT OR Apache-2.0"
-description = "Local text transformations for the command line and terminal"
+description = "TUI Object Converter for local text and byte transformations"
 
 [dependencies]
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }

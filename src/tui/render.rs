@@ -316,7 +316,7 @@ fn render_app_bar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             .add_modifier(Modifier::BOLD)
     };
     let line = Line::from(vec![
-        Span::styled(">_ DOOP", title_style),
+        Span::styled(">_ TOC", title_style),
         Span::raw("  │  FOCUS: "),
         Span::styled(pane_label(app.focus).to_ascii_uppercase(), focus_style),
     ]);
@@ -1259,7 +1259,7 @@ mod tests {
                 .unwrap();
 
             assert!(pipeline < input && input < output);
-            assert!(lines[0].contains(">_ DOOP"));
+            assert!(lines[0].contains(">_ TOC"));
             assert!(lines[0].contains("FOCUS: OUTPUT"));
             assert!(lines[14].contains("[OUTPUT]"));
             assert!(lines[15].contains("[COMMON]"));
@@ -1271,7 +1271,7 @@ mod tests {
         for (width, height) in [(39, 16), (120, 9)] {
             let screen = rendered(width, height, Pane::Input);
             assert!(screen.contains("Increase terminal size"));
-            assert!(!screen.contains("doop"));
+            assert!(!screen.contains("TOC"));
             assert!(!screen.contains("Input"));
             assert!(!screen.contains("Ctrl+P"));
         }
@@ -1290,7 +1290,7 @@ mod tests {
     #[test]
     fn app_bar_is_unboxed_and_footer_has_exactly_two_roles() {
         let lines = rendered_lines(120, 16, Pane::Output);
-        assert!(lines[0].starts_with(">_ DOOP"));
+        assert!(lines[0].starts_with(">_ TOC"));
         assert!(lines[0].contains("│  FOCUS: OUTPUT"));
         assert!(!lines[0].contains('┏'));
         assert!(lines[14].starts_with("[OUTPUT]"));
@@ -2247,7 +2247,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let screen: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
         assert!(screen.contains("[ON]  › URL Encode"));
-        assert!(screen.contains(">_ DOOP"));
+        assert!(screen.contains(">_ TOC"));
         assert!(screen.contains("[COMMON]"));
         assert!(
             buffer

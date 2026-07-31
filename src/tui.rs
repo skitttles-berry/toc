@@ -35,7 +35,7 @@ pub fn check_terminal_entry(
         Ok(())
     } else {
         Err(AppError::Tui(
-            "doop tui requires terminal stdin and stdout".to_string(),
+            "toc tui requires terminal stdin and stdout".to_string(),
         ))
     }
 }
@@ -305,7 +305,7 @@ mod tests {
         let error = check_terminal_entry(false, true).unwrap_err();
         assert_eq!(
             crate::error::render_app_error(&error),
-            "TUI error: doop tui requires terminal stdin and stdout"
+            "TUI error: toc tui requires terminal stdin and stdout"
         );
         assert!(check_terminal_entry(true, false).is_err());
     }

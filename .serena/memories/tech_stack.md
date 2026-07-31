@@ -1,4 +1,4 @@
-# doop tech stack
+# toc tech stack
 
 - Rust stable pinned by `rust-toolchain.toml`/Cargo metadata to 1.97.1; edition 2024; package version 0.2.0.
 - Build/package manager: Cargo with committed `Cargo.lock`; licenses MIT OR Apache-2.0.

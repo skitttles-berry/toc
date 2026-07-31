@@ -1,4 +1,4 @@
-# doop task completion gate
+# toc task completion gate
 
 For a coding task, obtain fresh output for all relevant focused tests and then run:
 
@@ -9,7 +9,7 @@ For a coding task, obtain fresh output for all relevant focused tests and then r
 5. `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features`
 6. `cargo package --locked` on a clean tree, or `--allow-dirty` only for the documented candidate phase
 7. `bash tests/shell-smoke.sh` and `zsh tests/shell-smoke.sh` for CLI/TUI/platform-facing changes
-8. Fresh locked offline install to a temporary root, then `doop --version`
+8. Fresh locked offline install to a temporary root, then `toc --version`
 9. `git diff --check` and `git status --short --branch`
 10. `ccc index` after significant source/module changes
 

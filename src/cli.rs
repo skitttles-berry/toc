@@ -129,10 +129,10 @@ pub fn run_transform(
 
 pub fn command() -> Command {
     let ids = || transforms().iter().map(|transform| transform.id);
-    let mut command = Command::new("doop")
+    let mut command = Command::new("toc")
         .version(env!("CARGO_PKG_VERSION"))
-        .about("Local text transformations")
-        .after_help("Transform help: doop <transform-id> --help")
+        .about("TUI Object Converter")
+        .after_help("Transform help: toc <transform-id> --help")
         .disable_help_subcommand(true)
         .args_conflicts_with_subcommands(true)
         .arg(
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn reads_file_when_stdin_is_a_terminal() {
-        let path = std::env::temp_dir().join(format!("doop-input-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("toc-input-{}", std::process::id()));
         std::fs::write(&path, b"file").unwrap();
         let mut stdin = std::io::Cursor::new(Vec::<u8>::new());
         let result = read_input(Some(&path), &mut stdin, true, 64).unwrap();
@@ -397,7 +397,7 @@ mod tests {
             text,
             stderr,
             exit_code,
-        } = parse_from(["doop"])
+        } = parse_from(["toc"])
         else {
             panic!("expected printable help");
         };
@@ -405,13 +405,13 @@ mod tests {
         assert_eq!(exit_code, 0);
         assert!(text.contains("Usage:"));
         assert!(text.contains("tui"));
-        assert!(text.contains("doop <transform-id> --help"));
+        assert!(text.contains("toc <transform-id> --help"));
     }
 
     #[test]
     fn parses_direct_transform_and_repeated_then_steps() {
         let ParseOutcome::Run(Invocation::Transform { first, then, input }) = parse_from([
-            "doop",
+            "toc",
             "url-decode",
             "--input",
             "data.txt",
@@ -433,14 +433,14 @@ mod tests {
     #[test]
     fn accepts_only_exact_tui_invocation() {
         assert!(matches!(
-            parse_from(["doop", "tui"]),
+            parse_from(["toc", "tui"]),
             ParseOutcome::Run(Invocation::Tui)
         ));
         let ParseOutcome::Print {
             text,
             stderr,
             exit_code,
-        } = parse_from(["doop", "tui", "--"])
+        } = parse_from(["toc", "tui", "--"])
         else {
             panic!("expected tui trailing token rejection");
         };
@@ -450,9 +450,9 @@ mod tests {
         assert!(text.contains("does not accept trailing arguments"));
         assert!(!text.contains('\x1b'));
         for args in [
-            vec!["doop", "tui", "--help"],
-            vec!["doop", "tui", "format-json"],
-            vec!["doop", "tui", "--input", "x"],
+            vec!["toc", "tui", "--help"],
+            vec!["toc", "tui", "format-json"],
+            vec!["toc", "tui", "--input", "x"],
         ] {
             assert!(matches!(
                 parse_from(args),
@@ -468,9 +468,9 @@ mod tests {
     #[test]
     fn exposes_help_version_list_and_transform_help() {
         for args in [
-            vec!["doop", "--help"],
-            vec!["doop", "--version"],
-            vec!["doop", "format-json", "--help"],
+            vec!["toc", "--help"],
+            vec!["toc", "--version"],
+            vec!["toc", "format-json", "--help"],
         ] {
             assert!(matches!(
                 parse_from(args),
@@ -482,7 +482,7 @@ mod tests {
             ));
         }
         assert!(matches!(
-            parse_from(["doop", "--list"]),
+            parse_from(["toc", "--list"]),
             ParseOutcome::Run(Invocation::List)
         ));
     }
@@ -501,7 +501,7 @@ mod tests {
                 text,
                 stderr,
                 exit_code,
-            } = parse_from(["doop", id, "--help"])
+            } = parse_from(["toc", id, "--help"])
             else {
                 panic!("expected transform help");
             };
@@ -530,7 +530,7 @@ mod tests {
                 text,
                 stderr,
                 exit_code,
-            } = parse_from(["doop", id, "--help"])
+            } = parse_from(["toc", id, "--help"])
             else {
                 panic!("expected transform help");
             };
@@ -545,7 +545,7 @@ mod tests {
     fn has_no_run_transform_chain_script_or_doctor_command() {
         for name in ["run", "transform", "chain", "script", "doctor"] {
             assert!(matches!(
-                parse_from(["doop", name]),
+                parse_from(["toc", name]),
                 ParseOutcome::Print {
                     stderr: true,
                     exit_code: 2,

@@ -1,6 +1,8 @@
-# 제품 요구사항 정의서: `doop` v0.1
+# 제품 요구사항 정의서: `toc` v0.1
 
-* **제품명 및 실행 파일명:** `doop`
+* **제품명 및 실행 파일명:** `toc`
+* **한글 발음:** 톡 (`toc`)
+* **풀네임:** TUI Object Converter
 * **문서 버전:** 2.0
 * **최초 작성일:** 2026-07-26
 * **최종 수정일:** 2026-07-29
@@ -17,7 +19,7 @@
 
 # 1. 제품 정의
 
-`doop`은 개발 과정에서 자주 발생하는 텍스트와 바이트 변환을 로컬에서 처리하는 명령줄 및 터미널 화면 도구다.
+`toc`은 개발 과정에서 자주 발생하는 텍스트와 바이트 변환을 로컬에서 처리하는 명령줄 및 터미널 화면 도구다.
 
 v0.1의 핵심 사용 방식은 두 가지다.
 
@@ -34,7 +36,7 @@ v0.1의 핵심 사용 방식은 두 가지다.
    * 입력을 변경하지 않고 결과를 실시간으로 미리 본다.
    * 성공한 결과를 운영체제 클립보드로 복사한다.
 
-Boop은 제품 아이디어를 얻기 위한 참고 모델일 뿐이다. Boop의 기능, 구현, 변환 결과, 공개 일정은 `doop`의 요구사항이나 우선순위에 영향을 주지 않는다. v0.1은 Boop 호환성을 보장하지 않으며 Boop 코드를 포팅하지 않는다.
+Boop은 제품 아이디어를 얻기 위한 참고 모델일 뿐이다. Boop의 기능, 구현, 변환 결과, 공개 일정은 `toc`의 요구사항이나 우선순위에 영향을 주지 않는다. v0.1은 Boop 호환성을 보장하지 않으며 Boop 코드를 포팅하지 않는다.
 
 ---
 
@@ -129,12 +131,12 @@ v0.1에서는 다음을 구현하지 않는다.
 ## 4.1 명령 구조
 
 ```text
-doop
-doop --help
-doop --version
-doop --list
-doop <transform-id> [--input <PATH>] [--then <transform-id>]...
-doop tui
+toc
+toc --help
+toc --version
+toc --list
+toc <transform-id> [--input <PATH>] [--then <transform-id>]...
+toc tui
 ```
 
 `run`, `transform`, `chain`, `script`, `doctor` 같은 상위 명령은 두지 않는다.
@@ -142,30 +144,30 @@ doop tui
 예:
 
 ```bash
-printf '%s' 'hello' | doop base64-encode
-doop format-json --input data.json
+printf '%s' 'hello' | toc base64-encode
+toc format-json --input data.json
 printf '%s' '%7B%22a%22%3A1%7D' |
-  doop url-decode \
+  toc url-decode \
     --then format-json
 ```
 
 ## 4.2 기본 명령
 
-인자 없이 `doop`을 실행하면 다음 내용을 포함한 간단한 도움말을 표준 출력에 기록하고 코드 `0`으로 종료한다.
+인자 없이 `toc`을 실행하면 다음 내용을 포함한 간단한 도움말을 표준 출력에 기록하고 코드 `0`으로 종료한다.
 
 * 사용 형식
 * `--list`
-* `doop <transform-id> --help`
-* `doop tui`
+* `toc <transform-id> --help`
+* `toc tui`
 
 인자 없이 TUI를 자동 실행하지 않는다.
 
 ## 4.3 조회 명령
 
-* `doop --help`: 전체 도움말
-* `doop --version`: 제품 버전
-* `doop --list`: 등록된 여섯 변환의 식별자, 표시 이름, 한 줄 설명
-* `doop <transform-id> --help`: 해당 변환의 입력 조건과 고정 동작
+* `toc --help`: 전체 도움말
+* `toc --version`: 제품 버전
+* `toc --list`: 등록된 여섯 변환의 식별자, 표시 이름, 한 줄 설명
+* `toc <transform-id> --help`: 해당 변환의 입력 조건과 고정 동작
 
 변환 식별자는 CLI의 공개 호환성 규약이다. 공개 후 이름을 변경하지 않는다. 예약 명령인 `tui`와 충돌하는 식별자는 등록할 수 없다.
 
@@ -187,7 +189,7 @@ printf '%s' '%7B%22a%22%3A1%7D' |
 
 ```bash
 printf '%s' 'JTdCJTIyYSUyMiUzQTElN0Q=' |
-  doop base64-decode \
+  toc base64-decode \
     --then url-decode \
     --then format-json
 ```
@@ -438,7 +440,7 @@ JSON 변환은 다음 두 단계를 분리한다.
 
 ## 7.0 후속 승인 설계와의 관계
 
-2026-07-31에 `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`가 후속 승인되었고 기능 구현과 macOS·Linux 실제 TUI·클립보드 통합 검증을 완료했다. 따라서 다음 기존 TUI 규약은 새 설계로 대체된다.
+2026-07-31에 `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md`가 후속 승인되었고 기능 구현과 macOS·Linux 실제 TUI·클립보드 통합 검증을 완료했다. 따라서 다음 기존 TUI 규약은 새 설계로 대체된다.
 
 * 120열 미만 전체를 단일 패널로 표시하는 레이아웃
 * 모든 Input과 Chain 변경에 고정 200밀리초 지연을 적용하는 실행 정책
@@ -451,10 +453,10 @@ TUI 작업판 규약은 후속 설계가 현재 기준이다. 아래 TUI 절은 
 ## 7.1 실행 조건
 
 ```bash
-doop tui
+toc tui
 ```
 
-* `doop tui`만 유효하다.
+* `toc tui`만 유효하다.
 * 추가 명령이나 옵션이 있으면 코드 `2`의 사용법 오류를 반환한다.
 * 표준 입력과 표준 출력이 모두 실제 터미널일 때만 시작한다.
 * 파이프, 출력 재지정, 비대화형 환경에서는 원인을 표준 오류에 표시하고 코드 `1`로 종료한다.
@@ -598,7 +600,7 @@ Operation Palette는 등록된 여덟 변환만 표시한다.
 * 복사 길이 계산, 메모리 할당이나 운영체제 클립보드 쓰기가 실패하면 화면 안에 안전하게 표시하고 Input, Pipeline과 Output을 유지한다.
 * 클립보드 내용과 변환 결과는 로그에 기록하지 않는다.
 
-Linux에서는 X11·XWayland와 라이브러리가 지원하는 Wayland 자료 제어 환경을 대상으로 한다. `doop` 종료 후 클립보드 내용 유지 여부는 데스크톱 환경이나 클립보드 관리자에 의존한다. 이를 위해 별도 백그라운드 프로세스를 만들지 않는다.
+Linux에서는 X11·XWayland와 라이브러리가 지원하는 Wayland 자료 제어 환경을 대상으로 한다. `toc` 종료 후 클립보드 내용 유지 여부는 데스크톱 환경이나 클립보드 관리자에 의존한다. 이를 위해 별도 백그라운드 프로세스를 만들지 않는다.
 
 ## 7.9 종료와 터미널 복구
 
@@ -624,7 +626,7 @@ Linux에서는 X11·XWayland와 라이브러리가 지원하는 Wayland 자료 �
 v0.1은 단일 Cargo 패키지와 단일 실행 파일로 구현한다.
 
 ```text
-doop/
+toc/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── rust-toolchain.toml
@@ -866,8 +868,8 @@ macOS와 Linux에서 각각 다음을 검증한다.
 
 * `bash` 파일·파이프 입력
 * `zsh` 파일·파이프 입력
-* `bash`에서 `doop tui`
-* `zsh`에서 `doop tui`
+* `bash`에서 `toc tui`
+* `zsh`에서 `toc tui`
 * 여러 줄 붙여넣기
 * 터미널 크기 변경
 * 클립보드 성공과 실패 경로
@@ -893,8 +895,8 @@ cargo test --all-targets --all-features
 
 다음 조건을 모두 충족해야 v0.1로 판단한다.
 
-1. 제품명, 패키지명, 실행 파일명이 `doop`이다.
-2. 단일 Cargo 패키지에서 하나의 `doop` 실행 파일이 만들어진다.
+1. 제품명, 패키지명, 실행 파일명이 `toc`이다.
+2. 단일 Cargo 패키지에서 하나의 `toc` 실행 파일이 만들어진다.
 3. Rust `1.97.1` 고정 도구 체인에서 빌드와 시험이 통과한다.
 4. 여섯 변환만 등록되며 식별자가 정확하다.
 5. 파일과 파이프 입력이 동작하고 입력원 충돌을 거부한다.
@@ -903,7 +905,7 @@ cargo test --all-targets --all-features
 8. 결과 끝에 임의 줄바꿈이나 ANSI 코드가 추가되지 않는다.
 9. Base64와 URL의 잘못된 UTF-8 결과가 손실 변환되지 않는다.
 10. JSON 토큰 원문, 키 순서, 중복 키 거부, 깊이 제한이 시험으로 고정된다.
-11. `doop tui`가 빈 비파괴 작업판을 열고 추가 인자를 거부한다.
+11. `toc tui`가 빈 비파괴 작업판을 열고 추가 인자를 거부한다.
 12. TUI에서 체인 편집, 실시간 미리보기, 결과 복사가 가능하다.
 13. TUI 오류 상태에서 오래된 결과를 복사할 수 없다.
 14. 위험한 제어 문자가 CLI와 TUI 화면을 조작할 수 없다.
@@ -1218,11 +1220,11 @@ cargo install --locked --path .
 
 | 결정 | v0.1 결론 |
 |---|---|
-| 제품명 | Linux의 기존 `/usr/bin/beep` 충돌을 피하기 위해 `beep`에서 `doop`으로 변경 |
+| 제품명 | Linux의 기존 `/usr/bin/beep` 충돌을 피하기 위해 `beep`에서 `toc`으로 변경 |
 | 핵심 경험 | CLI 파이프라인과 TUI 비파괴 작업판 모두 포함 |
 | 변환 수 | Base64 2개, URL 2개, JSON 2개로 제한 |
-| 명령 형식 | `doop <transform-id>` 직접 실행, `run` 제거 |
-| TUI 실행 | `doop tui`를 명시한 경우에만 실행 |
+| 명령 형식 | `toc <transform-id>` 직접 실행, `run` 제거 |
+| TUI 실행 | `toc tui`를 명시한 경우에만 실행 |
 | 입력 | 파일 또는 파이프 중 하나, `--text` 제거 |
 | 출력 | 표준 출력만 사용, 끝 줄바꿈 없음 |
 | 체인 | `--then` 반복, 옵션 없음, 최대 32단계 |

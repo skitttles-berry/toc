@@ -1,6 +1,6 @@
 use std::io::{self, IsTerminal as _, Write as _};
 
-use doop::{
+use toc::{
     cli::{Invocation, ParseOutcome},
     error::{AppError, escape_external},
     transforms::transforms,
@@ -20,7 +20,7 @@ fn render_list() -> String {
 }
 
 fn run() -> Result<(), AppError> {
-    match doop::cli::parse_from(std::env::args_os()) {
+    match toc::cli::parse_from(std::env::args_os()) {
         ParseOutcome::Print {
             text,
             stderr,
@@ -31,7 +31,7 @@ fn run() -> Result<(), AppError> {
                 let _ = writeln!(io::stderr().lock(), "{safe}");
             } else {
                 let stdout_is_terminal = io::stdout().is_terminal();
-                doop::cli::write_result(
+                toc::cli::write_result(
                     &mut io::stdout().lock(),
                     stdout_is_terminal,
                     text.as_bytes(),
@@ -46,7 +46,7 @@ fn run() -> Result<(), AppError> {
         ParseOutcome::Run(Invocation::List) => {
             let output = render_list();
             let stdout_is_terminal = io::stdout().is_terminal();
-            doop::cli::write_result(
+            toc::cli::write_result(
                 &mut io::stdout().lock(),
                 stdout_is_terminal,
                 output.as_bytes(),
@@ -57,7 +57,7 @@ fn run() -> Result<(), AppError> {
             let stdout_is_terminal = io::stdout().is_terminal();
             let mut stdin = io::stdin().lock();
             let mut stdout = io::stdout().lock();
-            doop::cli::run_transform(
+            toc::cli::run_transform(
                 first,
                 &then,
                 input.as_deref(),
@@ -68,8 +68,8 @@ fn run() -> Result<(), AppError> {
             )
         }
         ParseOutcome::Run(Invocation::Tui) => {
-            doop::tui::check_terminal_entry(io::stdin().is_terminal(), io::stdout().is_terminal())?;
-            match doop::tui::run()? {
+            toc::tui::check_terminal_entry(io::stdin().is_terminal(), io::stdout().is_terminal())?;
+            match toc::tui::run()? {
                 0 => Ok(()),
                 130 => Err(AppError::Interrupted),
                 code => Err(AppError::Tui(format!("TUI exited with code {code}"))),
@@ -82,7 +82,7 @@ fn main() {
     if let Err(error) = run() {
         let code = error.exit_code();
         if !matches!(error, AppError::Usage) {
-            let message = doop::error::render_app_error(&error);
+            let message = toc::error::render_app_error(&error);
             let _ = writeln!(io::stderr().lock(), "{message}");
         }
         std::process::exit(code);

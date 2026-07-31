@@ -1,9 +1,9 @@
-# doop TUI 마우스 탐색 지원 설계
+# toc TUI 마우스 탐색 지원 설계
 
 * **작성일:** 2026-07-31
 * **상태:** 사용자 승인·구현 대기
-* **기준 문서:** `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`
-* **대상:** `doop tui`
+* **기준 문서:** `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md`
+* **대상:** `toc tui`
 * **제품 UI 언어:** 영어
 * **프로젝트 문서 언어:** 한국어
 
@@ -58,7 +58,7 @@ Pipeline 실행, Output 원본과 View, 복사, 작업자, 반응형 배치와 �
 
 | 항목 | 결정 |
 |---|---|
-| 마우스 활성화 | `doop tui` 실행 중 항상 활성화 |
+| 마우스 활성화 | `toc tui` 실행 중 항상 활성화 |
 | 클릭 버튼 | 수정 키 없는 왼쪽 단일 누름 |
 | 패널 클릭 | 해당 패널 포커스 |
 | Pipeline 항목 클릭 | Pipeline 포커스와 단계 선택 |

@@ -1,8 +1,8 @@
-# doop TUI UX Refresh Implementation Plan
+# toc TUI UX Refresh Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 승인된 Neon Console 화면, 좁은 화면 세로 배치, 정돈된 Pipeline·Add Transform 표시와 Pretty/Raw 복사를 `doop tui`에 구현한다.
+**Goal:** 승인된 Neon Console 화면, 좁은 화면 세로 배치, 정돈된 Pipeline·Add Transform 표시와 Pretty/Raw 복사를 `toc tui`에 구현한다.
 
 **Architecture:** 기존 `App` 상태와 단일 `clipboard_payload` 경로를 `CopyMode`로 확장하고, 등록된 JSON 변환을 재사용해 안전한 Pretty/Raw 결과를 만든다. 렌더링은 `src/tui/render.rs` 안에서 기존 패널 함수를 유지하되 상단·하단 Chrome과 좁은 화면 배치만 교체하며, 새 모듈이나 의존성은 추가하지 않는다.
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 기준 설계는 `docs/superpowers/specs/2026-07-31-doop-tui-ux-refresh-design.md`다.
+- 기준 설계는 `docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md`다.
 - 제품 UI 문자열은 영어, 프로젝트 문서는 한국어를 사용한다.
 - CLI 명령, 공개 변환 ID, Pipeline 실행 정책, 작업자와 View 종류는 변경하지 않는다.
 - `NO_COLOR`에서는 색상만 제거하고 타이틀, 포커스, 테두리와 상태 문자를 유지한다.
@@ -28,8 +28,8 @@
 | `src/tui/state.rs` | Copy 모드·payload·단축키·완료 상태와 상태 단위 시험 |
 | `src/tui/render.rs` | 상단·패널·하단·반응형 배치·Pipeline·Add Transform과 렌더 시험 |
 | `README.md` | 사용자가 보는 TUI 배치·복사·키 설명과 최종 검증 근거 |
-| `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md` | 기존 구현 설계의 화면·키·복사 규약 현행화 |
-| `docs/superpowers/specs/2026-07-31-doop-tui-ux-refresh-design.md` | 구현 상태와 최종 검증 상태 |
+| `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md` | 기존 구현 설계의 화면·키·복사 규약 현행화 |
+| `docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md` | 구현 상태와 최종 검증 상태 |
 
 ---
 
@@ -42,7 +42,7 @@
 - Test: `src/tui/state.rs:1300-1885`
 - Test fixture update: `src/tui/render.rs:750-760, 884-924, 1971-2151`
 - Modify: `README.md:56-64`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:226-265,318-324`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md:226-265,318-324`
 
 **Interfaces:**
 - Consumes: `transform_by_id(id) -> Option<&'static TransformDefinition>`, `TransformDefinition::apply: fn(&[u8], usize) -> Result<Vec<u8>, TransformError>`, `crate::TUI_OUTPUT_LIMIT`, `Artifact::bytes() -> &[u8]`
@@ -403,7 +403,7 @@ git diff --check
 Expected: 모두 PASS, whitespace 오류 없음.
 
 ```bash
-git add src/tui/state.rs src/tui/render.rs README.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+git add src/tui/state.rs src/tui/render.rs README.md docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git commit -m "feat(tui): Pretty·Raw 복사 추가"
 ```
 
@@ -419,7 +419,7 @@ git commit -m "feat(tui): Pretty·Raw 복사 추가"
 - Test: `src/tui/render.rs:781-1072`
 - Test: `src/tui/render.rs:1935-2055`
 - Modify: `README.md:52-64`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:200-265`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md:200-265`
 
 **Interfaces:**
 - Consumes: `App.focus`, `App.status`, `OutputStatus`, 기존 `render_input`, `render_output`, `render_pipeline`, `source_label`
@@ -446,7 +446,7 @@ fn narrow_layout_stacks_pipeline_input_and_output_in_order() {
         let output = lines.iter().position(|line| line.contains("» OUTPUT")).unwrap();
 
         assert!(pipeline < input && input < output);
-        assert!(lines[0].contains(">_ DOOP"));
+        assert!(lines[0].contains(">_ TOC"));
         assert!(lines[0].contains("FOCUS: OUTPUT"));
         assert!(lines[14].contains("[OUTPUT]"));
         assert!(lines[15].contains("[COMMON]"));
@@ -581,7 +581,7 @@ Expected: 모두 PASS.
 #[test]
 fn app_bar_is_unboxed_and_footer_has_exactly_two_roles() {
     let lines = rendered_lines(120, 16, Pane::Output);
-    assert!(lines[0].starts_with(">_ DOOP"));
+    assert!(lines[0].starts_with(">_ TOC"));
     assert!(lines[0].contains("│  FOCUS: OUTPUT"));
     assert!(!lines[0].contains('┏'));
     assert!(lines[14].starts_with("[OUTPUT]"));
@@ -666,7 +666,7 @@ let focus_style = (!app.no_color)
     .then(|| Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
     .unwrap_or_default();
 let line = Line::from(vec![
-    Span::styled(">_ DOOP", title_style),
+    Span::styled(">_ TOC", title_style),
     Span::raw("  │  FOCUS: "),
     Span::styled(pane_label(app.focus).to_ascii_uppercase(), focus_style),
 ]);
@@ -739,7 +739,7 @@ Ratatui의 영역 폭 clipping을 이용해 오른쪽 낮은 우선순위 항목
 ```rust
 // NO_COLOR에서도 상태 문자를 유지한다.
 assert!(screen.contains("[ON]  ›"));
-assert!(screen.contains(">_ DOOP"));
+assert!(screen.contains(">_ TOC"));
 assert!(screen.contains("[COMMON]"));
 assert!(buffer.content().iter().all(|cell| {
     cell.fg == Color::Reset && cell.bg == Color::Reset
@@ -775,7 +775,7 @@ git diff --check
 Expected: 모두 PASS, whitespace 오류 없음.
 
 ```bash
-git add src/tui/render.rs README.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+git add src/tui/render.rs README.md docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git commit -m "feat(tui): 반응형 네온 화면 적용"
 ```
 
@@ -789,7 +789,7 @@ git commit -m "feat(tui): 반응형 네온 화면 적용"
 - Modify: `src/tui/render.rs:1124-1149`
 - Modify: `src/tui/render.rs:1202-1329`
 - Modify: `src/tui/render.rs:1632-1952`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:220-224,267-271`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md:220-224,267-271`
 
 **Interfaces:**
 - Consumes: `StepStatus`, `TransformDefinition::{id, display_name, description, behavior, accepts_binary}`, `selection_style`, `input_condition`
@@ -1111,7 +1111,7 @@ git diff --check
 Expected: 모두 PASS, whitespace 오류 없음.
 
 ```bash
-git add src/tui/render.rs docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+git add src/tui/render.rs docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git commit -m "feat(tui): Pipeline·변환 선택 정돈"
 ```
 
@@ -1121,7 +1121,7 @@ git commit -m "feat(tui): Pipeline·변환 선택 정돈"
 
 **Files:**
 - Modify: `README.md:70-116`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-ux-refresh-design.md:1-8,330-370`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md:1-8,330-370`
 - Verify only: `Cargo.toml`, `Cargo.lock`, `tests/cli.rs`, `tests/shell-smoke.sh`
 
 **Interfaces:**
@@ -1166,13 +1166,13 @@ Expected: package 생성 성공, `.env`, `target/`, `.superpowers/` 미포함.
 Run:
 
 ```bash
-install_root=$(mktemp -d "${TMPDIR:-/tmp}/doop-install.XXXXXX")
+install_root=$(mktemp -d "${TMPDIR:-/tmp}/toc-install.XXXXXX")
 trap 'rm -rf -- "$install_root"' EXIT
 cargo install --locked --offline --path . --root "$install_root"
-"$install_root/bin/doop" --version
+"$install_root/bin/toc" --version
 ```
 
-Expected: 설치 성공, 출력은 `doop 0.2.0`.
+Expected: 설치 성공, 출력은 `toc 0.2.0`.
 
 - [ ] **Step 4: Shell·실제 macOS 클립보드 Smoke**
 
@@ -1181,9 +1181,9 @@ Run:
 ```bash
 bash tests/shell-smoke.sh
 zsh tests/shell-smoke.sh
-DOOP_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
+TOC_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
 test "$(pbpaste)" = ff
-DOOP_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
+TOC_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
 test "$(pbpaste)" = ff
 ```
 
@@ -1223,7 +1223,7 @@ Expected: ccc error 0, diff whitespace 오류 없음, README와 새 설계 문�
 - [ ] **Step 7: 검증 문서 커밋**
 
 ```bash
-git add README.md docs/superpowers/specs/2026-07-31-doop-tui-ux-refresh-design.md
+git add README.md docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md
 git commit -m "docs(tui): 개선 구현 검증 현행화"
 ```
 

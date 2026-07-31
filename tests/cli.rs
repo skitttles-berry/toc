@@ -4,7 +4,7 @@ use std::{
 };
 
 fn run(args: &[&str], stdin: &[u8]) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_doop"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_toc"))
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -99,11 +99,12 @@ fn help_version_and_list_are_successful_english_output() {
         if args.is_empty() || args == ["--help"] {
             let help = std::str::from_utf8(&output.stdout).unwrap();
             for token in [
-                "Usage: doop [OPTIONS]",
+                "TUI Object Converter",
+                "Usage: toc [OPTIONS]",
                 "Commands:",
                 "tui",
                 "--list",
-                "Transform help: doop <transform-id> --help",
+                "Transform help: toc <transform-id> --help",
             ] {
                 assert!(help.contains(token), "{args:?}: {token}");
             }
@@ -112,10 +113,10 @@ fn help_version_and_list_are_successful_english_output() {
 }
 
 #[test]
-fn version_reports_v0_2_0() {
+fn version_reports_toc_v0_2_0() {
     let output = run(&["--version"], b"");
     assert_eq!(output.status.code(), Some(0));
-    assert_eq!(output.stdout, b"doop 0.2.0\n");
+    assert_eq!(output.stdout, b"toc 0.2.0\n");
     assert!(output.stderr.is_empty());
 }
 
@@ -144,7 +145,7 @@ fn unknown_transform_is_single_usage_error_without_stdout() {
 
 #[test]
 fn piped_input_and_input_path_conflict_with_code_two() {
-    let path = std::env::temp_dir().join(format!("doop-cli-input-{}", std::process::id()));
+    let path = std::env::temp_dir().join(format!("toc-cli-input-{}", std::process::id()));
     std::fs::write(&path, b"file").unwrap();
     let output = run(
         &["base64-encode", "--input", path.to_str().unwrap()],
@@ -238,7 +239,7 @@ fn tui_has_explicit_temporary_code_one_path() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         output.stderr,
-        b"TUI error: doop tui requires terminal stdin and stdout\n"
+        b"TUI error: toc tui requires terminal stdin and stdout\n"
     );
 }
 

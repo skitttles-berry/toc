@@ -1,4 +1,4 @@
-# doop 안정화·단순화 Implementation Plan
+# toc 안정화·단순화 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -53,10 +53,10 @@ README.md
 docs/prd/init-prd.md
     단계 수 조기 검증, Text 표시와 작업자 종료의 현재 계약을 기록한다.
 
-docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
     Text 자동 줄바꿈, 작업자 종료와 복원 없는 macOS Smoke를 현행화한다.
 
-docs/superpowers/specs/2026-07-31-doop-maintenance-design.md
+docs/superpowers/specs/2026-07-31-toc-maintenance-design.md
     측정 결과와 최종 구현 상태를 기록한다.
 
 docs/superpowers/plans/*.md
@@ -288,7 +288,7 @@ git commit -m "refactor(base64): 무공백 입력 복사 제거"
 - Modify: `src/tui/views.rs:132-233`
 - Test: `src/tui/views.rs:452-598`
 - Modify: `docs/prd/init-prd.md:583-590`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:283-288`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md:283-288`
 
 **Interfaces:**
 - Consumes: `Artifact`, `TextWindow`, Unicode 그래핌·표시 폭과 `VISIBLE_TEXT_BYTE_BUDGET`
@@ -409,7 +409,7 @@ Run:
 cargo fmt --check
 cargo clippy --lib -- -D warnings
 git diff --check
-git add src/tui/views.rs docs/prd/init-prd.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+git add src/tui/views.rs docs/prd/init-prd.md docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git commit -m "fix(tui): 긴 Text 결과 자동 줄바꿈"
 ```
 
@@ -422,7 +422,7 @@ git commit -m "fix(tui): 긴 Text 결과 자동 줄바꿈"
 - Test: `src/tui/worker.rs:132-455`
 - Modify: `src/tui.rs:130-176`
 - Modify: `docs/prd/init-prd.md:567-575,1146-1153`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:175-181,420-427`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md:175-181,420-427`
 
 **Interfaces:**
 - Consumes: `mpsc::Receiver<PreviewResult>::try_recv`
@@ -527,7 +527,7 @@ Run:
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 git diff --check
-git add src/tui.rs src/tui/worker.rs docs/prd/init-prd.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+git add src/tui.rs src/tui/worker.rs docs/prd/init-prd.md docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git commit -m "fix(tui): 작업자 종료 감지"
 ```
 
@@ -538,23 +538,23 @@ git commit -m "fix(tui): 작업자 종료 감지"
 **Files:**
 - Modify: `tests/shell-smoke.sh:1-130,250-400,440-455,592-665`
 - Modify: `README.md:71-278`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:385-395`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md:385-395`
 
 **Interfaces:**
 - Consumes: TUI `Copy as Hex`, `pbpaste`, 기존 `read_clipboard macos`
-- Produces: `DOOP_SMOKE_CLIPBOARD_MODE=macos`가 `ff`를 검증하고 그대로 남기는 로컬 시험
+- Produces: `TOC_SMOKE_CLIPBOARD_MODE=macos`가 `ff`를 검증하고 그대로 남기는 로컬 시험
 
 - [x] **Step 1: 현재 복원 동작이 새 완료 조건과 다른지 실제 macOS에서 확인**
 
 현재 클립보드를 시험용 일반 문자열로 바꾸고 기존 Smoke를 실행한다.
 
 ```bash
-printf 'doop-before-smoke' | pbcopy
-DOOP_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
+printf 'toc-before-smoke' | pbcopy
+TOC_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
 test "$(pbpaste)" = ff
 ```
 
-Expected: 마지막 `test`가 FAIL. 기존 스크립트는 `doop-before-smoke`를 복원한다.
+Expected: 마지막 `test`가 FAIL. 기존 스크립트는 `toc-before-smoke`를 복원한다.
 
 - [x] **Step 2: 복원 전용 셸 상태와 cleanup 분기 제거**
 
@@ -581,7 +581,7 @@ macos_owned_transition
 verify_macos_owned_transition
 ```
 
-macOS 분기는 복사 성공 화면을 확인한 뒤 기존 `read_clipboard macos 124`로 값을 읽고 `DOOP_SMOKE_CLIPBOARD_EXPECTED`와 비교한다.
+macOS 분기는 복사 성공 화면을 확인한 뒤 기존 `read_clipboard macos 124`로 값을 읽고 `TOC_SMOKE_CLIPBOARD_EXPECTED`와 비교한다.
 
 ```tcl
 } elseif {$mode eq "macos"} {
@@ -595,13 +595,13 @@ macOS 분기는 복사 성공 화면을 확인한 뒤 기존 `read_clipboard mac
         timeout { exit 128 }
     }
     set copied [read_clipboard macos 124]
-    if {$copied ne $env(DOOP_SMOKE_CLIPBOARD_EXPECTED)} {
+    if {$copied ne $env(TOC_SMOKE_CLIPBOARD_EXPECTED)} {
         exit 125
     }
 }
 ```
 
-`DOOP_SMOKE_CLIPBOARD_INITIAL_COUNT`와 `DOOP_SMOKE_CLIPBOARD_OWNED_COUNT` 환경변수도 제거한다.
+`TOC_SMOKE_CLIPBOARD_INITIAL_COUNT`와 `TOC_SMOKE_CLIPBOARD_OWNED_COUNT` 환경변수도 제거한다.
 
 - [x] **Step 4: macOS 실행 분기를 복사값 검증만 남기도록 축소**
 
@@ -640,9 +640,9 @@ bash -n tests/shell-smoke.sh
 zsh -n tests/shell-smoke.sh
 bash tests/shell-smoke.sh
 zsh tests/shell-smoke.sh
-DOOP_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
+TOC_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
 test "$(pbpaste)" = ff
-DOOP_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
+TOC_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
 test "$(pbpaste)" = ff
 ```
 
@@ -653,7 +653,7 @@ Expected: 모두 PASS. 마지막 클립보드 값은 `ff`다.
 Run:
 
 ```bash
-rg --color=never -n "changeCount|clipboard_backup|clipboard_owned|restore macOS clipboard|원문 복원" tests/shell-smoke.sh README.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+rg --color=never -n "changeCount|clipboard_backup|clipboard_owned|restore macOS clipboard|원문 복원" tests/shell-smoke.sh README.md docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 ```
 
 Expected: 복원 요구나 구현 match 없음. 제품의 일반 터미널 복구 문구는 검색 대상이 아니다.
@@ -662,7 +662,7 @@ Run:
 
 ```bash
 git diff --check
-git add tests/shell-smoke.sh README.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+git add tests/shell-smoke.sh README.md docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git commit -m "test(clipboard): 복원 없는 macOS 검증"
 ```
 
@@ -678,7 +678,7 @@ git commit -m "test(clipboard): 복원 없는 macOS 검증"
 - Conditional Modify: `src/tui/views.rs:8-31`
 - Conditional Modify: `src/tui/render.rs:900-920,1760-1785`
 - Modify: `README.md:71-90`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-maintenance-design.md:115-134`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-maintenance-design.md:115-134`
 
 **Interfaces:**
 - Produces: ignored release measurements `max_input_edit_release_measurement`, `utf8_validation_release_measurement`
@@ -981,14 +981,14 @@ git diff --check
 조건부 프로덕션 최적화가 하나라도 적용되었으면:
 
 ```bash
-git add src/tui/state.rs src/tui/views.rs src/tui/worker.rs src/tui/render.rs README.md docs/superpowers/specs/2026-07-31-doop-maintenance-design.md
+git add src/tui/state.rs src/tui/views.rs src/tui/worker.rs src/tui/render.rs README.md docs/superpowers/specs/2026-07-31-toc-maintenance-design.md
 git commit -m "perf(tui): 측정 기반 경로 최적화"
 ```
 
 두 중앙값이 모두 16 ms 이하이면:
 
 ```bash
-git add src/tui/state.rs src/tui/views.rs README.md docs/superpowers/specs/2026-07-31-doop-maintenance-design.md
+git add src/tui/state.rs src/tui/views.rs README.md docs/superpowers/specs/2026-07-31-toc-maintenance-design.md
 git commit -m "test(perf): TUI 경계 측정 추가"
 ```
 
@@ -998,12 +998,12 @@ git commit -m "test(perf): TUI 경계 측정 추가"
 
 **Files:**
 - Modify: `README.md:71-278`
-- Delete: `docs/superpowers/plans/2026-07-29-doop-v0.1.md`
-- Delete: `docs/superpowers/plans/2026-07-29-doop-v0.2-hex.md`
-- Delete: `docs/superpowers/plans/2026-07-30-doop-full-audit-refactor.md`
-- Delete: `docs/superpowers/plans/2026-07-30-doop-v0.1-hardening.md`
-- Delete: `docs/superpowers/plans/2026-07-31-doop-tui-workbench.md`
-- Preserve: `docs/superpowers/plans/2026-07-31-doop-maintenance.md`
+- Delete: `docs/superpowers/plans/2026-07-29-toc-v0.1.md`
+- Delete: `docs/superpowers/plans/2026-07-29-toc-v0.2-hex.md`
+- Delete: `docs/superpowers/plans/2026-07-30-toc-full-audit-refactor.md`
+- Delete: `docs/superpowers/plans/2026-07-30-toc-v0.1-hardening.md`
+- Delete: `docs/superpowers/plans/2026-07-31-toc-tui-workbench.md`
+- Preserve: `docs/superpowers/plans/2026-07-31-toc-maintenance.md`
 
 **Interfaces:**
 - Consumes: Task 5 클립보드 결과와 Task 6 실제 측정 출력
@@ -1045,14 +1045,14 @@ Task 6에서 얻은 정확한 중앙값과 적용 결정을 이 절 마지막에
 `apply_patch`로 다음 파일만 삭제한다.
 
 ```text
-docs/superpowers/plans/2026-07-29-doop-v0.1.md
-docs/superpowers/plans/2026-07-29-doop-v0.2-hex.md
-docs/superpowers/plans/2026-07-30-doop-full-audit-refactor.md
-docs/superpowers/plans/2026-07-30-doop-v0.1-hardening.md
-docs/superpowers/plans/2026-07-31-doop-tui-workbench.md
+docs/superpowers/plans/2026-07-29-toc-v0.1.md
+docs/superpowers/plans/2026-07-29-toc-v0.2-hex.md
+docs/superpowers/plans/2026-07-30-toc-full-audit-refactor.md
+docs/superpowers/plans/2026-07-30-toc-v0.1-hardening.md
+docs/superpowers/plans/2026-07-31-toc-tui-workbench.md
 ```
 
-현재 파일 `docs/superpowers/plans/2026-07-31-doop-maintenance.md`와 `docs/superpowers/specs`는 삭제하지 않는다.
+현재 파일 `docs/superpowers/plans/2026-07-31-toc-maintenance.md`와 `docs/superpowers/specs`는 삭제하지 않는다.
 
 - [x] **Step 4: 현행 문서와 후속 아이디어가 남았는지 확인**
 
@@ -1060,7 +1060,7 @@ Run:
 
 ```bash
 lsd --color=never --icon=never docs/superpowers/plans docs/superpowers/specs docs/prd
-rg --color=never -n "후속 작업 대장|파일 열기|Output 검색|플러그인" docs/prd/init-prd.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+rg --color=never -n "후속 작업 대장|파일 열기|Output 검색|플러그인" docs/prd/init-prd.md docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 rg --color=never -n "^### 2026-|검증 기준 코드|docker run|changeCount|원문 복원" README.md
 ```
 
@@ -1076,7 +1076,7 @@ Run:
 
 ```bash
 git diff --check
-rg --color=never -n "docs/superpowers/plans/2026-07-(29|30).*\\.md|2026-07-31-doop-tui-workbench\\.md" README.md docs/prd docs/superpowers/specs
+rg --color=never -n "docs/superpowers/plans/2026-07-(29|30).*\\.md|2026-07-31-toc-tui-workbench\\.md" README.md docs/prd docs/superpowers/specs
 ```
 
 Expected: 삭제한 계획을 현재 문서가 필수 자료로 참조하지 않는다.
@@ -1093,9 +1093,9 @@ git commit -m "docs(project): 완료 기록 현행화"
 ### Task 8: 전체 로컬 검증, 문서 완료 상태와 CCC 인덱스
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-07-31-doop-maintenance-design.md:1-8,207-222`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-maintenance-design.md:1-8,207-222`
 - Modify if results changed: `README.md:71-110`
-- Modify: `docs/superpowers/plans/2026-07-31-doop-maintenance.md` checkboxes
+- Modify: `docs/superpowers/plans/2026-07-31-toc-maintenance.md` checkboxes
 
 **Interfaces:**
 - Consumes: Tasks 1~7의 커밋과 실제 로컬 검증 출력
@@ -1137,12 +1137,12 @@ cargo package --locked --allow-dirty
 새 임시 설치 루트를 만들고 설치 결과를 실행한다.
 
 ```bash
-install_root=$(mktemp -d "${TMPDIR:-/tmp}/doop-install.XXXXXX")
+install_root=$(mktemp -d "${TMPDIR:-/tmp}/toc-install.XXXXXX")
 cargo install --locked --offline --path . --root "$install_root"
-"$install_root/bin/doop" --version
+"$install_root/bin/toc" --version
 ```
 
-Expected: `doop 0.2.0`.
+Expected: `toc 0.2.0`.
 
 - [x] **Step 4: Bash·Zsh와 실제 macOS 클립보드 Smoke**
 
@@ -1151,9 +1151,9 @@ Run:
 ```bash
 bash tests/shell-smoke.sh
 zsh tests/shell-smoke.sh
-DOOP_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
+TOC_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
 test "$(pbpaste)" = ff
-DOOP_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
+TOC_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
 test "$(pbpaste)" = ff
 ```
 
@@ -1163,11 +1163,11 @@ Linux 로컬 환경을 사용할 수 있으면 다음 경로도 실행한다.
 
 ```bash
 env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR \
-  DOOP_SMOKE_CLIPBOARD_MODE=unavailable bash tests/shell-smoke.sh
-xvfb-run -a env DOOP_SMOKE_CLIPBOARD_MODE=x11 zsh tests/shell-smoke.sh
+  TOC_SMOKE_CLIPBOARD_MODE=unavailable bash tests/shell-smoke.sh
+xvfb-run -a env TOC_SMOKE_CLIPBOARD_MODE=x11 zsh tests/shell-smoke.sh
 ```
 
-Wayland 세션을 사용할 수 있으면 기존 `DOOP_SMOKE_CLIPBOARD_MODE=wayland` 경로를 실행한다. 사용할 수 없는 Linux 또는 Wayland 환경은 README 최신 요약에 미검증으로 남긴다.
+Wayland 세션을 사용할 수 있으면 기존 `TOC_SMOKE_CLIPBOARD_MODE=wayland` 경로를 실행한다. 사용할 수 없는 Linux 또는 Wayland 환경은 README 최신 요약에 미검증으로 남긴다.
 
 - [x] **Step 5: 완료 문서 현행화와 자체 검토**
 
@@ -1182,8 +1182,8 @@ Wayland 세션을 사용할 수 있으면 기존 `DOOP_SMOKE_CLIPBOARD_MODE=wayl
 Run:
 
 ```bash
-rg --color=never -n "T[B]D|TO[D]O|FIX[M]E|적절[히] 처리|나중[에] 구현" README.md docs/prd docs/superpowers/specs docs/superpowers/plans/2026-07-31-doop-maintenance.md
-rg --color=never -n "changeCount|clipboard_backup|clipboard_owned|원문 복원" tests/shell-smoke.sh README.md docs/prd docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+rg --color=never -n "T[B]D|TO[D]O|FIX[M]E|적절[히] 처리|나중[에] 구현" README.md docs/prd docs/superpowers/specs docs/superpowers/plans/2026-07-31-toc-maintenance.md
+rg --color=never -n "changeCount|clipboard_backup|clipboard_owned|원문 복원" tests/shell-smoke.sh README.md docs/prd docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git diff --check
 ```
 
@@ -1194,7 +1194,7 @@ Expected: 미완성 표시, 클립보드 복원 구현·현행 규약과 공백 
 Run:
 
 ```bash
-git add README.md docs/superpowers/specs/2026-07-31-doop-maintenance-design.md docs/superpowers/plans/2026-07-31-doop-maintenance.md
+git add README.md docs/superpowers/specs/2026-07-31-toc-maintenance-design.md docs/superpowers/plans/2026-07-31-toc-maintenance.md
 git commit -m "docs(project): 정비 구현 완료 기록"
 ```
 

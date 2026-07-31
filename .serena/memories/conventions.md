@@ -1,4 +1,4 @@
-# doop conventions
+# toc conventions
 
 - Preserve one shared static transform registry in `src/transforms/mod.rs`; each definition has public ID/name/description/behavior, `accepts_binary`, and function pointer.
 - Preserve the public `pipeline::execute(Vec<u8>, &[TransformStep], usize)` signature and strict CLI behavior unless an approved spec explicitly changes it.

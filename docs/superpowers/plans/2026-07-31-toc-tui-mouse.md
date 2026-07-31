@@ -1,8 +1,8 @@
-# doop TUI Mouse Navigation Implementation Plan
+# toc TUI Mouse Navigation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `doop tui`에 렌더 좌표 기반 패널 포커스·목록 선택·영역별 휠·Modal 동작과 안전한 마우스 캡처 복구를 추가한다.
+**Goal:** `toc tui`에 렌더 좌표 기반 패널 포커스·목록 선택·영역별 휠·Modal 동작과 안전한 마우스 캡처 복구를 추가한다.
 
 **Architecture:** 기존 Crossterm 이벤트 루프가 마우스 이벤트를 `AppEvent`로 전달하고, Ratatui 렌더러가 매 프레임 실제로 그린 `Rect`를 하나의 임시 `MouseRegions`에 기록한다. `App`은 이 좌표만 판정해 기존 키보드 상태 전이와 스크롤 함수를 재사용하며, 새 모듈·의존성·범용 이벤트 계층은 만들지 않는다.
 
@@ -10,8 +10,8 @@
 
 ## Global Constraints
 
-- 기준 설계는 `docs/superpowers/specs/2026-07-31-doop-tui-mouse-design.md`다.
-- `doop tui` 세션에서는 마우스 캡처를 항상 켜고 정상 종료·오류·패닉에서 역순으로 끈다.
+- 기준 설계는 `docs/superpowers/specs/2026-07-31-toc-tui-mouse-design.md`다.
+- `toc tui` 세션에서는 마우스 캡처를 항상 켜고 정상 종료·오류·패닉에서 역순으로 끈다.
 - 입력 순서는 raw mode, alternate screen, bracketed paste, mouse capture, cursor hide이며 복구는 정확히 역순이다.
 - 처리 이벤트는 modifier가 없는 `Down(MouseButton::Left)`, `ScrollUp`, `ScrollDown`뿐이다.
 - `Moved`, `Drag`, `Up`, 오른쪽·가운데 버튼, modifier가 있는 이벤트, 수평 휠과 등록 영역 밖 좌표는 상태·효과·dirty를 바꾸지 않는다.
@@ -36,7 +36,7 @@
 | `src/tui/render.rs` | 실제 패널·목록·동작 라벨 좌표 기록, 마우스 도움말과 `TestBackend` 통합 시험 |
 | `tests/shell-smoke.sh` | SGR 마우스 Sequence 파싱, 패널·목록·Modal·휠 동작과 캡처 해제 PTY 검증 |
 | `README.md` | 지원 마우스 동작, 캡처 기간과 터미널 기본 드래그 선택 제한 안내 |
-| `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md` | 이벤트 흐름·터미널 복구·화면 조작·시험 전략 현행화 |
+| `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md` | 이벤트 흐름·터미널 복구·화면 조작·시험 전략 현행화 |
 
 ---
 
@@ -47,7 +47,7 @@
 - Modify: `src/tui.rs:51-101`
 - Modify: `src/tui.rs:177-183`
 - Test: `src/tui.rs:235-267`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:340-350`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md:340-350`
 
 **Interfaces:**
 - Consumes: 기존 `execute_tracked<W, C>(writer: &mut W, active: &mut bool, command: C) -> io::Result<()>`, `TerminalSession::restore(&mut self)`, `best_effort_restore_terminal()`
@@ -141,7 +141,7 @@ Expected: 기존 `tracked_command_marks_state_when_flush_fails_after_write`와 �
 
 - [ ] **Step 5: 터미널 수명주기 문서 동기화**
 
-`docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`의 터미널 안전성에 다음 문단을 추가한다.
+`docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md`의 터미널 안전성에 다음 문단을 추가한다.
 
 ```markdown
 마우스 캡처는 raw mode, alternate screen, bracketed paste 다음에 활성화하고
@@ -153,7 +153,7 @@ disable 순서다.
 - [ ] **Step 6: 첫 변경 커밋**
 
 ```bash
-git add src/tui.rs docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+git add src/tui.rs docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git commit -m "feat(tui): 마우스 캡처 수명주기"
 ```
 
@@ -168,7 +168,7 @@ git commit -m "feat(tui): 마우스 캡처 수명주기"
 - Test: `src/tui/state.rs:1113-1333`
 - Modify: `src/tui/render.rs:1-18,94-264,354-405,648-731`
 - Test: `src/tui/render.rs:751-874,945-1019,1860-1892`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:134-185,204-220`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md:134-185,204-220`
 
 **Interfaces:**
 - Consumes: `Rect::contains(Position) -> bool`, `App::mark_dirty()`, 기존 패널 렌더 함수와 `draw_if_dirty`
@@ -572,7 +572,7 @@ Expected: 기존 zoom·focus 연동 시험이 통과한다.
 
 - [ ] **Step 10: 이벤트 흐름과 클릭 문서 동기화**
 
-`docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`의 상태·이벤트 흐름과 화면 조작에 다음 문단을 추가한다.
+`docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md`의 상태·이벤트 흐름과 화면 조작에 다음 문단을 추가한다.
 
 ```markdown
 `tui.rs`는 Crossterm 마우스 이벤트를 `AppEvent::Mouse`로 전달한다. 렌더러는 매
@@ -587,7 +587,7 @@ Input 클릭은 caret과 selection을 바꾸지 않으며 Output 클릭은 복�
 - [ ] **Step 11: 두 번째 변경 커밋**
 
 ```bash
-git add src/tui.rs src/tui/state.rs src/tui/render.rs docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+git add src/tui.rs src/tui/state.rs src/tui/render.rs docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git commit -m "feat(tui): 마우스 패널 탐색"
 ```
 
@@ -601,7 +601,7 @@ git commit -m "feat(tui): 마우스 패널 탐색"
 - Modify: `src/tui/render.rs:354-665`
 - Test: `src/tui/render.rs:1087-1305,2023-2074`
 - Modify: `README.md:50-75`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:204-277,326-352`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md:204-277,326-352`
 
 **Interfaces:**
 - Consumes: Task 2의 `MouseRegions`·`App::handle_mouse(MouseEvent, Instant)`, 기존 `App::handle_modal_key(KeyEvent, Instant)`, `App::handle_pipeline_key(KeyEvent, Instant)`, `App::scroll_output(i8, usize)`
@@ -1285,7 +1285,7 @@ Expected: `[Esc Close]`를 포함한 40×10 Help가 통과한다.
 `README.md`의 TUI 단축키 목록 다음에 아래 문단을 추가한다.
 
 ```markdown
-마우스는 `doop tui` 실행 중 항상 활성화됩니다. 패널 클릭은 포커스를 바꾸고,
+마우스는 `toc tui` 실행 중 항상 활성화됩니다. 패널 클릭은 포커스를 바꾸고,
 Pipeline과 Add Transform 항목 클릭은 표시된 항목을 선택합니다. Output 휠은
 결과를 스크롤하고 Pipeline·Add Transform 휠은 선택을 한 항목씩 이동합니다.
 Modal에서는 대괄호로 표시된 Add·Confirm·Cancel·Close만 클릭할 수 있습니다.
@@ -1294,7 +1294,7 @@ Input caret 이동, 드래그 선택, Output 마우스 복사와 Pipeline 직접
 키보드 조작은 마우스를 보고하지 않는 터미널에서도 그대로 사용할 수 있습니다.
 ```
 
-`docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`의 화면 조작과 도움말 설명에 다음 문단을 추가한다.
+`docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md`의 화면 조작과 도움말 설명에 다음 문단을 추가한다.
 
 ```markdown
 Modal이 열려 있으면 Modal 영역만 입력 판정에 사용한다. Pipeline·Input·Output의
@@ -1312,7 +1312,7 @@ Output의 focus-only 클릭·휠 스크롤을 안내한다. compact Help와 두 
 - [ ] **Step 14: 세 번째 변경 커밋**
 
 ```bash
-git add src/tui/state.rs src/tui/render.rs README.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+git add src/tui/state.rs src/tui/render.rs README.md docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git commit -m "feat(tui): 마우스 모달과 스크롤"
 ```
 
@@ -1323,7 +1323,7 @@ git commit -m "feat(tui): 마우스 모달과 스크롤"
 **Files:**
 - Modify: `tests/shell-smoke.sh:175-305`
 - Modify: `README.md:102-115`
-- Modify: `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md:397-408`
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md:397-408`
 
 **Interfaces:**
 - Consumes: Task 1의 캡처 수명주기, Task 2의 SGR click 전달, Task 3의 Modal·wheel 처리와 기존 Expect `expect_exact` helper
@@ -1434,7 +1434,7 @@ Expected: `ccc index`가 변경된 Rust·Shell·Markdown 파일을 오류 없이
 - [ ] **Step 9: 최종 변경 커밋**
 
 ```bash
-git add tests/shell-smoke.sh README.md docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md
+git add tests/shell-smoke.sh README.md docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md
 git commit -m "test(tui): 마우스 통합 검증"
 ```
 

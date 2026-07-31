@@ -1,4 +1,4 @@
-# doop 안정화·단순화 설계
+# toc 안정화·단순화 설계
 
 * **작성일:** 2026-07-31
 * **상태:** 사용자 승인·구현 완료
@@ -11,7 +11,7 @@
 
 # 1. 목적
 
-이 설계는 현재 doop의 공개 동작과 단일 Cargo 패키지 구조를 유지하면서 확인된 표시 결함, 불필요한 자원 사용, 작업자 종료 처리와 과거 문서 중복을 정리한다.
+이 설계는 현재 toc의 공개 동작과 단일 Cargo 패키지 구조를 유지하면서 확인된 표시 결함, 불필요한 자원 사용, 작업자 종료 처리와 과거 문서 중복을 정리한다.
 
 대규모 재작성이나 추측 기반 최적화는 하지 않는다. 확실한 결함과 낭비는 발생 지점에서 고치고, TUI 입력 처리와 UTF-8 검사는 릴리스 측정 결과가 기준을 넘을 때만 최적화한다.
 
@@ -138,7 +138,7 @@ UTF-8 판정이 기준을 넘으면 작업자가 성공 결과의 UTF-8 여부�
 
 # 9. 클립보드 Smoke 단순화
 
-제품의 클립보드 복사 동작은 변경하지 않는다. 변경 대상은 `DOOP_SMOKE_CLIPBOARD_MODE=macos` 시험뿐이다.
+제품의 클립보드 복사 동작은 변경하지 않는다. 변경 대상은 `TOC_SMOKE_CLIPBOARD_MODE=macos` 시험뿐이다.
 
 제거 항목은 다음과 같다.
 
@@ -168,11 +168,11 @@ macOS 경로는 TUI에서 바이너리 결과를 복사한 뒤 `pbpaste`로 소�
 구현이 끝난 다음 과거 구현 계획 다섯 개를 작업 트리에서 삭제한다.
 
 ```text
-docs/superpowers/plans/2026-07-29-doop-v0.1.md
-docs/superpowers/plans/2026-07-29-doop-v0.2-hex.md
-docs/superpowers/plans/2026-07-30-doop-full-audit-refactor.md
-docs/superpowers/plans/2026-07-30-doop-v0.1-hardening.md
-docs/superpowers/plans/2026-07-31-doop-tui-workbench.md
+docs/superpowers/plans/2026-07-29-toc-v0.1.md
+docs/superpowers/plans/2026-07-29-toc-v0.2-hex.md
+docs/superpowers/plans/2026-07-30-toc-full-audit-refactor.md
+docs/superpowers/plans/2026-07-30-toc-v0.1-hardening.md
+docs/superpowers/plans/2026-07-31-toc-tui-workbench.md
 ```
 
 삭제한 계획은 Git 이력으로 보존한다. 새 구현 계획은 현재 작업이 끝날 때까지 유지한다.
@@ -207,7 +207,7 @@ Bash·Zsh shell smoke
 ccc index
 ```
 
-2026-07-31 같은 macOS 환경의 최종 리뷰에서 `cargo test --all-targets --all-features --locked`를 다시 실행했다. 일반 시험은 라이브러리 223개 통과·3개 무시와 CLI 통합 15개 통과로 합계 238개 통과·3개 무시였다. 형식, 경고 금지 Clippy, rustdoc, 잠금 패키징, 임시 경로 오프라인 잠금 설치, `doop 0.2.0` 실행, Bash·Zsh 기본 PTY와 실제 macOS 복사값 `ff` 확인이 통과했다. Linux 로컬 환경이 없어 미지원·X11·Wayland 경로는 미검증이며, GitHub Actions와 원격 CI는 추가하지 않는다.
+2026-07-31 같은 macOS 환경의 최종 리뷰에서 `cargo test --all-targets --all-features --locked`를 다시 실행했다. 일반 시험은 라이브러리 223개 통과·3개 무시와 CLI 통합 15개 통과로 합계 238개 통과·3개 무시였다. 형식, 경고 금지 Clippy, rustdoc, 잠금 패키징, 임시 경로 오프라인 잠금 설치, `toc 0.2.0` 실행, Bash·Zsh 기본 PTY와 실제 macOS 복사값 `ff` 확인이 통과했다. Linux 로컬 환경이 없어 미지원·X11·Wayland 경로는 미검증이며, GitHub Actions와 원격 CI는 추가하지 않는다.
 
 # 12. 완료 기준
 

@@ -1,9 +1,9 @@
-# doop TUI 시각·복사 경험 개선 설계
+# toc TUI 시각·복사 경험 개선 설계
 
 * **작성일:** 2026-07-31
 * **상태:** 사용자 승인·구현 완료
-* **기준 문서:** `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`
-* **대상:** `doop tui`
+* **기준 문서:** `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md`
+* **대상:** `toc tui`
 * **제품 UI 언어:** 영어
 * **프로젝트 문서 언어:** 한국어
 
@@ -34,7 +34,7 @@ Inspector, Zoom, 입력 한도와 작업자 정책은 변경하지 않는다. �
 | 항목 | 결정 |
 |---|---|
 | 기본 시각 방향 | Neon Console |
-| 상단 | 박스 없는 `>_ DOOP │ FOCUS: <PANE>` 한 줄 |
+| 상단 | 박스 없는 `>_ TOC │ FOCUS: <PANE>` 한 줄 |
 | 패널 제목 | `$ PIPELINE`, `> INPUT`, `» OUTPUT / <SOURCE> / <VIEW>` |
 | 패널 테두리 | 굵은 테두리와 포커스 색상 |
 | Pipeline 활성화 | `[ON]`, `[OFF]`를 정확히 한 번만 표시 |
@@ -101,7 +101,7 @@ Pipeline 행은 활성화 여부와 실행 결과를 서로 다른 위치에서 
 상단에는 박스를 만들지 않고 앱 타이틀과 현재 포커스를 구분자로 나눈다.
 
 ```text
->_ DOOP  │  FOCUS: OUTPUT
+>_ TOC  │  FOCUS: OUTPUT
 ```
 
 기존 Navigation과 Step Summary 상단 줄은 제거한다. 패널은 승인된

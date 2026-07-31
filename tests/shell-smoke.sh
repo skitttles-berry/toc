@@ -7,7 +7,7 @@ case "$smoke_target_dir" in
     /*) ;;
     *) smoke_target_dir="$PWD/$smoke_target_dir" ;;
 esac
-smoke_bin="$smoke_target_dir/debug/doop"
+smoke_bin="$smoke_target_dir/debug/toc"
 
 smoke_tmp=
 smoke_input=
@@ -44,7 +44,7 @@ handle_signal() {
     exit 1
 }
 
-smoke_tmp=$(mktemp -d "${TMPDIR:-/tmp}/doop-smoke.XXXXXX")
+smoke_tmp=$(mktemp -d "${TMPDIR:-/tmp}/toc-smoke.XXXXXX")
 trap cleanup EXIT
 trap handle_signal HUP INT TERM
 smoke_input="$smoke_tmp/input.txt"
@@ -76,11 +76,11 @@ assert_eq() {
 }
 
 pty_run() {
-    export DOOP_SMOKE_PTY_COMMAND="$1"
+    export TOC_SMOKE_PTY_COMMAND="$1"
     expect -c '
         log_user 1
         set timeout 15
-        spawn -noecho $env(DOOP_SMOKE_SHELL) -c $env(DOOP_SMOKE_PTY_COMMAND)
+        spawn -noecho $env(TOC_SMOKE_SHELL) -c $env(TOC_SMOKE_PTY_COMMAND)
         expect {
             eof {}
             timeout { exit 86 }
@@ -94,7 +94,7 @@ pty_run() {
 }
 
 tui_run() {
-    export DOOP_SMOKE_TUI_MODE="$1"
+    export TOC_SMOKE_TUI_MODE="$1"
     smoke_signal_pending=false
     trap handle_pending_signal HUP INT TERM
     expect -c '
@@ -131,7 +131,7 @@ tui_run() {
             send -- "\020"
             expect_exact "Search:" 119 120
             send -- "hex-encode\r"
-            expect_exact $env(DOOP_SMOKE_TEXT_EXPECTED) 121 122
+            expect_exact $env(TOC_SMOKE_TEXT_EXPECTED) 121 122
         }
         proc prepare_binary_preview {} {
             global env spawn_id
@@ -183,19 +183,19 @@ tui_run() {
             log_user 0
             set timeout 15
             set command {
-                case "$DOOP_SMOKE_SHELL_KIND" in
+                case "$TOC_SMOKE_SHELL_KIND" in
                     bash) [ -n "${BASH_VERSION:-}" ] || exit 88 ;;
                     zsh) [ -n "${ZSH_VERSION:-}" ] || exit 88 ;;
                 esac
                 stty rows 24 columns 120 || exit 89
                 before=$(stty -g) || exit 89
-                "$DOOP_SMOKE_BIN" tui
-                doop_status=$?
+                "$TOC_SMOKE_BIN" tui
+                toc_status=$?
                 after=$(stty -g) || exit 89
                 [ "$before" = "$after" ] || exit 90
-                exit "$doop_status"
+                exit "$toc_status"
             }
-            spawn -noecho $env(DOOP_SMOKE_SHELL) -c $command
+            spawn -noecho $env(TOC_SMOKE_SHELL) -c $command
             if {[info exists spawn_out(slave,name)]} {
                 set replica $spawn_out(slave,name)
             } else {
@@ -208,7 +208,7 @@ tui_run() {
             expect_exact "INPUT" 91 92
             expect_exact "OUTPUT" 91 92
 
-            set mode $env(DOOP_SMOKE_TUI_MODE)
+            set mode $env(TOC_SMOKE_TUI_MODE)
             if {$mode eq "normal"} {
                 prepare_text_preview
                 send -- "\033\[<0;5;3M"
@@ -231,12 +231,12 @@ tui_run() {
                 send -- "\t"
                 expect_exact "PIPELINE" 140 141
                 send -- "\t"
-                expect_exact "\033\[1;20HIN" 142 143
-                expect_exact "\033\[1;23HUT" 142 143
+                expect_exact "\033\[1;19HIN" 142 143
+                expect_exact "\033\[1;22HUT" 142 143
                 stty rows 5 columns 30 < $replica
                 expect_exact "Increase" 95 96
                 stty rows 24 columns 120 < $replica
-                expect_exact $env(DOOP_SMOKE_TEXT_EXPECTED) 109 110
+                expect_exact $env(TOC_SMOKE_TEXT_EXPECTED) 109 110
                 confirm_discard
                 send -- "y"
             } elseif {$mode eq "interrupt"} {
@@ -257,7 +257,7 @@ tui_run() {
                     } copied]} {
                         exit 105
                     }
-                    if {$copied ne $env(DOOP_SMOKE_CLIPBOARD_EXPECTED)} {
+                    if {$copied ne $env(TOC_SMOKE_CLIPBOARD_EXPECTED)} {
                         exit 106
                     }
                 } elseif {$mode eq "macos"} {
@@ -271,7 +271,7 @@ tui_run() {
                         timeout { exit 128 }
                     }
                     set copied [read_clipboard macos 124]
-                    if {$copied ne $env(DOOP_SMOKE_CLIPBOARD_EXPECTED)} {
+                    if {$copied ne $env(TOC_SMOKE_CLIPBOARD_EXPECTED)} {
                         exit 125
                     }
                 } elseif {$mode eq "wayland"} {
@@ -285,7 +285,7 @@ tui_run() {
                         timeout { exit 129 }
                     }
                     set copied [read_clipboard wayland 126]
-                    if {$copied ne $env(DOOP_SMOKE_CLIPBOARD_EXPECTED)} {
+                    if {$copied ne $env(TOC_SMOKE_CLIPBOARD_EXPECTED)} {
                         exit 127
                     }
                 } else {
@@ -332,16 +332,21 @@ esac
 
 command -v expect >/dev/null 2>&1 || fail "expect command is required"
 export CARGO_TARGET_DIR="$smoke_target_dir"
-export DOOP_SMOKE_SHELL="$smoke_shell"
-export DOOP_SMOKE_SHELL_KIND="$smoke_shell_kind"
-export DOOP_SMOKE_BIN="$smoke_bin"
-export DOOP_SMOKE_INPUT="$smoke_input"
-export DOOP_SMOKE_OUTPUT="$smoke_output"
-export DOOP_SMOKE_ERROR="$smoke_error"
-export DOOP_SMOKE_TEXT_EXPECTED="$smoke_text_expected"
-export DOOP_SMOKE_CLIPBOARD_EXPECTED="$smoke_clipboard_expected"
+export TOC_SMOKE_SHELL="$smoke_shell"
+export TOC_SMOKE_SHELL_KIND="$smoke_shell_kind"
+export TOC_SMOKE_BIN="$smoke_bin"
+export TOC_SMOKE_INPUT="$smoke_input"
+export TOC_SMOKE_OUTPUT="$smoke_output"
+export TOC_SMOKE_ERROR="$smoke_error"
+export TOC_SMOKE_TEXT_EXPECTED="$smoke_text_expected"
+export TOC_SMOKE_CLIPBOARD_EXPECTED="$smoke_clipboard_expected"
 cargo build --manifest-path "$smoke_root/Cargo.toml" >/dev/null
 [ -x "$smoke_bin" ] || fail "cargo did not create the expected binary"
+actual=$("$smoke_bin" --help)
+case "$actual" in
+    *"TUI Object Converter"*) ;;
+    *) fail "root help omitted the full product name" ;;
+esac
 
 actual=$(printf 'hello' | "$smoke_bin" base64-encode)
 assert_eq 'aGVsbG8=' "$actual" "pipe input"
@@ -354,7 +359,7 @@ assert_eq '4869' "$actual" "hex encode pipe input"
 
 printf '\xffA' >"$smoke_input"
 pty_run '
-    "$DOOP_SMOKE_BIN" hex-encode --input "$DOOP_SMOKE_INPUT" >"$DOOP_SMOKE_OUTPUT"
+    "$TOC_SMOKE_BIN" hex-encode --input "$TOC_SMOKE_INPUT" >"$TOC_SMOKE_OUTPUT"
 ' \
     >/dev/null </dev/null
 actual=$(<"$smoke_output")
@@ -371,11 +376,11 @@ assert_eq "$expected" "$actual" "transform chain"
 
 printf 'file' >"$smoke_input"
 pty_run '
-    case "$DOOP_SMOKE_SHELL_KIND" in
+    case "$TOC_SMOKE_SHELL_KIND" in
         bash) [ -n "${BASH_VERSION:-}" ] || exit 88 ;;
         zsh) [ -n "${ZSH_VERSION:-}" ] || exit 88 ;;
     esac
-    "$DOOP_SMOKE_BIN" base64-encode --input "$DOOP_SMOKE_INPUT" >"$DOOP_SMOKE_OUTPUT"
+    "$TOC_SMOKE_BIN" base64-encode --input "$TOC_SMOKE_INPUT" >"$TOC_SMOKE_OUTPUT"
 ' \
     >/dev/null </dev/null
 actual=$(<"$smoke_output")
@@ -394,7 +399,7 @@ printf '411b5b324a' >"$smoke_input"
 : >"$smoke_output"
 : >"$smoke_error"
 set +e
-pty_run '"$DOOP_SMOKE_BIN" hex-decode --input "$DOOP_SMOKE_INPUT" 2>"$DOOP_SMOKE_ERROR"' \
+pty_run '"$TOC_SMOKE_BIN" hex-decode --input "$TOC_SMOKE_INPUT" 2>"$TOC_SMOKE_ERROR"' \
     >"$smoke_output" </dev/null
 exit_status=$?
 set -e
@@ -406,7 +411,7 @@ assert_eq "$expected" "$actual" "unsafe terminal output message"
 
 : >"$smoke_error"
 set +e
-pty_run '"$DOOP_SMOKE_BIN" hex-decode --input "$DOOP_SMOKE_INPUT" >"$DOOP_SMOKE_OUTPUT" 2>"$DOOP_SMOKE_ERROR"' \
+pty_run '"$TOC_SMOKE_BIN" hex-decode --input "$TOC_SMOKE_INPUT" >"$TOC_SMOKE_OUTPUT" 2>"$TOC_SMOKE_ERROR"' \
     >/dev/null </dev/null
 exit_status=$?
 set -e
@@ -417,11 +422,11 @@ cmp -s "$smoke_expected" "$smoke_output" ||
     fail "redirected unsafe output did not preserve control bytes"
 
 smoke_missing=$(printf '%s/missing\n\033[2J' "$smoke_tmp")
-export DOOP_SMOKE_MISSING="$smoke_missing"
+export TOC_SMOKE_MISSING="$smoke_missing"
 : >"$smoke_output"
 : >"$smoke_error"
 set +e
-pty_run '"$DOOP_SMOKE_BIN" hex-encode --input "$DOOP_SMOKE_MISSING" 2>"$DOOP_SMOKE_ERROR"' \
+pty_run '"$TOC_SMOKE_BIN" hex-encode --input "$TOC_SMOKE_MISSING" 2>"$TOC_SMOKE_ERROR"' \
     >"$smoke_output" </dev/null
 exit_status=$?
 set -e
@@ -459,7 +464,7 @@ if [ "$smoke_os" = Linux ]; then
     : >"$smoke_output"
     : >"$smoke_error"
     set +e
-    pty_run '"$DOOP_SMOKE_BIN" base64-encode --input "$DOOP_SMOKE_INPUT" > /dev/full 2>"$DOOP_SMOKE_ERROR"' \
+    pty_run '"$TOC_SMOKE_BIN" base64-encode --input "$TOC_SMOKE_INPUT" > /dev/full 2>"$TOC_SMOKE_ERROR"' \
         >"$smoke_output" </dev/null
     exit_status=$?
     set -e
@@ -481,7 +486,7 @@ exit_status=$?
 set -e
 assert_eq '130' "$exit_status" "TUI interrupt and terminal restoration"
 
-case "${DOOP_SMOKE_CLIPBOARD_MODE:-skip}" in
+case "${TOC_SMOKE_CLIPBOARD_MODE:-skip}" in
     skip) ;;
     unavailable)
         [ "$smoke_os" = Linux ] || fail "unavailable clipboard smoke requires Linux"
