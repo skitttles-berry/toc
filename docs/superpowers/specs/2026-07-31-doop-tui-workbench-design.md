@@ -159,6 +159,10 @@ App
 └── dirty
 ```
 
+`tui.rs`는 Crossterm 마우스 이벤트를 `AppEvent::Mouse`로 전달한다. 렌더러는 매
+프레임 실제로 표시한 패널과 Pipeline 행의 `Rect`만 `MouseRegions`에 저장하며,
+resize·zoom 뒤 이전 좌표를 유지하지 않는다.
+
 ## 4.2 지연 실행
 
 Input 또는 Pipeline이 변경되면 최종 결과 요청을 예약한다.
@@ -220,6 +224,10 @@ Pipeline, Input, Output을 차례대로 30%, 30%, 40%로 쌓아 표시한다. `T
 편집기와 결과를 렌더링하지 않고 터미널 크기를 늘리라는 안내만 표시한다.
 
 높이 12행 이상에서는 각 패널에 최소 3개의 테두리 행을 남긴다. Pipeline 실패, 취소 또는 일반 상태는 Footer 첫째 줄만 대체하며, 둘째 줄 공통 도움말은 항상 표시한다.
+
+패널 클릭은 포커스만 바꾸고 Pipeline의 실제 표시 행 클릭은 선택도 바꾼다.
+Input 클릭은 caret과 selection을 바꾸지 않으며 Output 클릭은 복사, View와
+결과 원본을 바꾸지 않는다.
 
 ## 5.2 스타일과 접근성
 

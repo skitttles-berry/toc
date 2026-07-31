@@ -158,6 +158,9 @@ fn run_loop(
                 crossterm::event::Event::Paste(text) => {
                     effects.extend(app.handle_event(AppEvent::Paste(text, Instant::now())));
                 }
+                crossterm::event::Event::Mouse(mouse) => {
+                    effects.extend(app.handle_event(AppEvent::Mouse(mouse, Instant::now())));
+                }
                 crossterm::event::Event::Resize(_, _) => {
                     effects.extend(app.handle_event(AppEvent::Resize));
                 }

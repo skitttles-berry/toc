@@ -10,7 +10,7 @@ use ratatui::{
 use crate::{error::AppError, pipeline::StepStatus};
 
 use super::{
-    state::{App, Modal, OutputSource, OutputStatus, Pane},
+    state::{App, Modal, MouseRegions, OutputSource, OutputStatus, Pane},
     views::{
         EffectiveView, TEXT_VIEW_UNAVAILABLE_MESSAGE, ViewMode, effective_view, render_hex_window,
         render_pipeline_error_summary, render_text_window, render_trace_window,
@@ -93,13 +93,19 @@ fn source_label(source: OutputSource) -> String {
     }
 }
 
-fn render_input(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+fn render_input(
+    frame: &mut Frame<'_>,
+    app: &mut App,
+    area: Rect,
+    mouse_regions: &mut MouseRegions,
+) {
+    mouse_regions.input = Some(area);
     let block = pane_block(app, "> INPUT", app.focus == Pane::Input);
     app.textarea.set_block(block);
     frame.render_widget(&app.textarea, area);
 }
 
-fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect, mouse_regions: &mut MouseRegions) {
     let source = source_label(app.output.source);
     let view = match app.output.view {
         ViewMode::Smart => "Smart",
@@ -110,6 +116,8 @@ fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let title = format!("» OUTPUT / {source} / {}", view.to_ascii_uppercase());
     let block = pane_block(app, &title, app.focus == Pane::Output);
     let inner = block.inner(area);
+    mouse_regions.output = Some(area);
+    mouse_regions.output_content = Some(inner);
     frame.render_widget(block, area);
 
     let rows = inner.height as usize;
@@ -182,9 +190,17 @@ fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(text).style(Style::default()), inner);
 }
 
-fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: bool) {
+fn render_pipeline(
+    frame: &mut Frame<'_>,
+    app: &App,
+    area: Rect,
+    show_sizes: bool,
+    mouse_regions: &mut MouseRegions,
+) {
     let block = pane_block(app, "$ PIPELINE", app.focus == Pane::Pipeline);
     let inner = block.inner(area);
+    mouse_regions.pipeline = Some(area);
+    mouse_regions.pipeline_content = Some(inner);
     frame.render_widget(block, area);
 
     let available = inner.height as usize;
@@ -260,6 +276,18 @@ fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: boo
             ))
         })
         .collect();
+    mouse_regions
+        .pipeline_rows
+        .extend(
+            (start..start + items.len())
+                .enumerate()
+                .map(|(row, index)| {
+                    (
+                        Rect::new(inner.x, inner.y + row as u16, inner.width, 1),
+                        index,
+                    )
+                }),
+        );
     frame.render_widget(List::new(items).style(Style::default()), inner);
 }
 
@@ -342,11 +370,12 @@ fn render_focused_pane(
     area: Rect,
     pane: Pane,
     mode: WidthMode,
+    mouse_regions: &mut MouseRegions,
 ) {
     match pane {
-        Pane::Input => render_input(frame, app, area),
-        Pane::Output => render_output(frame, app, area),
-        Pane::Pipeline => render_pipeline(frame, app, area, mode == WidthMode::Wide),
+        Pane::Input => render_input(frame, app, area, mouse_regions),
+        Pane::Output => render_output(frame, app, area, mouse_regions),
+        Pane::Pipeline => render_pipeline(frame, app, area, mode == WidthMode::Wide, mouse_regions),
     }
 }
 
@@ -665,6 +694,7 @@ fn render_modal(frame: &mut Frame<'_>, app: &App) {
 fn render(frame: &mut Frame<'_>, app: &mut App) {
     let area = frame.area();
     let mode = width_mode(area);
+    let mut mouse_regions = MouseRegions::default();
     if mode == WidthMode::Tiny {
         frame.render_widget(
             Paragraph::new("Increase terminal size to at least 40×10").alignment(Alignment::Center),
@@ -676,6 +706,7 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
         ) {
             render_modal(frame, app);
         }
+        app.mouse_regions = mouse_regions;
         return;
     }
 
@@ -690,7 +721,7 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
 
     let focused = app.zoom.unwrap_or(app.focus);
     if area.height < 12 || app.zoom.is_some() {
-        render_focused_pane(frame, app, content, focused, mode);
+        render_focused_pane(frame, app, content, focused, mode, &mut mouse_regions);
     } else if mode == WidthMode::Narrow {
         let [pipeline_rows, input_rows, output_rows] = stacked_pane_heights(content.height);
         let [pipeline, input, output] = Layout::vertical([
@@ -699,9 +730,9 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
             Constraint::Length(output_rows),
         ])
         .areas(content);
-        render_pipeline(frame, app, pipeline, false);
-        render_input(frame, app, input);
-        render_output(frame, app, output);
+        render_pipeline(frame, app, pipeline, false, &mut mouse_regions);
+        render_input(frame, app, input, &mut mouse_regions);
+        render_output(frame, app, output, &mut mouse_regions);
     } else {
         let pipeline_columns = pipeline_width(area.width, mode);
         let [pipeline, right] =
@@ -711,12 +742,19 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
         let input_rows = input_rows.clamp(3, right.height.saturating_sub(3));
         let [input, output] =
             Layout::vertical([Constraint::Length(input_rows), Constraint::Min(3)]).areas(right);
-        render_pipeline(frame, app, pipeline, mode == WidthMode::Wide);
-        render_input(frame, app, input);
-        render_output(frame, app, output);
+        render_pipeline(
+            frame,
+            app,
+            pipeline,
+            mode == WidthMode::Wide,
+            &mut mouse_regions,
+        );
+        render_input(frame, app, input, &mut mouse_regions);
+        render_output(frame, app, output, &mut mouse_regions);
     }
     render_footer(frame, app, focused_help, common_help);
     render_modal(frame, app);
+    app.mouse_regions = mouse_regions;
 }
 
 pub(super) fn draw_if_dirty<B: Backend>(
@@ -792,6 +830,65 @@ mod tests {
             .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn render_records_only_visible_panes_and_exact_pipeline_rows() {
+        let mut app = App::new(now(), true);
+        app.steps = (0..12)
+            .map(|_| TransformStep {
+                definition: transform_by_id("base64-encode").unwrap(),
+                enabled: true,
+            })
+            .collect();
+        app.selected_step = 11;
+
+        rendered_app(80, 24, &mut app);
+        let pipeline = app.mouse_regions.pipeline.unwrap();
+        let input = app.mouse_regions.input.unwrap();
+        let output = app.mouse_regions.output.unwrap();
+        assert!(pipeline.y < input.y);
+        assert!(input.y < output.y);
+        assert_eq!(app.mouse_regions.pipeline_rows.last().unwrap().1, 11);
+        let visible_indices = app
+            .mouse_regions
+            .pipeline_rows
+            .iter()
+            .map(|(_, index)| *index)
+            .collect::<Vec<_>>();
+        assert_eq!(visible_indices.last(), Some(&11));
+        assert_eq!(
+            visible_indices[visible_indices.len() / 2],
+            visible_indices[0] + visible_indices.len() / 2
+        );
+        assert!(
+            app.mouse_regions
+                .pipeline_rows
+                .windows(2)
+                .all(|rows| rows[0].0.y + 1 == rows[1].0.y)
+        );
+
+        for width in [90, 120] {
+            rendered_app(width, 24, &mut app);
+            let pipeline = app.mouse_regions.pipeline.unwrap();
+            let input = app.mouse_regions.input.unwrap();
+            let output = app.mouse_regions.output.unwrap();
+            assert!(pipeline.x < input.x);
+            assert_eq!(input.x, output.x);
+        }
+
+        app.zoom = Some(Pane::Output);
+        rendered_app(120, 24, &mut app);
+        assert!(app.mouse_regions.output.is_some());
+        assert!(app.mouse_regions.input.is_none());
+        assert!(app.mouse_regions.pipeline.is_none());
+        assert!(app.mouse_regions.pipeline_rows.is_empty());
+
+        app.zoom = None;
+        rendered_app(39, 24, &mut app);
+        assert!(app.mouse_regions.input.is_none());
+        assert!(app.mouse_regions.output.is_none());
+        assert!(app.mouse_regions.pipeline.is_none());
     }
 
     fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, now: Instant) {

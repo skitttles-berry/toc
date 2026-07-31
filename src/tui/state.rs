@@ -1,7 +1,10 @@
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::style::{Color, Modifier, Style};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::{
+    layout::{Position, Rect},
+    style::{Color, Modifier, Style},
+};
 use tui_textarea::{TextArea, WrapMode};
 
 use crate::{
@@ -147,6 +150,23 @@ pub(super) struct OutputState {
     pub(super) row_offset: usize,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+pub(super) struct MouseRegions {
+    pub(super) pipeline: Option<Rect>,
+    pub(super) input: Option<Rect>,
+    pub(super) output: Option<Rect>,
+    pub(super) pipeline_content: Option<Rect>,
+    pub(super) output_content: Option<Rect>,
+    pub(super) pipeline_rows: Vec<(Rect, usize)>,
+    pub(super) picker_content: Option<Rect>,
+    pub(super) picker_rows: Vec<(Rect, usize)>,
+    pub(super) add_action: Option<Rect>,
+    pub(super) confirm_action: Option<Rect>,
+    pub(super) cancel_action: Option<Rect>,
+    pub(super) close_action: Option<Rect>,
+}
+
 pub(super) enum Modal {
     TransformPicker { query: String, selected: usize },
     StepInspector,
@@ -157,6 +177,7 @@ pub(super) enum Modal {
 
 pub(super) enum AppEvent {
     Key(KeyEvent, Instant),
+    Mouse(MouseEvent, Instant),
     Paste(String, Instant),
     Tick(Instant),
     PreviewFinished(PreviewResult),
@@ -182,6 +203,7 @@ pub(super) struct App {
     pub(super) selected_step: usize,
     pub(super) output: OutputState,
     pub(super) request_id: u64,
+    pub(super) mouse_regions: MouseRegions,
     pub(super) modal: Option<Modal>,
     suspended_modal: Option<Modal>,
     pub(super) status: Option<String>,
@@ -241,6 +263,7 @@ impl App {
                 row_offset: 0,
             },
             request_id: 0,
+            mouse_regions: MouseRegions::default(),
             modal: None,
             suspended_modal: None,
             status: None,
@@ -666,6 +689,59 @@ impl App {
         self.mark_dirty();
     }
 
+    fn focus_pane(&mut self, pane: Pane) {
+        if self.focus == pane {
+            return;
+        }
+        self.focus = pane;
+        if self.zoom.is_some() {
+            self.zoom = Some(pane);
+        }
+        self.mark_dirty();
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent, _: Instant) -> Vec<Effect> {
+        if event.modifiers != KeyModifiers::NONE || self.modal.is_some() {
+            return Vec::new();
+        }
+        let MouseEventKind::Down(MouseButton::Left) = event.kind else {
+            return Vec::new();
+        };
+        let position = Position::new(event.column, event.row);
+        let pipeline_row = self
+            .mouse_regions
+            .pipeline_rows
+            .iter()
+            .find(|(area, _)| area.contains(position))
+            .map(|(_, index)| *index);
+        if self
+            .mouse_regions
+            .pipeline
+            .is_some_and(|area| area.contains(position))
+        {
+            self.focus_pane(Pane::Pipeline);
+            if let Some(index) = pipeline_row
+                && self.selected_step != index
+            {
+                self.selected_step = index;
+                self.mark_dirty();
+            }
+        } else if self
+            .mouse_regions
+            .input
+            .is_some_and(|area| area.contains(position))
+        {
+            self.focus_pane(Pane::Input);
+        } else if self
+            .mouse_regions
+            .output
+            .is_some_and(|area| area.contains(position))
+        {
+            self.focus_pane(Pane::Output);
+        }
+        Vec::new()
+    }
+
     fn toggle_zoom(&mut self, pane: Pane) {
         self.zoom = (self.zoom != Some(pane)).then_some(pane);
         self.mark_dirty();
@@ -1082,6 +1158,7 @@ impl App {
                 Vec::new()
             }
             AppEvent::Key(key, now) => self.handle_key(key, now),
+            AppEvent::Mouse(mouse, now) => self.handle_mouse(mouse, now),
             AppEvent::Resize => {
                 self.mark_dirty();
                 Vec::new()
@@ -1120,7 +1197,8 @@ mod tests {
         pipeline::{ExecutionOutcome, ExecutionReport, ExecutionTarget, StepStatus, execute},
         tui::views::{EffectiveView, effective_view},
     };
-    use crossterm::event::{KeyCode, KeyModifiers};
+    use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
 
     fn now() -> Instant {
         Instant::now()
@@ -1128,6 +1206,139 @@ mod tests {
 
     fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, now: Instant) -> Vec<Effect> {
         app.handle_event(AppEvent::Key(KeyEvent::new(code, modifiers), now))
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16, modifiers: KeyModifiers) -> AppEvent {
+        AppEvent::Mouse(
+            MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers,
+            },
+            now(),
+        )
+    }
+
+    #[test]
+    fn left_click_focuses_a_rendered_pane_and_pipeline_row_only() {
+        let mut app = App::new(now(), true);
+        app.steps = ["base64-encode", "base64-decode"]
+            .into_iter()
+            .map(|id| TransformStep {
+                definition: transform_by_id(id).unwrap(),
+                enabled: true,
+            })
+            .collect();
+        app.selected_step = 0;
+        app.mouse_regions.input = Some(Rect::new(20, 1, 20, 8));
+        app.mouse_regions.output = Some(Rect::new(20, 9, 20, 10));
+        app.mouse_regions.pipeline = Some(Rect::new(0, 1, 20, 18));
+        app.mouse_regions.pipeline_rows =
+            vec![(Rect::new(1, 2, 18, 1), 0), (Rect::new(1, 3, 18, 1), 1)];
+        let input_cursor = app.textarea.cursor();
+        app.take_dirty();
+
+        assert!(
+            app.handle_event(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                5,
+                3,
+                KeyModifiers::NONE,
+            ))
+            .is_empty()
+        );
+        assert_eq!(app.focus, Pane::Pipeline);
+        assert_eq!(app.selected_step, 1);
+        assert!(app.take_dirty());
+
+        app.handle_event(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            20,
+            1,
+            KeyModifiers::NONE,
+        ));
+        assert_eq!(app.focus, Pane::Input);
+        assert_eq!(app.selected_step, 1);
+        assert_eq!(app.textarea.cursor(), input_cursor);
+
+        let source = app.output.source;
+        let view = app.output.view;
+        assert!(
+            app.handle_event(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                21,
+                10,
+                KeyModifiers::NONE,
+            ))
+            .is_empty()
+        );
+        assert_eq!(app.focus, Pane::Output);
+        assert_eq!(app.output.source, source);
+        assert_eq!(app.output.view, view);
+
+        app.handle_event(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            0,
+            1,
+            KeyModifiers::NONE,
+        ));
+        assert_eq!(app.focus, Pane::Pipeline);
+        assert_eq!(app.selected_step, 1);
+    }
+
+    #[test]
+    fn unsupported_or_outside_mouse_events_are_true_no_ops() {
+        let mut app = App::new(now(), true);
+        app.mouse_regions.input = Some(Rect::new(0, 0, 10, 5));
+        app.take_dirty();
+
+        for event in [
+            mouse(MouseEventKind::Moved, 1, 1, KeyModifiers::NONE),
+            mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                1,
+                1,
+                KeyModifiers::NONE,
+            ),
+            mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                1,
+                1,
+                KeyModifiers::NONE,
+            ),
+            mouse(
+                MouseEventKind::Down(MouseButton::Right),
+                1,
+                1,
+                KeyModifiers::NONE,
+            ),
+            mouse(
+                MouseEventKind::Down(MouseButton::Middle),
+                1,
+                1,
+                KeyModifiers::NONE,
+            ),
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                1,
+                1,
+                KeyModifiers::SHIFT,
+            ),
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                30,
+                30,
+                KeyModifiers::NONE,
+            ),
+            mouse(MouseEventKind::ScrollDown, 1, 1, KeyModifiers::SHIFT),
+            mouse(MouseEventKind::ScrollDown, 30, 30, KeyModifiers::NONE),
+            mouse(MouseEventKind::ScrollLeft, 1, 1, KeyModifiers::NONE),
+        ] {
+            assert!(app.handle_event(event).is_empty());
+            assert!(!app.take_dirty());
+        }
+        assert_eq!(app.focus, Pane::Input);
     }
 
     #[test]
