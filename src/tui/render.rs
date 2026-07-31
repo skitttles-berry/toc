@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Clear, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, Wrap},
 };
 
 use crate::{error::AppError, pipeline::StepStatus};
@@ -215,10 +215,7 @@ fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: boo
             } else if matches!(app.output.status, OutputStatus::Running)
                 && matches!(app.output.source, OutputSource::Step(target) if target == index)
             {
-                let text = format!(
-                    "{prefix} [{enabled}] › RUNNING {}",
-                    step.definition.display_name
-                );
+                let text = format!("{prefix} [{enabled}]  › {}", step.definition.display_name);
                 return ListItem::new(Span::styled(
                     text,
                     if selected {
@@ -232,12 +229,12 @@ fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: boo
             } else {
                 StepStatus::NotExecuted
             };
-            let (mark, label, color) = match status {
-                StepStatus::Succeeded => ("✓ ", "OK", Color::Green),
-                StepStatus::Disabled => ("○ ", "OFF", Color::DarkGray),
-                StepStatus::Failed => ("× ", "ERROR", Color::Red),
-                StepStatus::NotExecuted => ("· ", "NOT RUN", Color::DarkGray),
-                StepStatus::Cancelled => ("− ", "CANCELLED", Color::Yellow),
+            let (mark, color) = match status {
+                StepStatus::Succeeded => ("✓ ", Color::Green),
+                StepStatus::Disabled => (" ", Color::DarkGray),
+                StepStatus::Failed => ("× ", Color::Red),
+                StepStatus::NotExecuted => ("· ", Color::DarkGray),
+                StepStatus::Cancelled => ("− ", Color::Yellow),
             };
             let sizes = if show_sizes {
                 trace
@@ -248,7 +245,7 @@ fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: boo
                 String::new()
             };
             let text = format!(
-                "{prefix} [{enabled}] {mark}{label} {}{sizes}",
+                "{prefix} [{enabled}]  {mark}{}{sizes}",
                 step.definition.display_name
             );
             ListItem::new(Span::styled(
@@ -372,6 +369,10 @@ fn input_condition(accepts_binary: bool) -> &'static str {
     }
 }
 
+fn separator(width: u16) -> String {
+    "─".repeat(width as usize)
+}
+
 fn render_picker(frame: &mut Frame<'_>, app: &App, query: &str, selected: usize) {
     let area = centered(frame.area(), 72, 18);
     let style = if app.no_color {
@@ -380,6 +381,7 @@ fn render_picker(frame: &mut Frame<'_>, app: &App, query: &str, selected: usize)
         Style::default().fg(Color::Yellow)
     };
     let block = Block::bordered()
+        .border_type(BorderType::Thick)
         .title("Add transform")
         .style(Style::default())
         .border_style(style)
@@ -387,10 +389,22 @@ fn render_picker(frame: &mut Frame<'_>, app: &App, query: &str, selected: usize)
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
-    let [query_area, list_area, detail_area, hint_area] = Layout::vertical([
+    let compact = inner.height < 14;
+    let detail_rows = if compact { 0 } else { 4 };
+    let detail_separator_rows = if compact { 0 } else { 1 };
+    let [
+        query_area,
+        list_area,
+        detail_separator,
+        detail_area,
+        hint_separator,
+        hint_area,
+    ] = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Length(8),
-        Constraint::Min(1),
+        Constraint::Min(2),
+        Constraint::Length(detail_separator_rows),
+        Constraint::Length(detail_rows),
+        Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(inner);
@@ -408,15 +422,13 @@ fn render_picker(frame: &mut Frame<'_>, app: &App, query: &str, selected: usize)
         || "No matching transforms".to_string(),
         |transform| {
             format!(
-                "ID: {}\n{}\nCLI description: {}\nCLI behavior: {}\nTUI result: bytes; Smart uses Text or Hex",
-                transform.id,
+                "INPUT     {}\nBEHAVIOR  {}\nTUI       Result remains bytes; Smart selects Text or Hex",
                 input_condition(transform.accepts_binary),
-                transform.description,
                 transform.behavior,
             )
         },
     );
-    let available = list_area.height as usize;
+    let available = (list_area.height as usize / 2).max(1);
     let start = if selected >= available {
         selected + 1 - available
     } else {
@@ -428,31 +440,43 @@ fn render_picker(frame: &mut Frame<'_>, app: &App, query: &str, selected: usize)
         .skip(start)
         .take(available)
         .map(|(index, transform)| {
-            let selected = index == selected;
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    if selected { "> " } else { "  " },
-                    if selected {
-                        selection_style(app)
-                    } else {
-                        Style::default()
-                    },
-                ),
-                Span::styled(
-                    format!("{} ({})", transform.display_name, transform.id),
-                    if selected {
-                        selection_style(app)
-                    } else {
-                        Style::default()
-                    },
-                ),
-            ]))
+            let is_selected = index == selected;
+            let prefix = if is_selected { "> " } else { "  " };
+            let text = format!(
+                "{prefix}{}  [{}]\n  {}",
+                transform.display_name, transform.id, transform.description,
+            );
+            ListItem::new(text).style(if is_selected {
+                selection_style(app)
+            } else {
+                Style::default()
+            })
         })
         .collect();
     frame.render_widget(List::new(items).style(Style::default()), list_area);
-    frame.render_widget(Paragraph::new(detail).style(Style::default()), detail_area);
+    if !compact {
+        frame.render_widget(
+            Paragraph::new(separator(detail_separator.width)).style(Style::default()),
+            detail_separator,
+        );
+        frame.render_widget(
+            Paragraph::new(detail)
+                .style(Style::default())
+                .wrap(Wrap { trim: false }),
+            detail_area,
+        );
+    }
     frame.render_widget(
-        Paragraph::new("Enter add · Esc cancel").style(Style::default()),
+        Paragraph::new(separator(hint_separator.width)).style(Style::default()),
+        hint_separator,
+    );
+    frame.render_widget(
+        Paragraph::new(if compact {
+            "Enter Add · Esc Cancel"
+        } else {
+            "↑/↓ Select · Enter Add · Backspace Search · Esc Cancel"
+        })
+        .style(Style::default()),
         hint_area,
     );
 }
@@ -1061,30 +1085,27 @@ mod tests {
     }
 
     #[test]
-    fn palette_detail_uses_registry_metadata_and_binary_safe_tui_wording() {
+    fn add_transform_separates_item_description_detail_and_key_help() {
         let mut app = App::new(now(), true);
         app.open_picker();
 
-        let bytes = rendered_app(80, 20, &mut app);
-        assert!(bytes.contains("base64-encode"));
-        assert!(bytes.contains("Bytes accepted"));
-        assert!(bytes.contains("CLI description"));
-        assert!(bytes.contains("Encode bytes using padded RFC 4648 Base64"));
-        assert!(bytes.contains("CLI behavior"));
-        assert!(bytes.contains("canonical = padding"));
-        assert!(bytes.contains("TUI result: bytes; Smart uses Text or Hex"));
-
-        for character in "decode".chars() {
-            key(
-                &mut app,
-                KeyCode::Char(character),
-                KeyModifiers::NONE,
-                now(),
-            );
-        }
-        let text = rendered_app(80, 20, &mut app);
-        assert!(text.contains("base64-decode"));
-        assert!(text.contains("Text input"));
+        let screen = rendered_app(80, 20, &mut app);
+        assert!(screen.contains("> Base64 Encode  [base64-encode]"));
+        assert!(screen.contains("  Encode bytes using padded RFC 4648 Base64"));
+        assert!(screen.contains("INPUT"));
+        assert!(screen.contains("BEHAVIOR"));
+        assert!(screen.contains("TUI"));
+        assert!(
+            screen
+                .lines()
+                .filter(|line| line.contains("────────"))
+                .count()
+                >= 2
+        );
+        assert!(screen.contains("Enter Add"));
+        assert!(screen.contains("Esc Cancel"));
+        assert!(!screen.contains("CLI description"));
+        assert!(!screen.contains("CLI behavior"));
     }
 
     #[test]
@@ -1198,25 +1219,17 @@ mod tests {
     }
 
     #[test]
-    fn forty_by_ten_palette_keeps_search_selection_and_close_hint_visible() {
-        let start = now();
-        let mut app = App::new(start, true);
+    fn compact_add_transform_keeps_selected_description_and_close_keys() {
+        let mut app = App::new(now(), true);
         app.open_picker();
-        for character in "hex".chars() {
-            key(
-                &mut app,
-                KeyCode::Char(character),
-                KeyModifiers::NONE,
-                start,
-            );
-        }
 
         let screen = rendered_app(40, 10, &mut app);
 
-        assert!(screen.contains("Search: hex"));
-        assert!(screen.contains("Hex Encode"));
-        assert!(screen.contains("Enter add"));
-        assert!(screen.contains("Esc cancel"));
+        assert!(screen.contains("Search:"));
+        assert!(screen.contains("Base64 Encode"));
+        assert!(screen.contains("Encode bytes"));
+        assert!(screen.contains("Enter Add"));
+        assert!(screen.contains("Esc Cancel"));
     }
 
     #[test]
@@ -1495,18 +1508,8 @@ mod tests {
         assert!(!screen.contains('\u{85}'));
     }
 
-    #[test]
-    fn pipeline_rows_keep_selection_enablement_and_every_trace_state_textual() {
-        let mut app = App::new(now(), false);
-        app.focus = Pane::Pipeline;
-        app.selected_step = 1;
-        app.steps = (0..5)
-            .map(|index| TransformStep {
-                definition: transform_by_id("url-encode").unwrap(),
-                enabled: index != 2,
-            })
-            .collect();
-        app.output.traces = vec![
+    fn traces_for_all_five_states() -> Vec<StepTrace> {
+        vec![
             StepTrace {
                 step: 1,
                 transform_id: "url-encode",
@@ -1552,18 +1555,62 @@ mod tests {
                 status: StepStatus::NotExecuted,
                 error: None,
             },
-        ];
+        ]
+    }
 
-        let screen = rendered_app(120, 20, &mut app);
+    #[test]
+    fn pipeline_rows_show_enablement_once_and_one_runtime_mark() {
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Pipeline;
+        app.zoom = Some(Pane::Pipeline);
+        app.steps = (0..5)
+            .map(|index| TransformStep {
+                definition: transform_by_id("url-encode").unwrap(),
+                enabled: index != 2,
+            })
+            .collect();
+        app.output.traces = traces_for_all_five_states();
 
-        for status in ["OK", "ERROR", "OFF", "CANCELLED", "NOT RUN"] {
-            assert!(screen.contains(status));
+        let screen = rendered_app(80, 20, &mut app);
+
+        for expected in [
+            "[ON]  ✓ URL Encode",
+            "[ON]  × URL Encode",
+            "[OFF]   URL Encode",
+            "[ON]  − URL Encode",
+            "[ON]  · URL Encode",
+        ] {
+            assert!(screen.contains(expected), "missing {expected}: {screen}");
         }
-        assert!(screen.contains("> [ON]"));
-        assert!(screen.contains("[OFF]"));
-        for mark in ["✓", "×", "○", "−", "·"] {
-            assert!(screen.contains(mark));
+        for duplicate in [
+            " OK ",
+            " ERROR ",
+            " RUNNING ",
+            " NOT RUN ",
+            " CANCELLED ",
+            "○",
+        ] {
+            assert!(
+                !screen.contains(duplicate),
+                "unexpected {duplicate}: {screen}"
+            );
         }
+    }
+
+    #[test]
+    fn running_pipeline_row_uses_the_same_compact_shape_without_color() {
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Pipeline;
+        app.steps.push(TransformStep {
+            definition: transform_by_id("url-encode").unwrap(),
+            enabled: true,
+        });
+        app.output.source = OutputSource::Step(0);
+        app.output.status = OutputStatus::Running;
+
+        let screen = rendered_app(80, 16, &mut app);
+        assert!(screen.contains("[ON]  › URL Encode"));
+        assert!(!screen.contains("RUNNING"));
     }
 
     #[test]
@@ -1608,8 +1655,8 @@ mod tests {
             .find(|line| line.contains("Hex Encode"))
             .unwrap();
 
-        assert!(disabled.contains("[OFF] ○ OFF"));
-        assert!(not_run.contains("[OFF] · NOT RUN"));
+        assert!(disabled.contains("[OFF]   Base64 Encode"));
+        assert!(not_run.contains("[OFF]  · Hex Encode"));
     }
 
     #[test]
@@ -1716,7 +1763,7 @@ mod tests {
         assert!(screen.contains("» OUTPUT / FINAL / TRACE"));
         assert!(screen.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
         assert!(screen.contains("#2 hex-encode"));
-        assert!(hex_row.contains("[ON] ✓ OK"));
+        assert!(hex_row.contains("[ON]  ✓ Hex Encode"));
         assert!(!hex_row.contains("NOT RUN"));
     }
 
@@ -1731,7 +1778,7 @@ mod tests {
         app.output.source = OutputSource::Step(0);
         app.output.status = OutputStatus::Running;
         let running = rendered_app(89, 20, &mut app);
-        assert!(running.contains("› RUNNING"));
+        assert!(running.contains("[ON]  › URL Encode"));
 
         app.output.status = OutputStatus::Ready;
         app.output.traces.push(StepTrace {
@@ -1794,12 +1841,12 @@ mod tests {
             .find(|line| line.contains("JSON Prettify"))
             .unwrap();
 
-        assert!(target.contains("RUNNING"));
-        assert!(!selected.contains("RUNNING"));
+        assert!(target.contains("[ON]  › URL Encode"));
+        assert!(!selected.contains("›"));
     }
 
     #[test]
-    fn no_color_pipeline_uses_only_status_words_and_selection_markers() {
+    fn no_color_pipeline_keeps_status_and_selection_markers() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Pipeline;
         app.steps.push(TransformStep {
@@ -1811,7 +1858,7 @@ mod tests {
 
         let screen = rendered_app(89, 20, &mut app);
 
-        assert!(screen.contains("> [ON] › RUNNING"));
+        assert!(screen.contains("> [ON]  › URL Encode"));
     }
 
     #[test]
@@ -1891,7 +1938,7 @@ mod tests {
         );
     }
     #[test]
-    fn no_color_uses_default_cell_styles_and_textual_state() {
+    fn no_color_uses_default_cell_styles_and_status_marks() {
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(now(), true);
@@ -1914,7 +1961,7 @@ mod tests {
 
         let buffer = terminal.backend().buffer();
         let screen: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
-        assert!(screen.contains("[ON] › RUNNING"));
+        assert!(screen.contains("[ON]  › URL Encode"));
         assert!(screen.contains(">_ DOOP"));
         assert!(screen.contains("[COMMON]"));
         assert!(
