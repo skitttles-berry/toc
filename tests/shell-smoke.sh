@@ -215,6 +215,7 @@ tui_run() {
                 send -- "a"
                 expect_exact "Search:" 150 151
                 send -- "\033\[<0;27;8M"
+                expect_exact "\033\[6;26H \033\[8;26H>" 160 161
                 send -- "\033\[<0;40;20M"
                 expect_exact "\033\[4;12HBase64\033\[4;19HDecode" 156 157
                 send -- " "
