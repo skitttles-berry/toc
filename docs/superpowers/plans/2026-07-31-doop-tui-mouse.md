@@ -850,7 +850,8 @@ fn picker_click_selects_then_explicit_add_and_cancel_regions_act() {
         Some(Modal::TransformPicker { selected: 1, .. })
     ));
     let add = app.mouse_regions.add_action.unwrap();
-    assert!(click(&mut app, add, start).is_empty());
+    let effects = click(&mut app, add, start);
+    assert!(matches!(effects.as_slice(), [Effect::Cancel(_)]));
     assert_eq!(app.steps[0].definition.id, "base64-decode");
     assert!(app.modal.is_none());
 
@@ -1443,7 +1444,7 @@ Run:
 
 ```bash
 git status --short --branch
-git log -4 --oneline
+git log -6 --oneline
 ```
 
-Expected: status는 현재 branch 한 줄만 표시하고, 최신 네 커밋은 Task 4부터 Task 1까지 계획의 네 커밋 순서로 보인다.
+Expected: status는 현재 branch 한 줄만 표시하고, 최신 여섯 커밋에는 Task 4부터 Task 1까지의 네 구현 커밋과 사용자 승인으로 생긴 두 계획 정정 커밋이 보인다.
