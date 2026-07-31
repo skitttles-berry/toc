@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use base64::{
     DecodeError, DecodeSliceError, Engine as _, encoded_len, engine::general_purpose::STANDARD,
 };
@@ -22,11 +24,29 @@ pub fn encode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
     Ok(output)
 }
 
+fn is_ignored(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\r' | b'\n')
+}
+
+fn compact_input(input: &[u8]) -> Cow<'_, [u8]> {
+    if input.iter().copied().any(is_ignored) {
+        Cow::Owned(
+            input
+                .iter()
+                .copied()
+                .filter(|byte| !is_ignored(*byte))
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(input)
+    }
+}
+
 fn original_offset(input: &[u8], compact_offset: usize) -> usize {
     input
         .iter()
         .enumerate()
-        .filter(|(_, byte)| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+        .filter(|(_, byte)| !is_ignored(**byte))
         .nth(compact_offset)
         .map_or(input.len(), |(offset, _)| offset)
 }
@@ -43,11 +63,7 @@ fn invalid_base64(input: &[u8], error: DecodeError) -> TransformError {
 }
 
 pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
-    let compact: Vec<u8> = input
-        .iter()
-        .copied()
-        .filter(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
-        .collect();
+    let compact = compact_input(input);
 
     if !compact.len().is_multiple_of(4) {
         return Err(TransformError::InvalidBase64 {
@@ -66,7 +82,7 @@ pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
     }
     let mut decoded = vec![0; required];
     let written = STANDARD
-        .decode_slice(&compact, &mut decoded)
+        .decode_slice(compact.as_ref(), &mut decoded)
         .map_err(|error| match error {
             DecodeSliceError::DecodeError(error) => invalid_base64(input, error),
             DecodeSliceError::OutputSliceTooSmall => {
@@ -80,6 +96,19 @@ pub fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn borrows_plain_input_and_owns_only_whitespace_compaction() {
+        let plain = b"Zm9v";
+        assert!(matches!(
+            compact_input(plain),
+            Cow::Borrowed(value) if value == plain
+        ));
+        assert!(matches!(
+            compact_input(b" Zm9v\t\r\n"),
+            Cow::Owned(value) if value == b"Zm9v"
+        ));
+    }
 
     #[test]
     fn encodes_with_standard_padding() {
