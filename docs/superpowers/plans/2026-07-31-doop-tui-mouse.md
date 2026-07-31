@@ -1404,10 +1404,10 @@ Run:
 ```bash
 cargo test --all-targets --all-features --locked
 RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features
-cargo package --locked
+cargo package --locked --allow-dirty
 ```
 
-Expected: 전체 시험 실패와 rustdoc 경고가 없고 잠금 패키지가 생성된다.
+Expected: 전체 시험 실패와 rustdoc 경고가 없고, 커밋 전 추적 변경을 허용한 잠금 패키지가 생성된다.
 
 - [ ] **Step 7: Bash·Zsh PTY 검증 실행**
 
@@ -1438,13 +1438,19 @@ git add tests/shell-smoke.sh README.md docs/superpowers/specs/2026-07-31-doop-tu
 git commit -m "test(tui): 마우스 통합 검증"
 ```
 
-- [ ] **Step 10: 커밋 후 깨끗한 상태 재확인**
+- [ ] **Step 10: 커밋 후 정확한 잠금 패키징 재검증**
+
+Run: `cargo package --locked`
+
+Expected: 깨끗한 작업 트리에서 종료 코드 0으로 끝난다.
+
+- [ ] **Step 11: 커밋 후 깨끗한 상태 재확인**
 
 Run:
 
 ```bash
 git status --short --branch
-git log -6 --oneline
+git log -7 --oneline
 ```
 
-Expected: status는 현재 branch 한 줄만 표시하고, 최신 여섯 커밋에는 Task 4부터 Task 1까지의 네 구현 커밋과 사용자 승인으로 생긴 두 계획 정정 커밋이 보인다.
+Expected: status는 현재 branch 한 줄만 표시하고, 최신 일곱 커밋에는 Task 4부터 Task 1까지의 네 구현 커밋과 사용자 승인으로 생긴 세 계획 정정 커밋이 보인다.
