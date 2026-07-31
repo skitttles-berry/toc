@@ -1,7 +1,7 @@
 # doop TUI 시각·복사 경험 개선 설계
 
 * **작성일:** 2026-07-31
-* **상태:** 사용자 승인·구현 전
+* **상태:** 사용자 승인·구현 완료
 * **기준 문서:** `docs/superpowers/specs/2026-07-31-doop-tui-workbench-design.md`
 * **대상:** `doop tui`
 * **제품 UI 언어:** 영어
@@ -367,3 +367,10 @@ RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features
 * 도움말은 최하단 두 줄에만 상시 표시된다.
 * 오류와 `NO_COLOR` 환경에서 기존 보안·접근성 규약이 유지된다.
 * 관련 문서와 전체 필수 품질 명령이 현행 상태와 일치한다.
+
+Task 1~4에서 형식, 경고 금지 Clippy, 잠금 전체 시험, rustdoc, 릴리스 렌더
+측정, 잠금 패키징·오프라인 설치, Bash·Zsh PTY smoke와 실제 macOS 클립보드
+smoke를 실행했으며 모두 통과했다. 전체 시험은 245개 통과·3개 무시였고, 변경
+렌더링은 5회 준비·30표본·표본당 500회 반복에서 중앙값 135.791µs와 redraw 1회를
+기록했다. Linux 로컬 환경은 실행하지 않아 기존 Linux 지원·X11·Wayland 경로는
+미검증으로 유지한다.

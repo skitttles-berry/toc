@@ -79,7 +79,7 @@ UTF-8은 원문, 비 UTF-8은 공백 없는 소문자 Hex로 복사합니다. �
 ```bash
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
+cargo test --all-targets --all-features --locked
 RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features
 cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
 cargo test --release max_input_edit_release_measurement -- --ignored --nocapture
@@ -99,22 +99,22 @@ test "$(pbpaste)" = ff
 
 ### 최신 로컬 검증 요약
 
-2026-07-31 `main`을 macOS 26.5.2(25F84), Darwin 25.5.0 arm64,
+2026-07-31 `codex/tui-ux-refresh`를 macOS 26.5.2(25F84), Darwin 25.5.0 arm64,
 Rust·Cargo 1.97.1에서 검증하고, 최종 리뷰에서
 `cargo test --all-targets --all-features --locked`를 다시 실행했다.
-전체 시험은 라이브러리 223개 통과·3개 무시, CLI 통합 15개 통과로
-합계 238개 통과·3개 무시였고 실패는 없었다. 형식,
+전체 시험은 라이브러리 230개 통과·3개 무시, CLI 통합 15개 통과로
+합계 245개 통과·3개 무시였고 실패는 없었다. 형식,
 경고 금지 Clippy, rustdoc, 잠금 패키징, 임시 경로 오프라인 잠금 설치와
 `doop 0.2.0` 실행도 통과했다.
 
 세 릴리스 측정은 5회 준비 뒤 30표본의 중앙값을 대표값으로 사용했다.
 표본당 500회 반복한 렌더링의 무조건 다시 그리기 최솟값·중앙값·최댓값은
-`18.435459ms`·`18.499875ms`·`18.830291ms`, 변경 시 다시 그리기는
-`38.5µs`·`38.833µs`·`41.5µs`였고 표본마다 실제 다시 그리기는 1회였다.
+`67.031625ms`·`68.970125ms`·`79.030709ms`, 변경 시 다시 그리기는
+`125.791µs`·`135.791µs`·`208.875µs`였고 표본마다 실제 다시 그리기는 1회였다.
 최대 입력 편집은 `2.788958ms`·`2.922958ms`·`3.025042ms`, 64 MiB
 UTF-8 판정은 `2.15725ms`·`2.251334ms`·`2.575417ms`였다. 두 조건부
-경로의 중앙값이 16 ms 이하이므로 현재 구현을 유지하며, 시간은 시험
-성공 기준이 아니다.
+경로 중 변경 시 다시 그리기의 중앙값이 16 ms 이하이므로 현재 구현을 유지하며,
+시간은 시험 성공 기준이 아니다.
 
 Bash·Zsh 기본 PTY와 두 셸의 실제 macOS 복사 경로가 통과했고 `pbpaste`로
 소문자 `ff`를 확인했다. 이전 클립보드 내용은 복원하지 않는다. 이 장비에는
