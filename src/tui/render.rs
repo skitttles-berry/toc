@@ -208,10 +208,10 @@ fn render_pipeline(frame: &mut Frame<'_>, app: &App, area: Rect, show_sizes: boo
                 .traces
                 .iter()
                 .find(|trace| trace.step == index + 1);
-            let status = if let Some(trace) = trace {
-                trace.status
-            } else if !step.enabled {
+            let status = if !step.enabled {
                 StepStatus::Disabled
+            } else if let Some(trace) = trace {
+                trace.status
             } else if matches!(app.output.status, OutputStatus::Running)
                 && matches!(app.output.source, OutputSource::Step(target) if target == index)
             {
@@ -1614,14 +1614,15 @@ mod tests {
     }
 
     #[test]
-    fn disabled_pipeline_rows_show_trace_status_before_current_enablement() {
+    fn disabled_pipeline_row_after_failed_predecessor_has_blank_runtime_mark() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Pipeline;
         app.steps = ["base64-encode", "hex-encode"]
             .into_iter()
-            .map(|id| TransformStep {
+            .enumerate()
+            .map(|(index, id)| TransformStep {
                 definition: transform_by_id(id).unwrap(),
-                enabled: false,
+                enabled: index == 0,
             })
             .collect();
         app.output.traces = vec![
@@ -1629,10 +1630,10 @@ mod tests {
                 step: 1,
                 transform_id: "base64-encode",
                 input_bytes: Some(1),
-                output_bytes: Some(1),
+                output_bytes: None,
                 elapsed: None,
-                status: StepStatus::Disabled,
-                error: None,
+                status: StepStatus::Failed,
+                error: Some(TransformError::InvalidBase64 { position: None }),
             },
             StepTrace {
                 step: 2,
@@ -1646,17 +1647,12 @@ mod tests {
         ];
 
         let screen = rendered_app(89, 20, &mut app);
-        let disabled = screen
-            .lines()
-            .find(|line| line.contains("Base64 Encode"))
-            .unwrap();
         let not_run = screen
             .lines()
             .find(|line| line.contains("Hex Encode"))
             .unwrap();
 
-        assert!(disabled.contains("[OFF]   Base64 Encode"));
-        assert!(not_run.contains("[OFF]  · Hex Encode"));
+        assert!(not_run.contains("[OFF]   Hex Encode"));
     }
 
     #[test]
