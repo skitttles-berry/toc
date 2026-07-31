@@ -568,10 +568,10 @@ fn render_help(frame: &mut Frame<'_>, app: &App) {
     let compact = area.height <= 8;
     let body = if compact {
         match app.focus {
-            Pane::Input => "Text edit · Tab focus\nCtrl+P Add · F1 Help\nCtrl+Q Quit · Ctrl+C Force\nEsc close".to_string(),
-            Pane::Pipeline => "j/k Select · J/K Move\nSpace Toggle · d Delete\nEnter Inspect · a Add · z Zoom\nEsc close".to_string(),
+            Pane::Input => "Text edit · Tab focus\nF3/F4 Pretty/Raw\nCtrl+P Add · F1 Help\nCtrl+Q Quit · Ctrl+C Force\nEsc close".to_string(),
+            Pane::Pipeline => "j/k Select · J/K Move\nSpace Toggle · d Delete\nF3/F4 Pretty/Raw\nEnter Inspect · a Add · z Zoom\nEsc close".to_string(),
             Pane::Output => format!(
-                "v/V View · p Step · f Final\nEnter/y {}\nArrows/Page Scroll · z Zoom\nEsc close",
+                "v/V View · p Step · f Final\nF3/F4 Pretty/Raw\nEnter/y {}\nArrows/Page Scroll · z Zoom\nEsc close",
                 if app.can_copy() {
                     "Copy"
                 } else {
@@ -1255,16 +1255,22 @@ mod tests {
     }
 
     #[test]
-    fn forty_by_ten_help_keeps_context_keys_and_close_visible() {
+    fn forty_by_ten_help_keeps_copy_keys_and_close_visible_for_every_pane() {
         let start = now();
-        let mut app = App::new(start, true);
-        app.focus = Pane::Output;
-        key(&mut app, KeyCode::F(1), KeyModifiers::NONE, start);
+        for (pane, title) in [
+            (Pane::Input, "Input Help"),
+            (Pane::Pipeline, "Pipeline Help"),
+            (Pane::Output, "Output Help"),
+        ] {
+            let mut app = App::new(start, true);
+            app.focus = pane;
+            key(&mut app, KeyCode::F(1), KeyModifiers::NONE, start);
 
-        let screen = rendered_app(40, 10, &mut app);
+            let screen = rendered_app(40, 10, &mut app);
 
-        for expected in ["Output Help", "v/V", "p", "Esc close"] {
-            assert!(screen.contains(expected), "missing {expected}: {screen}");
+            for expected in [title, "F3/F4 Pretty/Raw", "Esc close"] {
+                assert!(screen.contains(expected), "missing {expected}: {screen}");
+            }
         }
     }
 
