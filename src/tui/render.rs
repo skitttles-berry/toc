@@ -453,9 +453,8 @@ fn dock_line(
         Style::default().fg(BORDER)
     };
     let mut line = Line::from(Span::styled(scope, scope_style));
-    let mut shown = 0usize;
 
-    for command in commands {
+    for (shown, command) in commands.iter().enumerate() {
         let separator = if shown == 0 || command.divider_before {
             " │ "
         } else {
@@ -481,7 +480,6 @@ fn dock_line(
             line.push_span(Span::raw(" "));
         }
         line.push_span(Span::raw(command.label));
-        shown += 1;
     }
     line
 }
