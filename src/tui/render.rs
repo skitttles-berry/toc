@@ -1072,17 +1072,25 @@ mod tests {
             .join("\n")
     }
 
-    fn assert_modal_depth(app: &mut App, modal_area: Rect) {
-        let backend = TestBackend::new(120, 30);
+    fn assert_modal_depth(app: &mut App, frame_area: Rect, modal_area: Rect) {
+        let backend = TestBackend::new(frame_area.width, frame_area.height);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| render(frame, app)).unwrap();
         let buffer = terminal.backend().buffer();
 
         assert!(buffer[(0, 0)].modifier.contains(Modifier::DIM));
-        assert_eq!(
-            buffer[(modal_area.right(), modal_area.y + 1)].bg,
-            SURFACE_HIGH
-        );
+        let shadow = &buffer[(modal_area.right(), modal_area.y + 1)];
+        if app.no_color {
+            assert!(shadow.modifier.contains(Modifier::DIM));
+            assert!(
+                buffer
+                    .content()
+                    .iter()
+                    .all(|cell| { cell.fg == Color::Reset && cell.bg == Color::Reset })
+            );
+        } else {
+            assert_eq!(shadow.bg, SURFACE_HIGH);
+        }
         assert!(
             !buffer[(modal_area.x + 1, modal_area.y + 1)]
                 .modifier
@@ -1093,10 +1101,11 @@ mod tests {
     #[test]
     fn every_modal_dims_the_base_and_renders_a_one_cell_shadow() {
         let start = now();
+        let frame_area = Rect::new(0, 0, 120, 30);
 
         let mut picker = App::new(start, false);
         picker.open_picker();
-        assert_modal_depth(&mut picker, centered(Rect::new(0, 0, 120, 30), 72, 18));
+        assert_modal_depth(&mut picker, frame_area, centered(frame_area, 72, 18));
 
         let mut inspector = App::new(start, false);
         inspector.steps.push(TransformStep {
@@ -1104,15 +1113,15 @@ mod tests {
             enabled: true,
         });
         inspector.modal = Some(Modal::StepInspector);
-        assert_modal_depth(&mut inspector, centered(Rect::new(0, 0, 120, 30), 78, 13));
+        assert_modal_depth(&mut inspector, frame_area, centered(frame_area, 78, 13));
 
         let mut help = App::new(start, false);
         help.modal = Some(Modal::Help);
-        assert_modal_depth(&mut help, centered(Rect::new(0, 0, 120, 30), 68, 17));
+        assert_modal_depth(&mut help, frame_area, centered(frame_area, 68, 17));
 
         let mut confirm = App::new(start, false);
         confirm.modal = Some(Modal::QuitConfirm);
-        assert_modal_depth(&mut confirm, centered(Rect::new(0, 0, 120, 30), 42, 5));
+        assert_modal_depth(&mut confirm, frame_area, centered(frame_area, 42, 5));
 
         let mut unsafe_confirm = App::new(start, false);
         unsafe_confirm.modal = Some(Modal::UnsafeCopyConfirm {
@@ -1121,10 +1130,26 @@ mod tests {
                 kind: CopyKind::Pretty,
             },
         });
-        assert_modal_depth(
-            &mut unsafe_confirm,
-            centered(Rect::new(0, 0, 120, 30), 42, 5),
-        );
+        assert_modal_depth(&mut unsafe_confirm, frame_area, centered(frame_area, 42, 5));
+    }
+
+    #[test]
+    fn no_color_modal_dims_without_rgb_and_uses_a_dim_shadow() {
+        let frame_area = Rect::new(0, 0, 120, 30);
+        let mut app = App::new(now(), true);
+        app.modal = Some(Modal::Help);
+
+        assert_modal_depth(&mut app, frame_area, centered(frame_area, 68, 17));
+    }
+
+    #[test]
+    fn tiny_confirmations_dim_the_base_and_render_a_one_cell_shadow() {
+        for frame_area in [Rect::new(0, 0, 39, 16), Rect::new(0, 0, 120, 9)] {
+            let mut app = App::new(now(), true);
+            app.modal = Some(Modal::QuitConfirm);
+
+            assert_modal_depth(&mut app, frame_area, centered(frame_area, 42, 5));
+        }
     }
 
     #[test]
