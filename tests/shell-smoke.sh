@@ -217,7 +217,8 @@ tui_run() {
                 send -- "\033\[<0;27;8M"
                 expect_exact "\033\[6;26H \033\[8;26H>" 160 161
                 send -- "\033\[<0;40;20M"
-                expect_exact "\033\[4;12HBase64\033\[4;19HDecode" 156 157
+                expect_exact "\033\[4;1H" 156 157
+                expect_exact "Base64 Decode" 156 157
                 send -- " "
                 expect_exact "\033\[4;6HFF" 152 153
                 send -- "\033\[<64;5;3M"
