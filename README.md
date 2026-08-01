@@ -94,7 +94,7 @@ Input caret 이동, 드래그 선택, Output 마우스 복사와 Pipeline 직접
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features --locked
 RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features
 cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
@@ -114,6 +114,13 @@ test "$(pbpaste)" = ff
 ```
 
 ### 최신 로컬 검증 요약
+
+2026-08-01 `codex/quiet-prism`에서 형식, 경고 금지 잠금 Clippy, rustdoc,
+잠금 패키징과 임시 경로 오프라인 잠금 설치를 실행했다. 전체 시험은 264개
+통과·3개 무시였고 실패는 없었으며, 설치본은 `toc 0.2.0`이었다. release redraw
+측정은 `redraws=1`을 확인했고 시간값은 성공 기준으로 사용하지 않았다. Bash·Zsh
+기본 PTY와 두 셸의 실제 macOS 복사 경로가 통과했고, 각 `pbpaste`는 소문자
+`ff`였다.
 
 2026-07-31 `codex/tui-ux-refresh`를 macOS 26.5.2(25F84), Darwin 25.5.0 arm64,
 Rust·Cargo 1.97.1에서 검증하고, 최종 리뷰에서

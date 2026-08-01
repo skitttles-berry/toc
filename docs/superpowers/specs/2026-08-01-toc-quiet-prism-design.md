@@ -1,7 +1,7 @@
 # toc TUI Quiet Prism 고도화 설계
 
 * **작성일:** 2026-08-01
-* **상태:** 사용자 승인·구현 대기
+* **상태:** 사용자 승인·구현 완료
 * **기준 문서:** `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md`, `docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md`
 * **대상:** `toc tui`
 * **제품 UI 언어:** 영어
@@ -318,3 +318,8 @@ cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
 * 모든 기존 Modal에 Dim과 한 셀 Shadow가 적용된다.
 * 새 의존성·설정·애니메이션 없이 전체 품질 명령과 회귀 시험이 통과한다.
 * 관련 기존 문서가 구현과 같은 커밋에서 현행화된다.
+
+2026-08-01 전체 형식, Clippy, 잠금 전체 시험, rustdoc, release redraw 측정,
+잠금 패키징, 임시 경로 오프라인 설치, Bash·Zsh PTY와 macOS 클립보드 Smoke를
+실행해 통과했다. redraw 측정은 1회의 변경 시 렌더만 확인하며 시간값을 성공
+기준으로 사용하지 않는다.
