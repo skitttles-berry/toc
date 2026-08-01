@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, Shadow, Wrap},
 };
 use unicode_width::UnicodeWidthStr as _;
 
@@ -567,6 +567,25 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
     )
 }
 
+fn modal_block<'a>(app: &App, title: &'a str) -> Block<'a> {
+    let style = if app.no_color {
+        Style::default()
+    } else {
+        Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+    };
+    let shadow = if app.no_color {
+        Shadow::overlay().style(Style::default().add_modifier(Modifier::DIM))
+    } else {
+        Shadow::overlay().style(Style::default().bg(SURFACE_HIGH))
+    };
+    Block::bordered()
+        .title(title)
+        .style(Style::default())
+        .border_style(style)
+        .title_style(style)
+        .shadow(shadow)
+}
+
 fn input_condition(accepts_binary: bool) -> &'static str {
     if accepts_binary {
         "Bytes accepted"
@@ -604,17 +623,7 @@ fn render_picker(
     mouse_regions: &mut MouseRegions,
 ) {
     let area = centered(frame.area(), 72, 18);
-    let style = if app.no_color {
-        Style::default()
-    } else {
-        Style::default().fg(CYAN)
-    };
-    let block = Block::bordered()
-        .border_type(BorderType::Thick)
-        .title("Add transform")
-        .style(Style::default())
-        .border_style(style)
-        .title_style(style);
+    let block = modal_block(app, "Add transform");
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -795,16 +804,7 @@ fn render_inspector(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseR
             input_condition(step.definition.accepts_binary),
         )
     };
-    let style = if app.no_color {
-        Style::default()
-    } else {
-        Style::default().fg(CYAN)
-    };
-    let block = Block::bordered()
-        .title("Step Inspector")
-        .style(Style::default())
-        .border_style(style)
-        .title_style(style);
+    let block = modal_block(app, "Step Inspector");
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -858,16 +858,7 @@ fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegion
     } else {
         format!("{body}\n\n[Esc Close]")
     };
-    let style = if app.no_color {
-        Style::default()
-    } else {
-        Style::default().fg(CYAN)
-    };
-    let block = Block::bordered()
-        .title(title)
-        .style(Style::default())
-        .border_style(style)
-        .title_style(style);
+    let block = modal_block(app, title);
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -888,16 +879,7 @@ fn render_confirmation(
     mouse_regions: &mut MouseRegions,
 ) {
     let area = centered(frame.area(), 42, 5);
-    let style = if app.no_color {
-        Style::default()
-    } else {
-        Style::default().fg(CYAN)
-    };
-    let block = Block::bordered()
-        .title("Confirm")
-        .style(Style::default())
-        .border_style(style)
-        .title_style(style);
+    let block = modal_block(app, "Confirm");
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -931,6 +913,17 @@ fn render_modal(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegio
     }
 }
 
+fn render_modal_layer(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegions) {
+    if app.modal.is_none() {
+        return;
+    }
+    let area = frame.area();
+    frame
+        .buffer_mut()
+        .set_style(area, Style::default().add_modifier(Modifier::DIM));
+    render_modal(frame, app, mouse_regions);
+}
+
 fn render(frame: &mut Frame<'_>, app: &mut App) {
     let area = frame.area();
     let mode = width_mode(area);
@@ -949,7 +942,7 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
             app.modal.as_ref(),
             Some(Modal::UnsafeCopyConfirm { .. }) | Some(Modal::QuitConfirm)
         ) {
-            render_modal(frame, app, &mut mouse_regions);
+            render_modal_layer(frame, app, &mut mouse_regions);
         }
         app.mouse_regions = mouse_regions;
         return;
@@ -998,7 +991,7 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
         render_output(frame, app, output, &mut mouse_regions);
     }
     render_footer(frame, app, focused_help, common_help);
-    render_modal(frame, app, &mut mouse_regions);
+    render_modal_layer(frame, app, &mut mouse_regions);
     app.mouse_regions = mouse_regions;
 }
 
@@ -1077,6 +1070,61 @@ mod tests {
             .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn assert_modal_depth(app: &mut App, modal_area: Rect) {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, app)).unwrap();
+        let buffer = terminal.backend().buffer();
+
+        assert!(buffer[(0, 0)].modifier.contains(Modifier::DIM));
+        assert_eq!(
+            buffer[(modal_area.right(), modal_area.y + 1)].bg,
+            SURFACE_HIGH
+        );
+        assert!(
+            !buffer[(modal_area.x + 1, modal_area.y + 1)]
+                .modifier
+                .contains(Modifier::DIM)
+        );
+    }
+
+    #[test]
+    fn every_modal_dims_the_base_and_renders_a_one_cell_shadow() {
+        let start = now();
+
+        let mut picker = App::new(start, false);
+        picker.open_picker();
+        assert_modal_depth(&mut picker, centered(Rect::new(0, 0, 120, 30), 72, 18));
+
+        let mut inspector = App::new(start, false);
+        inspector.steps.push(TransformStep {
+            definition: transform_by_id("base64-encode").unwrap(),
+            enabled: true,
+        });
+        inspector.modal = Some(Modal::StepInspector);
+        assert_modal_depth(&mut inspector, centered(Rect::new(0, 0, 120, 30), 78, 13));
+
+        let mut help = App::new(start, false);
+        help.modal = Some(Modal::Help);
+        assert_modal_depth(&mut help, centered(Rect::new(0, 0, 120, 30), 68, 17));
+
+        let mut confirm = App::new(start, false);
+        confirm.modal = Some(Modal::QuitConfirm);
+        assert_modal_depth(&mut confirm, centered(Rect::new(0, 0, 120, 30), 42, 5));
+
+        let mut unsafe_confirm = App::new(start, false);
+        unsafe_confirm.modal = Some(Modal::UnsafeCopyConfirm {
+            payload: ClipboardPayload {
+                text: "safe fixture".to_string(),
+                kind: CopyKind::Pretty,
+            },
+        });
+        assert_modal_depth(
+            &mut unsafe_confirm,
+            centered(Rect::new(0, 0, 120, 30), 42, 5),
+        );
     }
 
     #[test]
