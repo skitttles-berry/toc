@@ -228,8 +228,6 @@ fn render_pipeline(
                 .find(|trace| trace.step == index + 1);
             let status = if !step.enabled {
                 StepStatus::Disabled
-            } else if let Some(trace) = trace {
-                trace.status
             } else if app.output.status.running_target() == Some(ExecutionTarget::Step(index)) {
                 let text = format!("{prefix} [{enabled}]  › {}", step.definition.display_name);
                 return ListItem::new(Span::styled(
@@ -242,6 +240,8 @@ fn render_pipeline(
                         Style::default().fg(Color::Yellow)
                     },
                 ));
+            } else if let Some(trace) = trace {
+                trace.status
             } else {
                 StepStatus::NotExecuted
             };
@@ -578,12 +578,12 @@ fn render_inspector(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseR
         .traces
         .iter()
         .find(|trace| trace.step == app.selected_step + 1);
-    let status = if let Some(trace) = trace {
-        step_status(trace.status)
-    } else if !step.enabled {
+    let status = if !step.enabled {
         "OFF"
     } else if app.output.status.running_target() == Some(ExecutionTarget::Step(app.selected_step)) {
         "RUNNING"
+    } else if let Some(trace) = trace {
+        step_status(trace.status)
     } else {
         "NOT RUN"
     };
@@ -1970,7 +1970,7 @@ mod tests {
     }
 
     #[test]
-    fn disabled_step_inspector_shows_trace_status_before_current_enablement() {
+    fn disabled_step_inspector_uses_current_enablement_before_trace_status() {
         let mut app = App::new(now(), true);
         app.steps.push(TransformStep {
             definition: transform_by_id("hex-encode").unwrap(),
@@ -1989,8 +1989,8 @@ mod tests {
 
         let screen = rendered_app(80, 20, &mut app);
 
-        assert!(screen.contains("Status: NOT RUN"));
-        assert!(!screen.contains("Status: OFF"));
+        assert!(screen.contains("Status: OFF"));
+        assert!(!screen.contains("Status: NOT RUN"));
     }
 
     #[test]
@@ -2124,6 +2124,61 @@ mod tests {
         let screen = rendered_app(89, 20, &mut app);
 
         assert!(!screen.contains("RUNNING"));
+    }
+
+    #[test]
+    fn pending_step_overrides_preserved_trace_status_in_pipeline() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Pipeline;
+        app.steps.push(TransformStep {
+            definition: transform_by_id("url-encode").unwrap(),
+            enabled: true,
+        });
+        app.output.traces.push(StepTrace {
+            step: 1,
+            transform_id: "url-encode",
+            input_bytes: Some(3),
+            output_bytes: Some(4),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        });
+        app.output.status = OutputStatus::running(start, ExecutionTarget::Step(0));
+
+        let screen = rendered_app(80, 16, &mut app);
+        let row = screen
+            .lines()
+            .find(|line| line.contains("URL Encode"))
+            .unwrap();
+
+        assert!(row.contains("[ON]  › URL Encode"));
+    }
+
+    #[test]
+    fn pending_step_overrides_preserved_trace_status_in_inspector() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Pipeline;
+        app.steps.push(TransformStep {
+            definition: transform_by_id("url-encode").unwrap(),
+            enabled: true,
+        });
+        app.output.traces.push(StepTrace {
+            step: 1,
+            transform_id: "url-encode",
+            input_bytes: Some(3),
+            output_bytes: Some(4),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        });
+        app.output.status = OutputStatus::running(start, ExecutionTarget::Step(0));
+        key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
+
+        let screen = rendered_app(80, 20, &mut app);
+
+        assert!(screen.contains("Status: RUNNING"));
     }
 
     #[test]
