@@ -113,9 +113,10 @@ $ PIPELINE
 » OUTPUT / FINAL / SMART
 ```
 
-포커스 패널은 황색, 나머지는 녹색 계열로 구분한다. 장식은 Ratatui가
-이미 제공하는 테두리, 기본 색상과 터미널 문자만 사용한다. 이미지,
-외부 아이콘 글꼴, 고정 RGB 배경과 새 UI 의존성은 추가하지 않는다.
+Quiet Prism은 Cyan으로 포커스를, Muted로 비활성 테두리를 구분한다. Surface
+High는 선택과 Keycap 배경으로 사용하며, 일반 내용은 Text, 의미 상태는
+Green·Yellow·Red로 표시한다. 장식은 Ratatui가 이미 제공하는 테두리와 터미널
+문자만 사용한다. 이미지, 외부 아이콘 글꼴과 새 UI 의존성은 추가하지 않는다.
 
 ## 4.2 너비와 높이
 
@@ -139,25 +140,25 @@ Zoom은 너비 모드와 관계없이 기존처럼 대상 패널이 전체 콘�
 ## 4.3 색상 비활성 환경
 
 `NO_COLOR`에서는 색상만 제거한다. 타이틀, 구분자, 굵은 테두리,
-`[ON]`·`[OFF]`, `✓`·`×`와 포커스 문구는 유지한다. 포커스와 상태를
-색상만으로 전달하지 않는다.
+`[ON]`·`[OFF]`, `✓`·`×`와 포커스 문구는 유지한다. Dock Keycap은 `[ Key ]`로
+표시한다. 포커스와 상태를 색상만으로 전달하지 않는다.
 
 # 5. 최하단 도움말과 상태
 
 도움말은 화면 최하단 두 줄에만 표시한다.
 
-1. 포커스된 패널의 도움말
-2. 공통 도움말
+1. 포커스된 패널의 Grouped Command Dock
+2. 전역 Grouped Command Dock
 
 예:
 
 ```text
-[OUTPUT] Enter Pretty · v/V View · p Step · f Final · z Zoom
-[COMMON] Tab Focus · F3 Pretty · F4 Raw · F1 Help · Ctrl+Q Quit
+OUTPUT │  Enter  Pretty   v/V  View │  p  Step   f  Final │  z  Zoom
+GLOBAL │  Tab  Focus │  F3  Pretty   F4  Raw │  Ctrl+P  Add   F1  Help   Ctrl+Q  Quit
 ```
 
-너비가 부족하면 각 줄의 낮은 우선순위 항목부터 생략한다. 두 줄의 역할과
-순서는 바꾸지 않는다.
+너비가 부족하면 각 줄의 낮은 우선순위 완전 명령 그룹부터 생략한다. 두 줄의
+역할과 순서, 키 바인딩은 바꾸지 않는다.
 
 Pipeline 오류, 복사 완료와 클립보드 오류 같은 상태가 있으면 첫 번째 줄을
 상태 메시지로 교체한다. 두 번째 공통 도움말은 유지한다. 다음 상태 변경이

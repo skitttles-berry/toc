@@ -274,11 +274,15 @@ impl App {
         } else {
             textarea.set_cursor_style(
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
+                    .fg(Color::Rgb(0x11, 0x11, 0x1b))
+                    .bg(Color::Rgb(0x89, 0xdc, 0xeb))
                     .add_modifier(Modifier::BOLD),
             );
-            textarea.set_selection_style(Style::default().fg(Color::Black).bg(Color::Yellow));
+            textarea.set_selection_style(
+                Style::default()
+                    .fg(Color::Rgb(0x11, 0x11, 0x1b))
+                    .bg(Color::Rgb(0xf9, 0xe2, 0xaf)),
+            );
         }
         Self {
             textarea,

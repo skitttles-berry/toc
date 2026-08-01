@@ -22,6 +22,16 @@ use super::{
     },
 };
 
+const BACKGROUND: Color = Color::Rgb(0x11, 0x11, 0x1b);
+const SURFACE_HIGH: Color = Color::Rgb(0x24, 0x24, 0x38);
+const BORDER: Color = Color::Rgb(0x36, 0x3a, 0x4f);
+const TEXT: Color = Color::Rgb(0xcd, 0xd6, 0xf4);
+const MUTED: Color = Color::Rgb(0x6c, 0x70, 0x86);
+const CYAN: Color = Color::Rgb(0x89, 0xdc, 0xeb);
+const GREEN: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
+const YELLOW: Color = Color::Rgb(0xf9, 0xe2, 0xaf);
+const RED: Color = Color::Rgb(0xf3, 0x8b, 0xa8);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WidthMode {
     Wide,
@@ -55,13 +65,9 @@ fn pane_style(app: &App, focused: bool) -> Style {
     if app.no_color {
         Style::default()
     } else if focused {
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(MUTED).add_modifier(Modifier::BOLD)
     }
 }
 
@@ -69,7 +75,10 @@ fn selection_style(app: &App) -> Style {
     if app.no_color {
         Style::default()
     } else {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
+        Style::default()
+            .fg(CYAN)
+            .bg(SURFACE_HIGH)
+            .add_modifier(Modifier::BOLD)
     }
 }
 
@@ -237,7 +246,7 @@ fn render_pipeline(
                     } else if app.no_color {
                         Style::default()
                     } else {
-                        Style::default().fg(Color::Yellow)
+                        Style::default().fg(YELLOW)
                     },
                 ));
             } else if let Some(trace) = trace {
@@ -246,11 +255,11 @@ fn render_pipeline(
                 StepStatus::NotExecuted
             };
             let (mark, color) = match status {
-                StepStatus::Succeeded => ("✓ ", Color::Green),
-                StepStatus::Disabled => (" ", Color::DarkGray),
-                StepStatus::Failed => ("× ", Color::Red),
-                StepStatus::NotExecuted => ("· ", Color::DarkGray),
-                StepStatus::Cancelled => ("− ", Color::Yellow),
+                StepStatus::Succeeded => ("✓ ", GREEN),
+                StepStatus::Disabled => (" ", MUTED),
+                StepStatus::Failed => ("× ", RED),
+                StepStatus::NotExecuted => ("· ", MUTED),
+                StepStatus::Cancelled => ("− ", YELLOW),
             };
             let sizes = if show_sizes {
                 trace
@@ -303,16 +312,12 @@ fn render_app_bar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let title_style = if app.no_color {
         Style::default()
     } else {
-        Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
     };
     let focus_style = if app.no_color {
         Style::default()
     } else {
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
     };
     let line = Line::from(vec![
         Span::styled(">_ TOC", title_style),
@@ -322,39 +327,196 @@ fn render_app_bar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-fn focused_help(app: &App) -> &'static str {
-    match app.focus {
-        Pane::Input => "[INPUT] Text editing · Esc Cancel",
-        Pane::Pipeline => "[PIPELINE] ↑/↓ Select · Shift+↑/↓ Move · Space Toggle · Enter Inspect",
-        Pane::Output if app.can_copy() => {
-            "[OUTPUT] Enter Pretty · v/V View · p Step · f Final · z Zoom"
-        }
-        Pane::Output => "[OUTPUT] v/V View · p Step · f Final · z Zoom",
-    }
+#[derive(Clone, Copy)]
+struct DockCommand {
+    key: Option<&'static str>,
+    label: &'static str,
+    divider_before: bool,
 }
 
-fn common_help() -> &'static str {
-    "[COMMON] Tab Focus · F3 Pretty · F4 Raw · Ctrl+P Add · F1 Help · Ctrl+Q Quit"
-}
+const INPUT_COMMANDS: &[DockCommand] = &[
+    DockCommand {
+        key: None,
+        label: "Text editing",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("Esc"),
+        label: "Cancel",
+        divider_before: true,
+    },
+];
+const PIPELINE_COMMANDS: &[DockCommand] = &[
+    DockCommand {
+        key: Some("j/k"),
+        label: "Select",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("J/K"),
+        label: "Move",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("Space"),
+        label: "Toggle",
+        divider_before: true,
+    },
+    DockCommand {
+        key: Some("Enter"),
+        label: "Inspect",
+        divider_before: false,
+    },
+];
+const OUTPUT_COMMANDS: &[DockCommand] = &[
+    DockCommand {
+        key: Some("Enter"),
+        label: "Pretty",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("v/V"),
+        label: "View",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("p"),
+        label: "Step",
+        divider_before: true,
+    },
+    DockCommand {
+        key: Some("f"),
+        label: "Final",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("z"),
+        label: "Zoom",
+        divider_before: true,
+    },
+];
+const GLOBAL_COMMANDS: &[DockCommand] = &[
+    DockCommand {
+        key: Some("Tab"),
+        label: "Focus",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("F3"),
+        label: "Pretty",
+        divider_before: true,
+    },
+    DockCommand {
+        key: Some("F4"),
+        label: "Raw",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("Ctrl+P"),
+        label: "Add",
+        divider_before: true,
+    },
+    DockCommand {
+        key: Some("F1"),
+        label: "Help",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("Ctrl+Q"),
+        label: "Quit",
+        divider_before: false,
+    },
+];
 
-fn footer_first_line(app: &App, width: usize) -> String {
-    match &app.output.status {
-        status if status.long_running_notice() => {
-            if app.output.active_artifact.is_some() || !app.output.traces.is_empty() {
-                "Still processing · Previous result shown · Esc Cancel".to_string()
+fn dock_line(
+    app: &App,
+    scope: &'static str,
+    commands: &[DockCommand],
+    width: u16,
+) -> Line<'static> {
+    let scope_style = if app.no_color {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+    };
+    let key_style = if app.no_color {
+        Style::default()
+    } else {
+        Style::default()
+            .fg(CYAN)
+            .bg(SURFACE_HIGH)
+            .add_modifier(Modifier::BOLD)
+    };
+    let separator_style = if app.no_color {
+        Style::default()
+    } else {
+        Style::default().fg(BORDER)
+    };
+    let mut line = Line::from(Span::styled(scope, scope_style));
+    let mut shown = 0usize;
+
+    for command in commands {
+        let separator = if shown == 0 || command.divider_before {
+            " │ "
+        } else {
+            "  "
+        };
+        let key = command.key.map(|key| {
+            if app.no_color {
+                format!("[ {key} ]")
             } else {
-                "Still processing · Esc Cancel".to_string()
+                format!(" {key} ")
             }
+        });
+        let added_width = separator.width()
+            + key.as_deref().map_or(0, |key| key.width())
+            + usize::from(key.is_some())
+            + command.label.width();
+        if line.width().saturating_add(added_width) > width as usize {
+            break;
         }
-        OutputStatus::Failed(error) => {
-            crate::error::escape_external(&render_pipeline_error_summary(error), width)
+        line.push_span(Span::styled(separator, separator_style));
+        if let Some(key) = key {
+            line.push_span(Span::styled(key, key_style));
+            line.push_span(Span::raw(" "));
         }
-        OutputStatus::Cancelled => "Cancelled".to_string(),
+        line.push_span(Span::raw(command.label));
+        shown += 1;
+    }
+    line
+}
+
+fn footer_status(app: &App, width: usize) -> Option<String> {
+    match &app.output.status {
+        OutputStatus::Failed(error) => Some(crate::error::escape_external(
+            &render_pipeline_error_summary(error),
+            width,
+        )),
+        OutputStatus::Cancelled => Some("Cancelled".to_string()),
+        status if status.long_running_notice() => Some(
+            if app.output.active_artifact.is_some() || !app.output.traces.is_empty() {
+                "Still processing · Previous result shown · Esc Cancel"
+            } else {
+                "Still processing · Esc Cancel"
+            }
+            .to_string(),
+        ),
         _ => app
             .status
             .as_ref()
-            .map(|status| crate::error::escape_external(status, width))
-            .unwrap_or_else(|| focused_help(app).to_string()),
+            .map(|status| crate::error::escape_external(status, width)),
+    }
+}
+
+fn footer_first_line(app: &App, width: u16) -> Line<'static> {
+    if let Some(status) = footer_status(app, width as usize) {
+        return Line::raw(status);
+    }
+    match app.focus {
+        Pane::Input => dock_line(app, "INPUT", INPUT_COMMANDS, width),
+        Pane::Pipeline => dock_line(app, "PIPELINE", PIPELINE_COMMANDS, width),
+        Pane::Output if app.can_copy() => dock_line(app, "OUTPUT", OUTPUT_COMMANDS, width),
+        Pane::Output => dock_line(app, "OUTPUT", &OUTPUT_COMMANDS[1..], width),
     }
 }
 
@@ -365,10 +527,18 @@ fn render_footer(
     common_help_area: Rect,
 ) {
     frame.render_widget(
-        Paragraph::new(footer_first_line(app, focused_help_area.width as usize)),
+        Paragraph::new(footer_first_line(app, focused_help_area.width)),
         focused_help_area,
     );
-    frame.render_widget(Paragraph::new(common_help()), common_help_area);
+    frame.render_widget(
+        Paragraph::new(dock_line(
+            app,
+            "GLOBAL",
+            GLOBAL_COMMANDS,
+            common_help_area.width,
+        )),
+        common_help_area,
+    );
 }
 
 fn render_focused_pane(
@@ -437,7 +607,7 @@ fn render_picker(
     let style = if app.no_color {
         Style::default()
     } else {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(CYAN)
     };
     let block = Block::bordered()
         .border_type(BorderType::Thick)
@@ -628,7 +798,7 @@ fn render_inspector(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseR
     let style = if app.no_color {
         Style::default()
     } else {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(CYAN)
     };
     let block = Block::bordered()
         .title("Step Inspector")
@@ -691,7 +861,7 @@ fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegion
     let style = if app.no_color {
         Style::default()
     } else {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(CYAN)
     };
     let block = Block::bordered()
         .title(title)
@@ -721,7 +891,7 @@ fn render_confirmation(
     let style = if app.no_color {
         Style::default()
     } else {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(CYAN)
     };
     let block = Block::bordered()
         .title("Confirm")
@@ -765,6 +935,11 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
     let area = frame.area();
     let mode = width_mode(area);
     let mut mouse_regions = MouseRegions::default();
+    if !app.no_color {
+        frame
+            .buffer_mut()
+            .set_style(area, Style::default().fg(TEXT).bg(BACKGROUND));
+    }
     if mode == WidthMode::Tiny {
         frame.render_widget(
             Paragraph::new("Increase terminal size to at least 40×10").alignment(Alignment::Center),
@@ -1286,8 +1461,8 @@ mod tests {
             assert!(pipeline < input && input < output);
             assert!(lines[0].contains(">_ TOC"));
             assert!(lines[0].contains("FOCUS: OUTPUT"));
-            assert!(lines[14].contains("[OUTPUT]"));
-            assert!(lines[15].contains("[COMMON]"));
+            assert!(lines[14].starts_with("OUTPUT │"));
+            assert!(lines[15].starts_with("GLOBAL │"));
         }
     }
 
@@ -1318,8 +1493,8 @@ mod tests {
         assert!(lines[0].starts_with(">_ TOC"));
         assert!(lines[0].contains("│  FOCUS: OUTPUT"));
         assert!(!lines[0].contains('┏'));
-        assert!(lines[14].starts_with("[OUTPUT]"));
-        assert!(lines[15].starts_with("[COMMON]"));
+        assert!(lines[14].starts_with("OUTPUT │"));
+        assert!(lines[15].starts_with("GLOBAL │"));
         assert!(!lines.iter().any(|line| line.contains("Navigation")));
         assert!(!lines.iter().any(|line| line.contains("Step Summary")));
     }
@@ -1335,10 +1510,10 @@ mod tests {
         let lines: Vec<_> = screen.lines().collect();
 
         assert!(lines[14].contains("Clipboard unavailable"));
-        assert!(!lines[14].contains("[INPUT]"));
-        assert!(lines[15].starts_with("[COMMON]"));
-        assert!(lines[15].contains("F3 Pretty"));
-        assert!(lines[15].contains("F4 Raw"));
+        assert!(!lines[14].contains("INPUT │"));
+        assert!(lines[15].starts_with("GLOBAL │"));
+        assert!(lines[15].contains("[ F3 ] Pretty"));
+        assert!(lines[15].contains("[ F4 ] Raw"));
     }
 
     #[test]
@@ -2328,7 +2503,7 @@ mod tests {
         let screen: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
         assert!(screen.contains("[ON]  › URL Encode"));
         assert!(screen.contains(">_ TOC"));
-        assert!(screen.contains("[COMMON]"));
+        assert!(screen.contains("GLOBAL │"));
         assert!(
             buffer
                 .content()
@@ -2337,20 +2512,92 @@ mod tests {
         );
     }
     #[test]
-    fn colored_render_uses_only_basic_colors_and_no_literal_ansi() {
+    fn colored_render_uses_only_the_quiet_prism_palette_and_no_ansi() {
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(now(), false);
-        app.open_picker();
+        app.steps.push(TransformStep {
+            definition: transform_by_id("url-encode").unwrap(),
+            enabled: true,
+        });
+        app.focus = Pane::Pipeline;
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
+        let approved = [
+            Color::Reset,
+            BACKGROUND,
+            SURFACE_HIGH,
+            BORDER,
+            TEXT,
+            MUTED,
+            CYAN,
+            GREEN,
+            YELLOW,
+            RED,
+        ];
         for cell in terminal.backend().buffer().content() {
-            assert!(
-                !matches!(cell.fg, Color::Indexed(_) | Color::Rgb(_, _, _))
-                    && !matches!(cell.bg, Color::Indexed(_) | Color::Rgb(_, _, _))
-            );
+            assert!(approved.contains(&cell.fg), "unexpected fg: {:?}", cell.fg);
+            assert!(approved.contains(&cell.bg), "unexpected bg: {:?}", cell.bg);
             assert!(!cell.symbol().contains('\u{1b}'));
         }
+        assert_eq!(pane_style(&app, true).fg, Some(CYAN));
+        assert_eq!(pane_style(&app, false).fg, Some(MUTED));
+        assert_eq!(selection_style(&app).fg, Some(CYAN));
+        assert_eq!(selection_style(&app).bg, Some(SURFACE_HIGH));
+    }
+
+    #[test]
+    fn grouped_command_dock_keeps_atomic_groups_at_wide_and_narrow_widths() {
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Output;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+
+        let wide = rendered_app(120, 20, &mut app);
+        let wide_lines = wide.lines().collect::<Vec<_>>();
+        assert!(wide_lines[18].contains(
+            "OUTPUT │ [ Enter ] Pretty  [ v/V ] View │ [ p ] Step  [ f ] Final │ [ z ] Zoom"
+        ));
+        assert!(
+            wide_lines[19]
+                .contains("GLOBAL │ [ Tab ] Focus │ [ F3 ] Pretty  [ F4 ] Raw │ [ Ctrl+P ] Add")
+        );
+        assert!(wide_lines[19].contains("[ F1 ] Help  [ Ctrl+Q ] Quit"));
+
+        let narrow = rendered_app(40, 10, &mut app);
+        let narrow_lines = narrow.lines().collect::<Vec<_>>();
+        assert!(narrow_lines[8].starts_with("OUTPUT │ [ Enter ] Pretty"));
+        assert!(narrow_lines[8].contains("[ v/V ] View"));
+        assert!(!narrow_lines[8].contains("[ p ]"));
+        assert!(narrow_lines[9].starts_with("GLOBAL │ [ Tab ] Focus"));
+        assert!(narrow_lines[9].contains("[ F3 ] Pretty"));
+        assert!(!narrow_lines[9].contains("[ F4 ]"));
+    }
+
+    #[test]
+    fn colored_keycap_uses_surface_high_while_no_color_uses_brackets() {
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut colored = App::new(now(), false);
+        colored.focus = Pane::Output;
+        colored.output.status = OutputStatus::Ready;
+        colored.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+        terminal.draw(|frame| render(frame, &mut colored)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let footer: String = (0..120).map(|x| buffer[(x, 18)].symbol()).collect();
+        let enter_x = footer.find("Enter").unwrap() as u16;
+        let enter = &buffer[(enter_x, 18)];
+        assert_eq!(enter.fg, CYAN);
+        assert_eq!(enter.bg, SURFACE_HIGH);
+        assert!(enter.modifier.contains(Modifier::BOLD));
+
+        let mut no_color = App::new(now(), true);
+        no_color.focus = Pane::Output;
+        no_color.output.status = OutputStatus::Ready;
+        no_color.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+        let screen = rendered_app(120, 20, &mut no_color);
+        assert!(screen.lines().nth(18).unwrap().contains("[ Enter ] Pretty"));
     }
     #[test]
     fn external_status_and_error_text_cannot_reach_the_render_buffer_as_controls() {
