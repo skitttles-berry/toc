@@ -251,8 +251,8 @@ tui_run() {
                     # The unchanged "C" is omitted by the incremental redraw.
                     expect_exact "unavailable" 101 102
                 } elseif {$mode eq "x11"} {
-                    # "Copy as Hex" keeps its common "Cop" prefix during the incremental redraw.
-                    expect_exact "ied as Hex" 103 104
+                    expect_exact "Copied" 103 104
+                    expect_exact "as Hex" 103 104
                     if {[catch {
                         exec -keepnewline timeout 5s xclip -selection clipboard -o
                     } copied]} {
@@ -263,7 +263,9 @@ tui_run() {
                     }
                 } elseif {$mode eq "macos"} {
                     expect {
-                        -exact "ied as Hex" {}
+                        -exact "Copied" {
+                            expect_exact "as Hex" 127 128
+                        }
                         -exact "Clipboard" {
                             expect_exact "unavailable" 123 123
                             exit 123
@@ -277,7 +279,9 @@ tui_run() {
                     }
                 } elseif {$mode eq "wayland"} {
                     expect {
-                        -exact "ied as Hex" {}
+                        -exact "Copied" {
+                            expect_exact "as Hex" 128 129
+                        }
                         -exact "Clipboard" {
                             expect_exact "unavailable" 125 125
                             exit 125
