@@ -56,14 +56,49 @@ pub(super) enum OutputSource {
     Step(usize),
 }
 
+pub(super) const LONG_RUNNING_AFTER: Duration = Duration::from_secs(1);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum OutputStatus {
     Idle,
-    Debouncing { deadline: Instant },
-    Running,
+    Debouncing {
+        deadline: Instant,
+    },
+    Running {
+        started_at: Instant,
+        target: ExecutionTarget,
+        notice_visible: bool,
+    },
     Ready,
     Failed(PipelineError),
     Cancelled,
+}
+
+impl OutputStatus {
+    pub(super) fn running(started_at: Instant, target: ExecutionTarget) -> Self {
+        Self::Running {
+            started_at,
+            target,
+            notice_visible: false,
+        }
+    }
+
+    pub(super) fn running_target(&self) -> Option<ExecutionTarget> {
+        match self {
+            Self::Running { target, .. } => Some(*target),
+            _ => None,
+        }
+    }
+
+    pub(super) fn long_running_notice(&self) -> bool {
+        matches!(
+            self,
+            Self::Running {
+                notice_visible: true,
+                ..
+            }
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -350,16 +385,11 @@ impl App {
             .request_id
             .checked_add(1)
             .expect("TUI request ID exhausted");
-        self.output.source = OutputSource::Final;
         self.output.status = OutputStatus::Debouncing {
             deadline: now + debounce_for(self.input_len()),
         };
         self.output.final_artifact = None;
         self.output.final_traces.clear();
-        self.output.active_artifact = None;
-        self.output.traces.clear();
-        self.output.byte_offset = 0;
-        self.output.row_offset = 0;
         self.mark_dirty();
     }
 
@@ -559,20 +589,36 @@ impl App {
     }
 
     fn tick(&mut self, now: Instant) -> Vec<Effect> {
-        let OutputStatus::Debouncing { deadline } = &self.output.status else {
-            return Vec::new();
-        };
-        if now < *deadline {
-            return Vec::new();
+        if let OutputStatus::Debouncing { deadline } = &self.output.status {
+            if now < *deadline {
+                return Vec::new();
+            }
+            self.output.status = OutputStatus::running(now, ExecutionTarget::Final);
+            self.mark_dirty();
+            return vec![Effect::Submit(PreviewJob {
+                request_id: self.request_id,
+                input: self.input_text().into_bytes(),
+                steps: self.steps.clone(),
+                target: ExecutionTarget::Final,
+            })];
         }
-        self.output.status = OutputStatus::Running;
-        self.mark_dirty();
-        vec![Effect::Submit(PreviewJob {
-            request_id: self.request_id,
-            input: self.input_text().into_bytes(),
-            steps: self.steps.clone(),
-            target: ExecutionTarget::Final,
-        })]
+
+        let show_notice = matches!(
+            &self.output.status,
+            OutputStatus::Running {
+                started_at,
+                notice_visible: false,
+                ..
+            } if now.saturating_duration_since(*started_at) >= LONG_RUNNING_AFTER
+        );
+        if show_notice {
+            let OutputStatus::Running { notice_visible, .. } = &mut self.output.status else {
+                unreachable!("running notice checked above")
+            };
+            *notice_visible = true;
+            self.mark_dirty();
+        }
+        Vec::new()
     }
 
     fn finish_preview(&mut self, result: PreviewResult) {
@@ -617,7 +663,7 @@ impl App {
         self.mark_dirty();
     }
 
-    fn request_selected_step(&mut self) -> Vec<Effect> {
+    fn request_selected_step(&mut self, now: Instant) -> Vec<Effect> {
         if self.steps.get(self.selected_step).is_none() {
             self.set_status(Some("No pipeline step selected".to_string()));
             return Vec::new();
@@ -626,12 +672,7 @@ impl App {
             .request_id
             .checked_add(1)
             .expect("TUI request ID exhausted");
-        self.output.source = OutputSource::Step(self.selected_step);
-        self.output.status = OutputStatus::Running;
-        self.output.active_artifact = None;
-        self.output.traces.clear();
-        self.output.byte_offset = 0;
-        self.output.row_offset = 0;
+        self.output.status = OutputStatus::running(now, ExecutionTarget::Step(self.selected_step));
         self.mark_dirty();
         vec![Effect::Submit(PreviewJob {
             request_id: self.request_id,
@@ -663,7 +704,7 @@ impl App {
     fn cancel_active(&mut self) {
         if !matches!(
             self.output.status,
-            OutputStatus::Debouncing { .. } | OutputStatus::Running
+            OutputStatus::Debouncing { .. } | OutputStatus::Running { .. }
         ) {
             return;
         }
@@ -1086,12 +1127,12 @@ impl App {
         }
     }
 
-    fn handle_output_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+    fn handle_output_key(&mut self, key: KeyEvent, now: Instant) -> Vec<Effect> {
         match (key.code, key.modifiers) {
             (KeyCode::Enter | KeyCode::Char('y'), KeyModifiers::NONE) => {
                 self.request_copy(CopyMode::Pretty)
             }
-            (KeyCode::Char('p'), KeyModifiers::NONE) => self.request_selected_step(),
+            (KeyCode::Char('p'), KeyModifiers::NONE) => self.request_selected_step(now),
             (KeyCode::Char('f'), KeyModifiers::NONE) => self.restore_final(),
             (KeyCode::Char('v'), KeyModifiers::NONE) => {
                 self.cycle_view(false);
@@ -1224,7 +1265,7 @@ impl App {
                 self.handle_input_key(key, now);
                 Vec::new()
             }
-            Pane::Output => self.handle_output_key(key),
+            Pane::Output => self.handle_output_key(key, now),
             Pane::Pipeline => {
                 self.handle_pipeline_key(key, now);
                 Vec::new()
@@ -1694,7 +1735,7 @@ mod tests {
     fn escape_closes_only_the_highest_priority_transient_state() {
         let start = now();
         let mut app = App::new(start, true);
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(start, ExecutionTarget::Final);
         app.zoom = Some(Pane::Output);
         app.open_picker();
 
@@ -1702,12 +1743,12 @@ mod tests {
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
         assert!(app.modal.is_none());
         assert_eq!(app.zoom, Some(Pane::Output));
-        assert!(matches!(app.output.status, OutputStatus::Running));
+        assert!(matches!(app.output.status, OutputStatus::Running { .. }));
         assert_eq!(app.request_id, request_id);
 
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
         assert!(app.zoom.is_none());
-        assert!(matches!(app.output.status, OutputStatus::Running));
+        assert!(matches!(app.output.status, OutputStatus::Running { .. }));
         assert_eq!(app.request_id, request_id);
 
         let effects = key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
@@ -1931,7 +1972,7 @@ mod tests {
             deadline: start + debounce_for(0),
         };
         assert!(app.request_copy(CopyMode::Pretty).is_empty());
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(start, ExecutionTarget::Final);
         assert!(app.request_copy(CopyMode::Pretty).is_empty());
         app.output.status = OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
         assert!(app.request_copy(CopyMode::Pretty).is_empty());
@@ -2245,7 +2286,11 @@ mod tests {
             key(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, start).as_slice(),
             [Effect::Cancel(_)]
         ));
-        assert_eq!(app.output.source, OutputSource::Final);
+        assert_eq!(app.output.source, OutputSource::Step(0));
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"owned"
+        );
         assert!(matches!(app.output.status, OutputStatus::Debouncing { .. }));
         assert!(matches!(
             app.handle_event(AppEvent::Tick(start + debounce_for(0)))
@@ -2255,6 +2300,10 @@ mod tests {
                 ..
             })]
         ));
+        assert_eq!(
+            app.output.status.running_target(),
+            Some(ExecutionTarget::Final)
+        );
     }
     #[test]
     fn output_cycles_views_requests_sources_copy_and_zoom() {
@@ -2477,7 +2526,45 @@ mod tests {
         );
         let effects = app.handle_event(AppEvent::Tick(start + Duration::from_millis(50)));
         assert!(matches!(effects.as_slice(), [Effect::Submit(_)]));
-        assert!(matches!(app.output.status, OutputStatus::Running));
+        assert!(matches!(app.output.status, OutputStatus::Running { .. }));
+    }
+
+    #[test]
+    fn running_notice_appears_once_at_one_second() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.insert_paste("x", start);
+        let submitted_at = start + debounce_for(1);
+
+        let effects = app.handle_event(AppEvent::Tick(submitted_at));
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Submit(PreviewJob {
+                target: ExecutionTarget::Final,
+                ..
+            })]
+        ));
+        assert_eq!(
+            app.output.status.running_target(),
+            Some(ExecutionTarget::Final)
+        );
+        assert!(!app.output.status.long_running_notice());
+        app.take_dirty();
+
+        app.handle_event(AppEvent::Tick(
+            submitted_at + LONG_RUNNING_AFTER - Duration::from_millis(1),
+        ));
+        assert!(!app.output.status.long_running_notice());
+        assert!(!app.take_dirty());
+
+        app.handle_event(AppEvent::Tick(submitted_at + LONG_RUNNING_AFTER));
+        assert!(app.output.status.long_running_notice());
+        assert!(app.take_dirty());
+
+        app.handle_event(AppEvent::Tick(
+            submitted_at + LONG_RUNNING_AFTER + Duration::from_millis(50),
+        ));
+        assert!(!app.take_dirty());
     }
     #[test]
     fn empty_chain_previews_input_without_overwriting_it() {
@@ -2505,13 +2592,36 @@ mod tests {
         );
     }
     #[test]
-    fn a_change_immediately_hides_the_previous_copyable_result() {
+    fn a_change_keeps_previous_result_visible_but_not_copyable() {
         let start = now();
         let mut app = App::new(start, true);
+        let previous_trace = StepTrace {
+            step: 1,
+            transform_id: "base64-encode",
+            input_bytes: Some(3),
+            output_bytes: Some(4),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        };
+        app.output.source = OutputSource::Step(0);
         app.output.status = OutputStatus::Ready;
+        app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+        app.output.final_traces = vec![previous_trace.clone()];
         app.output.active_artifact = Some(Artifact::new(b"old".to_vec()));
+        app.output.traces = vec![previous_trace.clone()];
+        app.output.byte_offset = 2;
+        app.output.row_offset = 1;
+
         app.insert_paste("new", start);
+
         assert!(matches!(app.output.status, OutputStatus::Debouncing { .. }));
+        assert_eq!(app.output.source, OutputSource::Step(0));
+        assert_eq!(app.output.active_artifact.as_ref().unwrap().bytes(), b"old");
+        assert_eq!(app.output.traces, vec![previous_trace]);
+        assert_eq!((app.output.byte_offset, app.output.row_offset), (2, 1));
+        assert!(app.output.final_artifact.is_none());
+        assert!(app.output.final_traces.is_empty());
         assert!(!app.can_copy());
     }
     #[test]
@@ -2519,13 +2629,13 @@ mod tests {
         let start = now();
         let mut app = App::new(start, true);
         app.request_id = 2;
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(start, ExecutionTarget::Final);
         app.handle_event(AppEvent::PreviewFinished(preview_result(
             1,
             ExecutionTarget::Final,
             ExecutionOutcome::Success(b"old".to_vec()),
         )));
-        assert!(matches!(app.output.status, OutputStatus::Running));
+        assert!(matches!(app.output.status, OutputStatus::Running { .. }));
         assert!(app.output.active_artifact.is_none());
         assert!(app.request_copy(CopyMode::Pretty).is_empty());
     }
@@ -2806,7 +2916,7 @@ mod tests {
     }
 
     #[test]
-    fn document_change_clears_owned_results_and_trace_and_disables_copy() {
+    fn document_change_preserves_visible_result_and_disables_copy() {
         let start = now();
         let mut app = App::new(start, true);
         app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
@@ -2831,8 +2941,11 @@ mod tests {
         assert_eq!(app.output.source, OutputSource::Final);
         assert!(app.output.final_artifact.is_none());
         assert!(app.output.final_traces.is_empty());
-        assert!(app.output.active_artifact.is_none());
-        assert!(app.output.traces.is_empty());
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"active"
+        );
+        assert_eq!(app.output.traces.len(), 1);
         assert!(!app.can_copy());
     }
 
@@ -2865,7 +2978,10 @@ mod tests {
         assert_eq!(app.output.source, OutputSource::Final);
         assert!(app.output.final_artifact.is_none());
         assert!(app.output.final_traces.is_empty());
-        assert!(app.output.active_artifact.is_none());
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"active"
+        );
         assert!(matches!(
             app.output.status,
             OutputStatus::Debouncing { deadline }
@@ -2898,14 +3014,20 @@ mod tests {
         let effects = key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
 
         assert_eq!(app.request_id, 1);
-        assert_eq!(app.output.source, OutputSource::Step(0));
-        assert!(matches!(app.output.status, OutputStatus::Running));
+        assert_eq!(app.output.source, OutputSource::Final);
+        assert_eq!(
+            app.output.status.running_target(),
+            Some(ExecutionTarget::Step(0))
+        );
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"cached"
+        );
         assert_eq!(
             app.output.final_artifact.as_ref().unwrap().bytes(),
             b"cached"
         );
         assert_eq!(app.output.final_traces.len(), 1);
-        assert!(app.output.active_artifact.is_none());
         assert!(matches!(
             effects.as_slice(),
             [
@@ -2939,7 +3061,7 @@ mod tests {
         let mut app = App::new(start, true);
         app.request_id = 4;
         app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(start, ExecutionTarget::Step(0));
         app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
         app.focus = Pane::Output;
 
@@ -3241,7 +3363,7 @@ mod tests {
         let mut app = App::new(start, true);
         app.request_id = 3;
         app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(start, ExecutionTarget::Step(0));
         app.focus = Pane::Output;
 
         let effects = key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
@@ -3253,7 +3375,7 @@ mod tests {
         let effects = app.handle_event(AppEvent::Paste("fresh".to_string(), start));
         assert_eq!(app.request_id, 5);
         assert!(matches!(effects.as_slice(), [Effect::Cancel(5)]));
-        assert_eq!(app.output.source, OutputSource::Final);
+        assert_eq!(app.output.source, OutputSource::Step(0));
         assert!(matches!(app.output.status, OutputStatus::Debouncing { .. }));
     }
 
@@ -3450,11 +3572,14 @@ mod tests {
         let start = now();
         let mut running = App::new(start, true);
         running.focus = Pane::Output;
-        running.output.status = OutputStatus::Running;
+        running.output.status = OutputStatus::running(start, ExecutionTarget::Final);
         let request_id = running.request_id;
         assert!(key(&mut running, KeyCode::Esc, KeyModifiers::ALT, start).is_empty());
         assert_eq!(running.request_id, request_id);
-        assert_eq!(running.output.status, OutputStatus::Running);
+        assert_eq!(
+            running.output.status,
+            OutputStatus::running(start, ExecutionTarget::Final)
+        );
 
         for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT, KeyModifiers::META] {
             let mut app = App::new(start, true);

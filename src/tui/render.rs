@@ -8,7 +8,10 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr as _;
 
-use crate::{error::AppError, pipeline::StepStatus};
+use crate::{
+    error::AppError,
+    pipeline::{ExecutionTarget, StepStatus},
+};
 
 use super::{
     state::{App, Modal, MouseRegions, OutputSource, OutputStatus, Pane},
@@ -125,8 +128,6 @@ fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect, mouse_regions: &m
     let columns = inner.width as usize;
     let text = match &app.output.status {
         OutputStatus::Idle => String::new(),
-        OutputStatus::Debouncing { .. } => "Waiting for changes…".to_string(),
-        OutputStatus::Running => "Running…".to_string(),
         OutputStatus::Cancelled if app.output.traces.is_empty() => "Cancelled".to_string(),
         OutputStatus::Failed(error)
             if matches!(app.output.view, ViewMode::Text | ViewMode::Hex) =>
@@ -229,9 +230,7 @@ fn render_pipeline(
                 StepStatus::Disabled
             } else if let Some(trace) = trace {
                 trace.status
-            } else if matches!(app.output.status, OutputStatus::Running)
-                && matches!(app.output.source, OutputSource::Step(target) if target == index)
-            {
+            } else if app.output.status.running_target() == Some(ExecutionTarget::Step(index)) {
                 let text = format!("{prefix} [{enabled}]  › {}", step.definition.display_name);
                 return ListItem::new(Span::styled(
                     text,
@@ -340,6 +339,13 @@ fn common_help() -> &'static str {
 
 fn footer_first_line(app: &App, width: usize) -> String {
     match &app.output.status {
+        status if status.long_running_notice() => {
+            if app.output.active_artifact.is_some() || !app.output.traces.is_empty() {
+                "Still processing · Previous result shown · Esc Cancel".to_string()
+            } else {
+                "Still processing · Esc Cancel".to_string()
+            }
+        }
         OutputStatus::Failed(error) => {
             crate::error::escape_external(&render_pipeline_error_summary(error), width)
         }
@@ -576,9 +582,7 @@ fn render_inspector(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseR
         step_status(trace.status)
     } else if !step.enabled {
         "OFF"
-    } else if matches!(app.output.status, OutputStatus::Running)
-        && app.output.source == OutputSource::Step(app.selected_step)
-    {
+    } else if app.output.status.running_target() == Some(ExecutionTarget::Step(app.selected_step)) {
         "RUNNING"
     } else {
         "NOT RUN"
@@ -839,8 +843,8 @@ pub(super) fn draw_if_dirty<B: Backend>(
 mod tests {
     use super::super::{
         state::{
-            AppEvent, ClipboardPayload, CopyKind, Effect, Modal, OutputSource, OutputStatus, Pane,
-            debounce_for,
+            AppEvent, ClipboardPayload, CopyKind, Effect, LONG_RUNNING_AFTER, Modal, OutputSource,
+            OutputStatus, Pane, debounce_for,
         },
         views::{Artifact, ViewMode},
         worker::PreviewResult,
@@ -898,6 +902,27 @@ mod tests {
             .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn pending_preview_keeps_previous_body_and_delays_the_notice() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.source = OutputSource::Step(0);
+        app.output.active_artifact = Some(Artifact::new(b"previous result".to_vec()));
+        app.output.status = OutputStatus::running(start, ExecutionTarget::Final);
+
+        let pending = rendered_app(80, 20, &mut app);
+        assert!(pending.contains("previous result"));
+        assert!(!pending.contains("Waiting for changes"));
+        assert!(!pending.contains("Running"));
+        assert!(!pending.contains("Still processing"));
+
+        app.handle_event(AppEvent::Tick(start + LONG_RUNNING_AFTER));
+        let delayed = rendered_app(80, 20, &mut app);
+        assert!(delayed.contains("previous result"));
+        assert!(delayed.contains("Still processing · Previous result shown"));
     }
 
     fn click(app: &mut App, area: Rect, now: Instant) -> Vec<Effect> {
@@ -1432,7 +1457,7 @@ mod tests {
         assert!(!screen.contains("secret"));
         assert!(!screen.contains("Option"));
 
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(start, ExecutionTarget::Step(0));
         app.output.source = OutputSource::Step(0);
         app.output.traces.clear();
         let running = rendered_app(80, 20, &mut app);
@@ -1895,7 +1920,7 @@ mod tests {
             enabled: true,
         });
         app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(now(), ExecutionTarget::Step(0));
 
         let screen = rendered_app(80, 16, &mut app);
         assert!(screen.contains("[ON]  › URL Encode"));
@@ -2061,7 +2086,7 @@ mod tests {
             enabled: true,
         });
         app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(now(), ExecutionTarget::Step(0));
         let running = rendered_app(89, 20, &mut app);
         assert!(running.contains("[ON]  › URL Encode"));
 
@@ -2094,7 +2119,7 @@ mod tests {
             })
             .collect();
         app.output.source = OutputSource::Final;
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(now(), ExecutionTarget::Final);
 
         let screen = rendered_app(89, 20, &mut app);
 
@@ -2114,7 +2139,7 @@ mod tests {
             })
             .collect();
         app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(now(), ExecutionTarget::Step(0));
 
         let screen = rendered_app(89, 20, &mut app);
         let target = screen
@@ -2139,7 +2164,7 @@ mod tests {
             enabled: true,
         });
         app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(now(), ExecutionTarget::Step(0));
 
         let screen = rendered_app(89, 20, &mut app);
 
@@ -2241,7 +2266,7 @@ mod tests {
             enabled: true,
         });
         app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::Running;
+        app.output.status = OutputStatus::running(now(), ExecutionTarget::Step(0));
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
         let buffer = terminal.backend().buffer();

@@ -64,6 +64,10 @@ UTF-8은 원문, 비 UTF-8은 공백 없는 소문자 Hex로 복사합니다. �
 아니라 현재 Output의 FINAL 또는 STEP 원본을 사용하며 Trace에서는 비활성입니다.
 위험한 UTF-8 제어 문자는 복사 전에 확인합니다.
 
+변환 대기 중에는 이전 Output과 Trace를 그대로 표시하지만 복사는 비활성화됩니다.
+처리가 시작된 뒤 1초를 넘으면 Footer에 이전 결과를 표시 중이라는 안내와 `Esc`
+취소 키를 표시합니다. 실패하거나 취소되면 이전 결과를 현재 결과처럼 남기지 않습니다.
+
 - 전역: `Tab`/`Shift+Tab` 패널 이동, `F3` Pretty Copy, `F4` Raw Copy,
   `Ctrl+P` 변환 추가, `F1` 도움말
 - Pipeline: `j`/`k` 선택, `J`/`K` 이동, `Space` 전환, `d` 삭제, `Enter` 검사
