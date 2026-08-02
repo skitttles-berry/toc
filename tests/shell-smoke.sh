@@ -201,12 +201,12 @@ tui_run() {
             } else {
                 set replica $spawn_out(replica,name)
             }
-            expect_exact "\033\[?1000h\033\[?1002h\033\[?1003h\033\[?1015h\033\[?1006h" 148 149
-            expect_exact "FOCUS:" 91 92
-            expect_exact "INPUT" 91 92
-            expect_exact "PIPELINE" 91 92
-            expect_exact "INPUT" 91 92
-            expect_exact "OUTPUT" 91 92
+            expect_exact "\033\[?1049h" 146 147
+            expect_exact "\033\[>1u" 148 149
+            expect_exact "\033\[?2004h" 150 151
+            expect_exact "\033\[?1000h\033\[?1002h\033\[?1003h\033\[?1015h\033\[?1006h" 152 153
+            expect_exact ">_" 91 92
+            expect_exact "TOC" 91 92
 
             set mode $env(TOC_SMOKE_TUI_MODE)
             if {$mode eq "normal"} {
@@ -232,21 +232,19 @@ tui_run() {
                 send -- "\t"
                 expect_exact "PIPELINE" 140 141
                 send -- "\t"
-                expect_exact "\033\[1;19HIN" 142 143
-                expect_exact "\033\[1;22HUT" 142 143
                 stty rows 5 columns 30 < $replica
                 expect_exact "Increase" 95 96
                 stty rows 24 columns 120 < $replica
                 expect_exact $env(TOC_SMOKE_TEXT_EXPECTED) 109 110
                 confirm_discard
-                send -- "y"
+                send -- "\r"
             } elseif {$mode eq "interrupt"} {
                 send -- "\003"
             } else {
                 prepare_binary_preview
                 send -- "\t"
                 expect_exact "OUTPUT" 144 145
-                send -- "y"
+                send -- "\r"
                 if {$mode eq "unavailable"} {
                     # The unchanged "C" is omitted by the incremental redraw.
                     expect_exact "unavailable" 101 102
@@ -302,7 +300,8 @@ tui_run() {
             expect_exact "\033\[?25h" 146 147
             expect_exact "\033\[?1006l\033\[?1015l\033\[?1003l\033\[?1002l\033\[?1000l" 158 159
             expect_exact "\033\[?2004l" 112 113
-            expect_exact "\033\[?1049l" 114 115
+            expect_exact "\033\[<1u" 114 115
+            expect_exact "\033\[?1049l" 116 117
             expect {
                 eof {}
                 timeout { exit 116 }

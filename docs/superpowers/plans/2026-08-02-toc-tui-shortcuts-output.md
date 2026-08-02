@@ -818,7 +818,8 @@ expect_exact "\033\[?1049h" 146 147
 expect_exact "\033\[>1u" 148 149
 expect_exact "\033\[?2004h" 150 151
 expect_exact "\033\[?1000h\033\[?1002h\033\[?1003h\033\[?1015h\033\[?1006h" 152 153
-expect_exact ">_ TOC" 91 92
+expect_exact ">_" 91 92
+expect_exact "TOC" 91 92
 ```
 
 `FOCUS:` 기대를 삭제한다. Output 복사는 `send -- "y"` 대신 `send -- "\r"`을 사용한다. 종료 시 Mouse Disable → Paste Disable → `\033[<1u` → Alternate Leave 순서를 검증한다.
