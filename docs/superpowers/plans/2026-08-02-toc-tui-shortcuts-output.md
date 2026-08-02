@@ -41,6 +41,7 @@
 
 **Files:**
 - Modify: `src/tui.rs:8-16,43-114,199-225,251-340`
+- Modify: `README.md:51-91` — Shift+Enter 터미널 조건
 
 **Interfaces:**
 - Consumes: 기존 `execute_tracked<W, C>(writer, active, command) -> io::Result<()>`와 `TerminalSession` 복구 순서
@@ -124,7 +125,7 @@ Expected: 경고와 오류 없이 성공
 - [ ] **Step 6: 커밋**
 
 ```bash
-rtk git add -- src/tui.rs
+rtk git add -- src/tui.rs README.md
 rtk git commit -m 'feat(tui): 수정자 Enter 입력 활성화'
 ```
 
@@ -134,6 +135,9 @@ rtk git commit -m 'feat(tui): 수정자 Enter 입력 활성화'
 
 **Files:**
 - Modify: `src/tui/state.rs:36-43,427-470,892-981,1038-1047,1134-1277,1690-2440`
+- Modify: `README.md:51-91` — 영문·한글 단축키와 Pipeline 삭제
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md` — 이전 키 계약 현행화
+- Modify: `docs/superpowers/specs/2026-08-01-toc-quiet-prism-design.md` — 이전 키 계약 현행화
 
 **Interfaces:**
 - Consumes: `request_copy(CopyMode) -> Vec<Effect>`, `delete_selected(now)`, `request_selected_step(now)`, `restore_final()`, `changed(now)`
@@ -327,7 +331,9 @@ Expected: 경고와 오류 없이 성공
 - [ ] **Step 6: 커밋**
 
 ```bash
-rtk git add -- src/tui/state.rs
+rtk git add -- src/tui/state.rs README.md \
+  docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md \
+  docs/superpowers/specs/2026-08-01-toc-quiet-prism-design.md
 rtk git commit -m 'feat(tui): 한글 단축키와 출력 복사 적용'
 ```
 
@@ -337,6 +343,9 @@ rtk git commit -m 'feat(tui): 한글 단축키와 출력 복사 적용'
 
 **Files:**
 - Modify: `src/tui/render.rs:102-130,303-540,819-870,1530-1905,2620-2672`
+- Modify: `README.md:51-91` — App Bar·Output 제목·도움말
+- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md` — 이전 제목·Dock 계약 현행화
+- Modify: `docs/superpowers/specs/2026-08-01-toc-quiet-prism-design.md` — App Bar·Dock 계약 현행화
 
 **Interfaces:**
 - Consumes: `App.focus`, `OutputSource`, `OutputStatus::Ready`, `Artifact::bytes()`, `App::can_copy()`
@@ -446,7 +455,9 @@ Expected: Diff 없이 성공
 - [ ] **Step 6: 커밋**
 
 ```bash
-rtk git add -- src/tui/render.rs
+rtk git add -- src/tui/render.rs README.md \
+  docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md \
+  docs/superpowers/specs/2026-08-01-toc-quiet-prism-design.md
 rtk git commit -m 'feat(tui): 단축키 안내와 화면 제목 정리'
 ```
 
@@ -458,6 +469,7 @@ rtk git commit -m 'feat(tui): 단축키 안내와 화면 제목 정리'
 - Modify: `src/tui/views.rs:1-7,268-316,423-658`
 - Modify: `src/tui/state.rs:17-21,176-186,1038-1132,2369-2422`
 - Modify: `src/tui/render.rs:1-22,121-202,1908-2047,2552-2618`
+- Modify: `README.md:51-91` — 반응형 Hex 표
 
 **Interfaces:**
 - Produces: `hex_bytes_per_row(columns: usize) -> usize`
@@ -648,7 +660,7 @@ Expected: `running 1 test`, `1 passed`
 - [ ] **Step 7: 커밋**
 
 ```bash
-rtk git add -- src/tui/views.rs src/tui/state.rs src/tui/render.rs
+rtk git add -- src/tui/views.rs src/tui/state.rs src/tui/render.rs README.md
 rtk git commit -m 'feat(tui): 반응형 Hex 표 적용'
 ```
 
@@ -659,6 +671,7 @@ rtk git commit -m 'feat(tui): 반응형 Hex 표 적용'
 **Files:**
 - Modify: `src/tui/views.rs:318-421,659-745`
 - Modify: `src/tui/render.rs:1-22,121-202,1908-2325,2552-2618`
+- Modify: `README.md:51-91` — Trace 표와 첫 실패 상세
 
 **Interfaces:**
 - Consumes: `StepTrace`, `StepStatus`, `render_transform_error_summary(error) -> String`, `transform_by_id(id)`
@@ -781,7 +794,7 @@ Expected: 모든 View 시험 통과
 - [ ] **Step 7: 커밋**
 
 ```bash
-rtk git add -- src/tui/views.rs src/tui/render.rs
+rtk git add -- src/tui/views.rs src/tui/render.rs README.md
 rtk git commit -m 'feat(tui): Trace 표와 실패 상세 적용'
 ```
 
@@ -844,20 +857,20 @@ rtk git commit -m 'test(tui): 새 키 입력 PTY 계약 검증'
 
 ---
 
-### Task 7: 사용자 문서와 이전 설계 계약 현행화
+### Task 7: 사용자 문서와 이전 설계 계약 일관성 감사
 
 **Files:**
-- Modify: `README.md:51-91`
-- Modify: `docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md:37-53,104-162,207-220`
-- Modify: `docs/superpowers/specs/2026-08-01-toc-quiet-prism-design.md:21-58,85-123`
+- Inspect: `README.md:51-91`
+- Inspect: `docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md:37-53,104-162,207-220`
+- Inspect: `docs/superpowers/specs/2026-08-01-toc-quiet-prism-design.md:21-58,85-123`
 
 **Interfaces:**
 - Consumes: Tasks 1–6에서 확정된 실제 키, 제목, Hex·Trace와 터미널 호환성
-- Produces: 실행 중인 제품과 일치하는 README·설계 문서
+- Produces: Tasks 1–5의 각 기능 커밋에 이미 포함된 README·설계 문서가 실행 중인 제품과 일치한다는 감사 결과
 
-- [ ] **Step 1: README의 TUI 계약 갱신**
+- [ ] **Step 1: README의 TUI 계약 감사**
 
-다음 내용을 정확히 반영한다.
+다음 내용이 Tasks 1–5의 커밋에 이미 반영되었는지 확인한다.
 
 ```markdown
 - 전역: `Tab`/`Shift+Tab` 패널 이동, `Ctrl+p`/`Ctrl+ㅔ` 변환 추가, `F1` 도움말
@@ -869,11 +882,11 @@ rtk git commit -m 'test(tui): 새 키 입력 PTY 계약 검증'
   `Ctrl+c` 강제 종료
 ```
 
-App Bar의 FOCUS와 최종 Output의 FINAL이 제거되었음을 설명하고, Hex의 16·8바이트 반응형 표와 Trace 첫 실패 상세를 추가한다. 점진적 키보드 향상을 지원하지 않는 터미널은 Shift+Enter를 Enter와 구분하지 못할 수 있으며, 해당 환경에서는 Raw Copy 키가 제한됨을 숨기지 않는다.
+App Bar의 FOCUS와 최종 Output의 FINAL 제거, Hex의 16·8바이트 반응형 표, Trace 첫 실패 상세가 모두 설명되었는지 확인한다. 점진적 키보드 향상을 지원하지 않는 터미널은 Shift+Enter를 Enter와 구분하지 못할 수 있으며, 해당 환경에서는 Raw Copy 키가 제한됨이 명시되었는지 확인한다.
 
-- [ ] **Step 2: 이전 두 설계 문서의 현재 계약 갱신**
+- [ ] **Step 2: 이전 두 설계 문서의 현재 계약 감사**
 
-`2026-07-31-toc-tui-ux-refresh-design.md`와 `2026-08-01-toc-quiet-prism-design.md`에서 다음 이전 문자열을 현재 계약으로 교체한다.
+`2026-07-31-toc-tui-ux-refresh-design.md`와 `2026-08-01-toc-quiet-prism-design.md`에서 다음 이전 문자열이 현재 계약으로 교체되었는지 확인한다.
 
 - `>_ TOC │ FOCUS: OUTPUT` → `>_ TOC`
 - `OUTPUT / FINAL / SMART` → 예시 `OUTPUT / SMART · 17 B`
@@ -889,17 +902,13 @@ App Bar의 FOCUS와 최종 Output의 FINAL이 제거되었음을 설명하고, H
 Run: `rtk rg --color=never -n 'F3|F4|j/k|J/K|v/V|Enter/y|FOCUS:|OUTPUT / FINAL' README.md docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md docs/superpowers/specs/2026-08-01-toc-quiet-prism-design.md`  
 Expected: 현재 계약으로 대체되었다고 설명하는 역사 문맥 외에는 결과 없음
 
-- [ ] **Step 4: 문서 Diff 점검과 커밋**
+- [ ] **Step 4: 문서 Diff·커밋 경계 점검**
 
 Run: `rtk git -c color.ui=false diff --check`  
 Expected: 공백 오류 없음
 
-```bash
-rtk git add -- README.md \
-  docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md \
-  docs/superpowers/specs/2026-08-01-toc-quiet-prism-design.md
-rtk git commit -m 'docs(tui): 새 단축키와 출력 보기 현행화'
-```
+Run: `rtk git -c color.ui=false status --short`  
+Expected: 문서 수정이 남아 있지 않음. 누락이 있으면 새 문서 커밋을 만들지 않고 해당 기능 Task의 검토 루프로 되돌린다.
 
 ---
 
