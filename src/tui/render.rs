@@ -5,22 +5,25 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Cell, Clear, List, ListItem, Paragraph, Row, Shadow, Table, Wrap,
+        Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Shadow, Table,
+        Wrap,
     },
 };
+use unicode_segmentation::UnicodeSegmentation as _;
 use unicode_width::UnicodeWidthStr as _;
 
 use crate::{
     error::AppError,
     pipeline::{ExecutionTarget, StepStatus},
+    transforms::transform_by_id,
 };
 
 use super::{
     state::{App, Modal, MouseRegions, OutputSource, OutputStatus, Pane},
     views::{
-        EffectiveView, TEXT_VIEW_UNAVAILABLE_MESSAGE, ViewMode, effective_view,
-        render_pipeline_error_summary, render_text_window, render_trace_window,
-        render_transform_error_summary, visible_hex_rows, with_bounded_header,
+        EffectiveView, TEXT_VIEW_UNAVAILABLE_MESSAGE, VISIBLE_TEXT_BYTE_BUDGET, ViewMode,
+        effective_view, render_pipeline_error_summary, render_text_window,
+        render_transform_error_summary, trace_status, visible_hex_rows,
     },
 };
 
@@ -264,6 +267,234 @@ fn render_hex_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(table, area);
 }
 
+fn trace_status_style(app: &App, status: StepStatus) -> Style {
+    if app.no_color {
+        return Style::default();
+    }
+    Style::default().fg(match status {
+        StepStatus::Succeeded => GREEN,
+        StepStatus::Failed => RED,
+        StepStatus::Cancelled => YELLOW,
+        StepStatus::Disabled | StepStatus::NotExecuted => MUTED,
+    })
+}
+
+fn failure_style(app: &App) -> Style {
+    if app.no_color {
+        Style::default()
+    } else {
+        Style::default().fg(RED).bg(SURFACE_HIGH)
+    }
+}
+
+fn trace_prefix(text: &str, columns: usize, byte_budget: usize) -> String {
+    let mut output = String::new();
+    let mut used_width = 0usize;
+    for grapheme in text.graphemes(true) {
+        if output.len().saturating_add(grapheme.len()) > byte_budget
+            || used_width.saturating_add(grapheme.width()) > columns
+        {
+            break;
+        }
+        output.push_str(grapheme);
+        used_width += grapheme.width();
+    }
+    output
+}
+
+fn operation_name(transform_id: &str, width: usize) -> String {
+    let name = transform_by_id(transform_id)
+        .map(|transform| transform.display_name.to_string())
+        .unwrap_or_else(|| crate::error::escape_external(transform_id, width));
+    trace_prefix(&name, width, usize::MAX)
+}
+
+fn trace_cell(text: &str, width: usize, row_budget: &mut usize) -> Cell<'static> {
+    let text = trace_prefix(text, width, *row_budget);
+    *row_budget = row_budget.saturating_sub(text.len());
+    Cell::from(text)
+}
+
+fn trace_status_cell(
+    app: &App,
+    status: StepStatus,
+    width: usize,
+    row_budget: &mut usize,
+) -> Cell<'static> {
+    trace_cell(trace_status(status), width, row_budget).style(trace_status_style(app, status))
+}
+
+fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let columns = area.width as usize;
+    let wide = columns >= 70;
+    let (headers, widths) = if wide {
+        (
+            vec!["STEP", "OPERATION", "INPUT", "OUTPUT", "TIME", "STATUS"],
+            vec![5, columns.saturating_sub(47).max(1), 9, 9, 10, 9],
+        )
+    } else {
+        (
+            vec!["STEP", "OPERATION", "SIZE", "STATUS"],
+            vec![5, columns.saturating_sub(29).max(1), 12, 9],
+        )
+    };
+    let header_cost = headers.iter().map(|header| header.len()).sum::<usize>();
+    let traces = &app.output.traces[..app.output.traces.len().min(32)];
+    let failure_index = traces
+        .iter()
+        .position(|trace| trace.status == StepStatus::Failed);
+    let failure = failure_index.and_then(|index| traces.get(index));
+    let detail_height = failure
+        .filter(|trace| trace.error.is_some())
+        .map_or(0, |_| {
+            if area.height >= 5 {
+                3
+            } else {
+                area.height.saturating_sub(2).min(2)
+            }
+        });
+    let (table_area, detail_area) = if detail_height == 0 {
+        (area, None)
+    } else if area.height >= 5 {
+        let areas = Layout::vertical([Constraint::Min(2), Constraint::Length(3)]).split(area);
+        (areas[0], Some(areas[1]))
+    } else {
+        let areas = Layout::vertical([Constraint::Length(2), Constraint::Length(detail_height)])
+            .split(area);
+        (areas[0], Some(areas[1]))
+    };
+
+    let mut remaining_budget = VISIBLE_TEXT_BYTE_BUDGET.saturating_sub(header_cost);
+    let detail = failure.zip(detail_area).and_then(|(trace, detail_area)| {
+        let error = trace.error.as_ref()?;
+        let detail_width = detail_area.width.saturating_sub(1) as usize;
+        let title = trace_prefix(
+            &format!(
+                "STEP {} · {}",
+                trace.step,
+                operation_name(trace.transform_id, detail_width)
+            ),
+            detail_width,
+            remaining_budget,
+        );
+        remaining_budget = remaining_budget.saturating_sub(title.len());
+        let summary = (detail_area.height >= 2).then(|| {
+            let summary = trace_prefix(
+                &render_transform_error_summary(error),
+                detail_width,
+                remaining_budget,
+            );
+            remaining_budget = remaining_budget.saturating_sub(summary.len());
+            summary
+        });
+        Some((detail_area, title, summary))
+    });
+
+    let start = if area.height < 5 {
+        failure_index.unwrap_or(app.output.row_offset)
+    } else {
+        app.output.row_offset
+    }
+    .min(traces.len());
+    let visible_rows = table_area.height.saturating_sub(1) as usize;
+    let budget_rows = remaining_budget / columns.max(1);
+    let take = visible_rows
+        .min(budget_rows)
+        .min(traces.len().saturating_sub(start));
+    let rows = traces
+        .iter()
+        .skip(start)
+        .take(take)
+        .map(|trace| {
+            let mut row_budget = columns;
+            let operation = operation_name(trace.transform_id, widths[1]);
+            let mut cells = vec![
+                trace_cell(&format!("#{}", trace.step), widths[0], &mut row_budget),
+                trace_cell(&operation, widths[1], &mut row_budget),
+            ];
+            if wide {
+                cells.extend([
+                    trace_cell(
+                        &trace
+                            .input_bytes
+                            .map_or_else(|| "—".to_string(), |bytes| format!("{bytes} B")),
+                        widths[2],
+                        &mut row_budget,
+                    ),
+                    trace_cell(
+                        &trace
+                            .output_bytes
+                            .map_or_else(|| "—".to_string(), |bytes| format!("{bytes} B")),
+                        widths[3],
+                        &mut row_budget,
+                    ),
+                    trace_cell(
+                        &trace.elapsed.map_or_else(
+                            || "—".to_string(),
+                            |elapsed| format!("{} µs", elapsed.as_micros()),
+                        ),
+                        widths[4],
+                        &mut row_budget,
+                    ),
+                    trace_status_cell(app, trace.status, widths[5], &mut row_budget),
+                ]);
+            } else {
+                let input = trace
+                    .input_bytes
+                    .map_or_else(|| "—".to_string(), |bytes| bytes.to_string());
+                let output = trace
+                    .output_bytes
+                    .map_or_else(|| "—".to_string(), |bytes| bytes.to_string());
+                cells.extend([
+                    trace_cell(&format!("{input}→{output} B"), widths[2], &mut row_budget),
+                    trace_status_cell(app, trace.status, widths[3], &mut row_budget),
+                ]);
+            }
+            let row = Row::new(cells);
+            if trace.status == StepStatus::Failed {
+                row.style(failure_style(app))
+            } else {
+                row
+            }
+        })
+        .collect::<Vec<_>>();
+    let header_style = hex_style(app, MUTED);
+    let header = Row::new(
+        headers
+            .into_iter()
+            .map(|header| Cell::from(header).style(header_style)),
+    );
+    let constraints = widths
+        .into_iter()
+        .map(|width| Constraint::Length(width as u16))
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Table::new(rows, constraints)
+            .header(header)
+            .column_spacing(1),
+        table_area,
+    );
+
+    if let Some((detail_area, title, summary)) = detail {
+        let mut lines = vec![Line::styled(title, failure_style(app))];
+        if let Some(summary) = summary {
+            lines.push(Line::raw(summary));
+        }
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::LEFT)
+                    .border_style(failure_style(app)),
+            ),
+            detail_area,
+        );
+    }
+}
+
 fn render_output(
     frame: &mut Frame<'_>,
     app: &mut App,
@@ -319,23 +550,23 @@ fn render_output(
                 return;
             }
             EffectiveView::Trace => {
-                let body = if app.output.traces.is_empty() {
-                    match status {
-                        OutputStatus::Failed(error) => crate::error::escape_external(
-                            &render_pipeline_error_summary(error),
-                            columns.saturating_mul(rows).min(512),
-                        ),
-                        _ => String::new(),
-                    }
-                } else {
-                    render_trace_window(
-                        &app.output.traces,
-                        app.output.row_offset,
-                        rows.saturating_sub(1),
-                        columns,
-                    )
-                };
-                with_bounded_header("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS", body)
+                render_trace_table(frame, app, inner);
+                if app.output.traces.is_empty()
+                    && let OutputStatus::Failed(error) = status
+                {
+                    let error_area = Rect::new(
+                        inner.x,
+                        inner.y.saturating_add(1),
+                        inner.width,
+                        inner.height.saturating_sub(1),
+                    );
+                    let error = crate::error::escape_external(
+                        &render_pipeline_error_summary(error),
+                        columns.saturating_mul(rows).min(512),
+                    );
+                    frame.render_widget(Paragraph::new(error), error_area);
+                }
+                return;
             }
             EffectiveView::Unavailable => TEXT_VIEW_UNAVAILABLE_MESSAGE.to_string(),
         },
@@ -1768,8 +1999,19 @@ mod tests {
         }];
         let trace = rendered_app(89, 20, &mut app);
         assert!(trace.contains("» OUTPUT / STEP 02 / TRACE"));
-        assert!(trace.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
-        assert!(trace.contains("#2 hex-decode OK"));
+        for expected in [
+            "STEP",
+            "OPERATION",
+            "INPUT",
+            "OUTPUT",
+            "TIME",
+            "STATUS",
+            "#2",
+            "Hex Decode",
+            "OK",
+        ] {
+            assert!(trace.contains(expected), "missing {expected}: {trace}");
+        }
     }
 
     #[test]
@@ -2093,7 +2335,9 @@ mod tests {
 
         let smart = rendered_app(89, 20, &mut app);
         assert!(smart.contains("» OUTPUT / SMART"));
-        assert!(smart.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
+        for header in ["STEP", "OPERATION", "INPUT", "OUTPUT", "TIME", "STATUS"] {
+            assert!(smart.contains(header), "missing {header}: {smart}");
+        }
         assert!(smart.contains("chain exceeds 32 steps"));
         assert!(!smart.contains("stale secret"));
 
@@ -2199,24 +2443,300 @@ mod tests {
     }
 
     #[test]
-    fn trace_view_reserves_header_space_inside_the_budget() {
-        let traces = (1..=32)
-            .map(|step| StepTrace {
-                step,
-                transform_id: "very-long-transform-operation-name-used-to-fill-the-bounded-trace-view-without-rendering-any-input-or-output-body",
-                input_bytes: Some(step),
-                output_bytes: Some(step),
-                elapsed: Some(Duration::from_millis(1)),
+    fn trace_table_uses_display_names_columns_and_safe_first_failure_detail() {
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Output;
+        app.zoom = Some(Pane::Output);
+        app.output.status = OutputStatus::Failed(PipelineError::Step {
+            step: 2,
+            transform_id: "format-json",
+            source: TransformError::InvalidUtf8Output {
+                preview_hex: "736563726574".to_string(),
+                total_bytes: 6,
+            },
+        });
+        app.output.view = ViewMode::Trace;
+        app.output.traces = vec![
+            StepTrace {
+                step: 1,
+                transform_id: "base64-decode",
+                input_bytes: Some(24),
+                output_bytes: Some(17),
+                elapsed: Some(Duration::from_micros(80)),
                 status: StepStatus::Succeeded,
+                error: None,
+            },
+            StepTrace {
+                step: 2,
+                transform_id: "format-json",
+                input_bytes: Some(17),
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::Failed,
+                error: Some(TransformError::InvalidUtf8Output {
+                    preview_hex: "736563726574".to_string(),
+                    total_bytes: 6,
+                }),
+            },
+        ];
+
+        let wide = rendered_app(120, 12, &mut app);
+        for expected in [
+            "STEP",
+            "OPERATION",
+            "INPUT",
+            "OUTPUT",
+            "TIME",
+            "STATUS",
+            "Base64 Decode",
+            "JSON Prettify",
+            "OK",
+            "ERROR",
+            "STEP 2 · JSON Prettify",
+            "output is not valid UTF-8 (6 bytes)",
+        ] {
+            assert!(wide.contains(expected), "missing {expected}: {wide}");
+        }
+        assert!(!wide.contains("736563726574"));
+        assert!(!wide.contains("secret"));
+
+        let compact = rendered_app(69, 12, &mut app);
+        assert!(compact.contains("SIZE"));
+        assert!(compact.contains("24→17 B"));
+        assert!(!compact.contains("TIME"));
+    }
+
+    #[test]
+    fn trace_status_cells_keep_color_and_no_color_meaning() {
+        let statuses = [
+            (StepStatus::Succeeded, "OK", GREEN),
+            (StepStatus::Disabled, "OFF", MUTED),
+            (StepStatus::Failed, "ERROR", RED),
+            (StepStatus::NotExecuted, "NOT RUN", MUTED),
+            (StepStatus::Cancelled, "CANCELLED", YELLOW),
+        ];
+        let traces = statuses
+            .iter()
+            .enumerate()
+            .map(|(index, (status, _, _))| StepTrace {
+                step: index + 1,
+                transform_id: "base64-encode",
+                input_bytes: None,
+                output_bytes: None,
+                elapsed: None,
+                status: *status,
                 error: None,
             })
             .collect::<Vec<_>>();
-        let trace = with_bounded_header(
-            "STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS",
-            render_trace_window(&traces, 0, 1_000, 1_000),
+
+        let mut colored = App::new(now(), false);
+        colored.output.traces = traces.clone();
+        let backend = TestBackend::new(80, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_trace_table(frame, &colored, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        for (status, label, color) in statuses {
+            assert_eq!(trace_status(status), label);
+            let symbols = label
+                .chars()
+                .map(|symbol| symbol.to_string())
+                .collect::<Vec<_>>();
+            let cell = buffer
+                .content()
+                .chunks(80)
+                .find_map(|row| {
+                    row.windows(symbols.len()).find_map(|cells| {
+                        cells
+                            .iter()
+                            .map(|cell| cell.symbol())
+                            .eq(symbols.iter().map(String::as_str))
+                            .then_some(&cells[0])
+                    })
+                })
+                .unwrap();
+            assert_eq!(cell.fg, color, "wrong color for {label}");
+            assert_eq!(
+                cell.bg,
+                if status == StepStatus::Failed {
+                    SURFACE_HIGH
+                } else {
+                    Color::Reset
+                },
+                "wrong background for {label}"
+            );
+        }
+
+        let mut no_color = App::new(now(), true);
+        no_color.output.traces = traces;
+        let backend = TestBackend::new(80, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_trace_table(frame, &no_color, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let screen = buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        for (_, label, _) in statuses {
+            assert!(screen.contains(label));
+        }
+        assert!(
+            buffer
+                .content()
+                .iter()
+                .all(|cell| cell.fg == Color::Reset && cell.bg == Color::Reset)
         );
-        assert!(trace.starts_with("STEP  OPERATION"));
-        assert!(trace.len() <= 4 * 1024);
+    }
+
+    #[test]
+    fn short_trace_prioritizes_failure_and_uses_remaining_detail_space() {
+        let mut app = App::new(now(), true);
+        app.output.traces = vec![
+            StepTrace {
+                step: 1,
+                transform_id: "base64-decode",
+                input_bytes: Some(24),
+                output_bytes: Some(17),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            },
+            StepTrace {
+                step: 2,
+                transform_id: "url-decode",
+                input_bytes: Some(17),
+                output_bytes: Some(17),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            },
+            StepTrace {
+                step: 3,
+                transform_id: "format-json",
+                input_bytes: Some(17),
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::Failed,
+                error: Some(TransformError::InvalidUtf8Output {
+                    preview_hex: "736563726574".to_string(),
+                    total_bytes: 6,
+                }),
+            },
+        ];
+        let backend = TestBackend::new(69, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_trace_table(frame, &app, frame.area()))
+            .unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(69)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(screen.contains("#3"));
+        assert!(screen.contains("ERROR"));
+        assert!(screen.contains("STEP 3 · JSON Prettify"));
+        assert!(screen.contains("output is not valid UTF-8 (6 bytes)"));
+        assert!(!screen.contains("#1"));
+    }
+
+    #[test]
+    fn trace_table_never_exposes_invalid_utf8_preview() {
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Output;
+        app.zoom = Some(Pane::Output);
+        app.output.status = OutputStatus::Failed(PipelineError::Step {
+            step: 1,
+            transform_id: "format-json",
+            source: TransformError::InvalidUtf8Output {
+                preview_hex: "736563726574".to_string(),
+                total_bytes: 6,
+            },
+        });
+        app.output.view = ViewMode::Trace;
+        app.output.traces.push(StepTrace {
+            step: 1,
+            transform_id: "format-json",
+            input_bytes: Some(6),
+            output_bytes: None,
+            elapsed: None,
+            status: StepStatus::Failed,
+            error: Some(TransformError::InvalidUtf8Output {
+                preview_hex: "736563726574".to_string(),
+                total_bytes: 6,
+            }),
+        });
+
+        let screen = rendered_app(120, 12, &mut app);
+
+        assert!(screen.contains("output is not valid UTF-8 (6 bytes)"));
+        assert!(!screen.contains("736563726574"));
+        assert!(!screen.contains("secret"));
+        assert!(!screen.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn composed_hex_and_trace_views_reserve_header_space_inside_the_budget() {
+        const OPERATION: &str = "very-long-transform-operation-name-used-to-fill-the-bounded-trace-view-without-rendering-any-input-or-output-body";
+        let mut app = App::new(now(), true);
+        app.output.traces = (1..=32)
+            .map(|step| StepTrace {
+                step,
+                transform_id: OPERATION,
+                input_bytes: Some(step),
+                output_bytes: Some(step),
+                elapsed: Some(Duration::from_micros(1)),
+                status: if step == 32 {
+                    StepStatus::Failed
+                } else {
+                    StepStatus::Succeeded
+                },
+                error: (step == 32).then_some(TransformError::InvalidUtf8Output {
+                    preview_hex: "736563726574".to_string(),
+                    total_bytes: 6,
+                }),
+            })
+            .collect::<Vec<_>>();
+        let backend = TestBackend::new(1_000, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_trace_table(frame, &app, frame.area()))
+            .unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(1_000)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rendered_rows = screen
+            .lines()
+            .filter(|line| line.contains(OPERATION))
+            .count()
+            - 1;
+        let detail_title = format!("STEP 32 · {OPERATION}");
+        let detail_summary = "output is not valid UTF-8 (6 bytes)";
+        let header_cost = ["STEP", "OPERATION", "INPUT", "OUTPUT", "TIME", "STATUS"]
+            .into_iter()
+            .map(str::len)
+            .sum::<usize>();
+
+        assert!(screen.contains("STEP"));
+        assert!(screen.contains(&detail_title));
+        assert!(screen.contains(detail_summary));
+        assert!(
+            header_cost + detail_title.len() + detail_summary.len() + rendered_rows * 1_000
+                <= VISIBLE_TEXT_BYTE_BUDGET
+        );
     }
 
     #[test]
@@ -2559,8 +3079,11 @@ mod tests {
         );
         assert_eq!(app.output.traces, final_traces);
         assert!(screen.contains("» OUTPUT / TRACE"));
-        assert!(screen.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
-        assert!(screen.contains("#2 hex-encode"));
+        for expected in ["STEP", "OPERATION", "INPUT", "OUTPUT", "TIME", "STATUS"] {
+            assert!(screen.contains(expected), "missing {expected}: {screen}");
+        }
+        assert!(screen.contains("#2"));
+        assert!(screen.contains("Hex Encode"));
         assert!(hex_row.contains("[ON]  ✓ Hex Encode"));
         assert!(!hex_row.contains("NOT RUN"));
     }

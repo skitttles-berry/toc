@@ -3,7 +3,7 @@ use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation as _;
 use unicode_width::UnicodeWidthStr as _;
 
-const VISIBLE_TEXT_BYTE_BUDGET: usize = 4 * 1024;
+pub(super) const VISIBLE_TEXT_BYTE_BUDGET: usize = 4 * 1024;
 pub(super) const TEXT_VIEW_UNAVAILABLE_MESSAGE: &str = "Switch to Hex view";
 
 #[derive(Clone, Debug)]
@@ -110,38 +110,6 @@ fn bounded_utf8_text(artifact: &Artifact, offset: usize) -> Option<(usize, &str)
 
 fn is_dangerous_text_control(character: char) -> bool {
     character == '\r' || crate::error::is_dangerous_control(character)
-}
-
-fn safe_grapheme_prefix(text: &str, columns: usize, byte_budget: usize) -> String {
-    let mut output = String::new();
-    let mut used_width = 0;
-    for grapheme in text.graphemes(true) {
-        let dangerous = grapheme.chars().any(crate::error::is_dangerous_control);
-        let escaped =
-            dangerous.then(|| crate::error::escape_controls(grapheme, grapheme.chars().count()));
-        let rendered = escaped.as_deref().unwrap_or(grapheme);
-        if output.len() + rendered.len() > byte_budget || used_width + rendered.width() > columns {
-            break;
-        }
-        output.push_str(rendered);
-        used_width += rendered.width();
-    }
-    output
-}
-
-pub(super) fn with_bounded_header(header: &str, body: String) -> String {
-    let mut output = safe_grapheme_prefix(header, usize::MAX, VISIBLE_TEXT_BYTE_BUDGET);
-    if body.is_empty() || output.len() == VISIBLE_TEXT_BYTE_BUDGET {
-        return output;
-    }
-    output.push('\n');
-    let remaining = VISIBLE_TEXT_BYTE_BUDGET.saturating_sub(output.len());
-    let mut end = body.len().min(remaining);
-    while !body.is_char_boundary(end) {
-        end -= 1;
-    }
-    output.push_str(&body[..end]);
-    output
 }
 
 pub(super) fn render_text_window(
@@ -307,7 +275,7 @@ pub(super) fn visible_hex_rows<'a>(
     visible
 }
 
-fn trace_status(status: crate::pipeline::StepStatus) -> &'static str {
+pub(super) fn trace_status(status: crate::pipeline::StepStatus) -> &'static str {
     match status {
         crate::pipeline::StepStatus::Succeeded => "OK",
         crate::pipeline::StepStatus::Disabled => "OFF",
@@ -370,56 +338,9 @@ pub(super) fn render_pipeline_error_summary(error: &crate::error::PipelineError)
     }
 }
 
-pub(super) fn render_trace_window(
-    traces: &[crate::pipeline::StepTrace],
-    first_row: usize,
-    rows: usize,
-    columns: usize,
-) -> String {
-    use std::fmt::Write as _;
-
-    let mut output = String::new();
-    for trace in traces.iter().take(32).skip(first_row).take(rows) {
-        let mut line = format!(
-            "#{} {} {}",
-            trace.step,
-            crate::error::escape_external(trace.transform_id, 128),
-            trace_status(trace.status)
-        );
-        if let Some(input_bytes) = trace.input_bytes {
-            write!(line, " in:{input_bytes}B").expect("writing to String cannot fail");
-        }
-        if let Some(output_bytes) = trace.output_bytes {
-            write!(line, " out:{output_bytes}B").expect("writing to String cannot fail");
-        }
-        if let Some(elapsed) = trace.elapsed {
-            write!(line, " {}ms", elapsed.as_millis()).expect("writing to String cannot fail");
-        }
-        if let Some(error) = &trace.error {
-            write!(line, " error: {}", render_transform_error_summary(error))
-                .expect("writing to String cannot fail");
-        }
-        let available = VISIBLE_TEXT_BYTE_BUDGET.saturating_sub(output.len());
-        let line = safe_grapheme_prefix(&line, columns, available.saturating_sub(1));
-        if line.is_empty() && !output.is_empty() {
-            break;
-        }
-        if !output.is_empty() {
-            output.push('\n');
-        }
-        output.push_str(&line);
-    }
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        error::TransformError,
-        pipeline::{StepStatus, StepTrace},
-    };
-    use std::time::Duration;
 
     #[test]
     fn smart_uses_trace_for_failure_text_for_utf8_and_hex_for_binary() {
@@ -658,95 +579,6 @@ mod tests {
             let rendered_cost = rows.len().saturating_add(1).saturating_mul(row_cost);
             assert!(rendered_cost <= VISIBLE_TEXT_BYTE_BUDGET);
         }
-    }
-
-    #[test]
-    fn trace_window_renders_statuses_sizes_elapsed_and_sanitized_error_without_bodies() {
-        let traces = [
-            StepTrace {
-                step: 1,
-                transform_id: "first",
-                input_bytes: Some(3),
-                output_bytes: Some(4),
-                elapsed: Some(Duration::from_millis(7)),
-                status: StepStatus::Succeeded,
-                error: None,
-            },
-            StepTrace {
-                step: 2,
-                transform_id: "off",
-                input_bytes: Some(4),
-                output_bytes: Some(4),
-                elapsed: None,
-                status: StepStatus::Disabled,
-                error: None,
-            },
-            StepTrace {
-                step: 3,
-                transform_id: "bad",
-                input_bytes: Some(4),
-                output_bytes: None,
-                elapsed: None,
-                status: StepStatus::Failed,
-                error: Some(TransformError::InvalidUtf8Output {
-                    preview_hex: "736563726574".to_string(),
-                    total_bytes: 6,
-                }),
-            },
-            StepTrace {
-                step: 4,
-                transform_id: "later",
-                input_bytes: None,
-                output_bytes: None,
-                elapsed: None,
-                status: StepStatus::NotExecuted,
-                error: None,
-            },
-            StepTrace {
-                step: 5,
-                transform_id: "cancel",
-                input_bytes: Some(4),
-                output_bytes: None,
-                elapsed: None,
-                status: StepStatus::Cancelled,
-                error: None,
-            },
-        ];
-
-        let rendered = render_trace_window(&traces, 0, 5, 120);
-
-        for status in ["OK", "OFF", "ERROR", "NOT RUN", "CANCELLED"] {
-            assert!(rendered.contains(status));
-        }
-        assert!(rendered.contains("#1 first OK in:3B out:4B 7ms"));
-        assert!(rendered.contains("#3 bad ERROR in:4B error: output is not valid UTF-8 (6 bytes)"));
-        assert!(!rendered.contains("736563726574"));
-        assert!(!rendered.contains("secret"));
-        assert!(!rendered.contains('\u{1b}'));
-        assert!(!rendered
-            .chars()
-            .any(|character| character != '\n' && crate::error::is_dangerous_control(character)));
-        assert!(rendered.len() <= VISIBLE_TEXT_BYTE_BUDGET);
-    }
-
-    #[test]
-    fn trace_window_limits_input_to_thirty_two_steps_and_crops_visible_rows() {
-        let traces = (1..=33)
-            .map(|step| StepTrace {
-                step,
-                transform_id: "transform",
-                input_bytes: Some(step),
-                output_bytes: Some(step),
-                elapsed: None,
-                status: StepStatus::Succeeded,
-                error: None,
-            })
-            .collect::<Vec<_>>();
-
-        let rendered = render_trace_window(&traces, 31, 2, 12);
-
-        assert_eq!(rendered, "#32 transfor");
-        assert!(!rendered.contains("#33"));
     }
 
     #[test]
