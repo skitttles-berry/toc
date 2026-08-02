@@ -9,7 +9,8 @@ use crossterm::{
     cursor::{Hide, Show},
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -49,9 +50,25 @@ fn execute_tracked<W: io::Write, C: crossterm::Command>(
     execute!(writer, command)
 }
 
+fn push_keyboard_enhancement<W: io::Write>(writer: &mut W, active: &mut bool) -> io::Result<()> {
+    execute_tracked(
+        writer,
+        active,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+    )
+}
+
+fn pop_keyboard_enhancement<W: io::Write>(writer: &mut W, active: &mut bool) {
+    if *active {
+        let _ = execute!(writer, PopKeyboardEnhancementFlags);
+        *active = false;
+    }
+}
+
 struct TerminalSession {
     raw: bool,
     alternate: bool,
+    keyboard_enhanced: bool,
     paste: bool,
     mouse: bool,
     cursor_hidden: bool,
@@ -62,6 +79,7 @@ impl TerminalSession {
         let mut session = Self {
             raw: false,
             alternate: false,
+            keyboard_enhanced: false,
             paste: false,
             mouse: false,
             cursor_hidden: false,
@@ -71,6 +89,8 @@ impl TerminalSession {
 
         let mut stdout = io::stdout();
         execute_tracked(&mut stdout, &mut session.alternate, EnterAlternateScreen)
+            .map_err(|error| AppError::Tui(error.to_string()))?;
+        push_keyboard_enhancement(&mut stdout, &mut session.keyboard_enhanced)
             .map_err(|error| AppError::Tui(error.to_string()))?;
         execute_tracked(&mut stdout, &mut session.paste, EnableBracketedPaste)
             .map_err(|error| AppError::Tui(error.to_string()))?;
@@ -95,6 +115,7 @@ impl TerminalSession {
             let _ = execute!(stdout, DisableBracketedPaste);
             self.paste = false;
         }
+        pop_keyboard_enhancement(&mut stdout, &mut self.keyboard_enhanced);
         if self.alternate {
             let _ = execute!(stdout, LeaveAlternateScreen);
             self.alternate = false;
@@ -196,15 +217,13 @@ fn run_loop(
     }
 }
 
-fn best_effort_restore_terminal() {
+fn best_effort_restore_terminal(keyboard_enhanced: bool) {
     let mut stdout = io::stdout();
-    let _ = execute!(
-        stdout,
-        Show,
-        DisableMouseCapture,
-        DisableBracketedPaste,
-        LeaveAlternateScreen
-    );
+    let _ = execute!(stdout, Show, DisableMouseCapture, DisableBracketedPaste);
+    if keyboard_enhanced {
+        let _ = execute!(stdout, PopKeyboardEnhancementFlags);
+    }
+    let _ = execute!(stdout, LeaveAlternateScreen);
     let _ = disable_raw_mode();
     let _ = stdout.flush();
 }
@@ -212,11 +231,12 @@ fn best_effort_restore_terminal() {
 pub fn run() -> Result<i32, AppError> {
     let mut session = TerminalSession::enter()?;
     let ui_thread = thread::current().id();
+    let keyboard_enhanced = session.keyboard_enhanced;
     let previous_hook = Arc::new(Mutex::new(Some(std::panic::take_hook())));
     let hook_state = Arc::clone(&previous_hook);
     std::panic::set_hook(Box::new(move |information| {
         if thread::current().id() == ui_thread {
-            best_effort_restore_terminal();
+            best_effort_restore_terminal(keyboard_enhanced);
         } else if let Ok(hook) = hook_state.lock()
             && let Some(previous) = hook.as_ref()
         {
@@ -297,6 +317,23 @@ mod tests {
         );
         assert_eq!(writer.flushes, 1);
         assert!(active);
+    }
+
+    #[test]
+    fn keyboard_enhancement_is_pushed_once_and_popped_only_when_active() {
+        let mut writer = Vec::new();
+        let mut active = false;
+
+        push_keyboard_enhancement(&mut writer, &mut active).unwrap();
+        assert!(active);
+        assert_eq!(writer, b"\x1b[>1u");
+
+        pop_keyboard_enhancement(&mut writer, &mut active);
+        assert!(!active);
+        assert_eq!(writer, b"\x1b[>1u\x1b[<1u");
+
+        pop_keyboard_enhancement(&mut writer, &mut active);
+        assert_eq!(writer, b"\x1b[>1u\x1b[<1u");
     }
 
     #[test]

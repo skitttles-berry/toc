@@ -75,6 +75,9 @@ UTF-8은 원문, 비 UTF-8은 공백 없는 소문자 Hex로 복사합니다. �
 - Output: `v`/`V` 보기, `p` 단계, `f` 최종, `Enter`/`y` Pretty Copy, `z` 확대
 - `Esc`: 창·확대 닫기 또는 실행 취소, `Ctrl+Q`: 정상 종료, `Ctrl+C`: 강제 종료
 
+점진적 키보드 향상을 지원하는 터미널에서만 `Shift+Enter`를 `Enter`와 구분할 수
+있습니다. 지원하지 않는 터미널에서는 Raw Copy 키가 제한될 수 있습니다.
+
 마우스는 `toc tui` 실행 중 항상 활성화됩니다. 패널 클릭은 포커스를 바꾸고,
 Pipeline과 Add Transform 항목 클릭은 표시된 항목을 선택합니다. Output 휠은
 결과를 스크롤하고 Pipeline·Add Transform 휠은 선택을 한 항목씩 이동합니다.
