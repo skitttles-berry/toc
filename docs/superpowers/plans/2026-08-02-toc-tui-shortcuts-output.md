@@ -645,7 +645,7 @@ fn hex_table_adapts_columns_and_keeps_no_color_structure() {
 
     let narrow = rendered_app(40, 10, &mut app);
     assert!(narrow.contains("00000008"));
-    assert!(!narrow.contains("08 09 0A 0B 0C 0D 0E 0F"));
+    assert!(!narrow.contains("8–15"));
 }
 ```
 

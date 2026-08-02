@@ -4,7 +4,9 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, Shadow, Wrap},
+    widgets::{
+        Block, BorderType, Cell, Clear, List, ListItem, Paragraph, Row, Shadow, Table, Wrap,
+    },
 };
 use unicode_width::UnicodeWidthStr as _;
 
@@ -16,9 +18,9 @@ use crate::{
 use super::{
     state::{App, Modal, MouseRegions, OutputSource, OutputStatus, Pane},
     views::{
-        EffectiveView, TEXT_VIEW_UNAVAILABLE_MESSAGE, ViewMode, effective_view, render_hex_window,
+        EffectiveView, TEXT_VIEW_UNAVAILABLE_MESSAGE, ViewMode, effective_view,
         render_pipeline_error_summary, render_text_window, render_trace_window,
-        render_transform_error_summary, with_bounded_header,
+        render_transform_error_summary, visible_hex_rows, with_bounded_header,
     },
 };
 
@@ -136,7 +138,138 @@ fn render_input(
     frame.render_widget(&app.textarea, area);
 }
 
-fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect, mouse_regions: &mut MouseRegions) {
+fn hex_style(app: &App, color: Color) -> Style {
+    if app.no_color {
+        Style::default()
+    } else {
+        Style::default().fg(color)
+    }
+}
+
+fn hex_bytes_cell(app: &App, bytes: &[u8], start: usize) -> Cell<'static> {
+    let mut spans = Vec::with_capacity(15);
+    for index in 0..8 {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+        }
+        match bytes.get(start + index) {
+            Some(byte) => spans.push(Span::styled(
+                format!("{byte:02X}"),
+                hex_style(
+                    app,
+                    if (0x20..=0x7e).contains(byte) {
+                        TEXT
+                    } else {
+                        YELLOW
+                    },
+                ),
+            )),
+            None => spans.push(Span::styled("  ", hex_style(app, MUTED))),
+        }
+    }
+    Cell::from(Line::from(spans))
+}
+
+fn hex_ascii_cell(app: &App, bytes: &[u8]) -> Cell<'static> {
+    let mut spans = Vec::with_capacity(16);
+    for index in 0..16 {
+        match bytes.get(index) {
+            Some(byte) => spans.push(Span::styled(
+                if (0x20..=0x7e).contains(byte) {
+                    char::from(*byte).to_string()
+                } else {
+                    ".".to_string()
+                },
+                hex_style(app, GREEN),
+            )),
+            None => spans.push(Span::styled(" ", hex_style(app, MUTED))),
+        }
+    }
+    Cell::from(Line::from(spans))
+}
+
+fn render_hex_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let columns = area.width as usize;
+    let rows = app
+        .output
+        .active_artifact
+        .as_ref()
+        .map_or_else(Vec::new, |artifact| {
+            visible_hex_rows(
+                artifact,
+                app.output.row_offset,
+                area.height.saturating_sub(1) as usize,
+                columns,
+            )
+        });
+    let header_style = hex_style(app, MUTED);
+    let offset = |row: &super::views::HexRow<'_>| {
+        Cell::from(format!("{:08X}", row.offset)).style(hex_style(app, CYAN))
+    };
+    let table = match columns {
+        78.. => Table::new(
+            rows.iter().map(|row| {
+                Row::new(vec![
+                    offset(row),
+                    hex_bytes_cell(app, row.bytes, 0),
+                    hex_bytes_cell(app, row.bytes, 8),
+                    hex_ascii_cell(app, row.bytes),
+                ])
+            }),
+            [
+                Constraint::Length(8),
+                Constraint::Length(23),
+                Constraint::Length(23),
+                Constraint::Length(16),
+            ],
+        )
+        .header(Row::new(vec![
+            Cell::from("OFFSET").style(header_style),
+            Cell::from("0–7").style(header_style),
+            Cell::from("8–15").style(header_style),
+            Cell::from("ASCII").style(header_style),
+        ]))
+        .column_spacing(2),
+        60..=77 => Table::new(
+            rows.iter().map(|row| {
+                Row::new(vec![
+                    offset(row),
+                    hex_bytes_cell(app, row.bytes, 0),
+                    hex_bytes_cell(app, row.bytes, 8),
+                ])
+            }),
+            [
+                Constraint::Length(8),
+                Constraint::Length(23),
+                Constraint::Length(23),
+            ],
+        )
+        .header(Row::new(vec![
+            Cell::from("OFFSET").style(header_style),
+            Cell::from("0–7").style(header_style),
+            Cell::from("8–15").style(header_style),
+        ]))
+        .column_spacing(2),
+        _ => Table::new(
+            rows.iter()
+                .map(|row| Row::new(vec![offset(row), hex_bytes_cell(app, row.bytes, 0)])),
+            [Constraint::Length(8), Constraint::Length(23)],
+        )
+        .header(Row::new(vec![
+            Cell::from("OFFSET").style(header_style),
+            Cell::from("0–7").style(header_style),
+        ]))
+        .column_spacing(2),
+    };
+    frame.render_widget(table, area);
+}
+
+fn render_output(
+    frame: &mut Frame<'_>,
+    app: &mut App,
+    area: Rect,
+    mouse_regions: &mut MouseRegions,
+) {
     let title = output_title(app, area.width);
     let block = pane_block(app, &title, app.focus == Pane::Output);
     let inner = block.inner(area);
@@ -146,6 +279,14 @@ fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect, mouse_regions: &m
 
     let rows = inner.height as usize;
     let columns = inner.width as usize;
+    if effective_view(
+        app.output.view,
+        app.output.active_artifact.as_ref(),
+        matches!(app.output.status, OutputStatus::Failed(_)),
+    ) == EffectiveView::Hex
+    {
+        app.reflow_hex_offset(columns);
+    }
     let text = match &app.output.status {
         OutputStatus::Idle => String::new(),
         OutputStatus::Cancelled if app.output.traces.is_empty() => "Cancelled".to_string(),
@@ -174,18 +315,8 @@ fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect, mouse_regions: &m
                 })
                 .unwrap_or_default(),
             EffectiveView::Hex => {
-                let body = app
-                    .output
-                    .active_artifact
-                    .as_ref()
-                    .map(|artifact| {
-                        render_hex_window(artifact, app.output.row_offset, rows.saturating_sub(1))
-                    })
-                    .unwrap_or_default();
-                with_bounded_header(
-                    "OFFSET    HEX BYTES                                      ASCII",
-                    body,
-                )
+                render_hex_table(frame, app, inner);
+                return;
             }
             EffectiveView::Trace => {
                 let body = if app.output.traces.is_empty() {
@@ -2068,14 +2199,7 @@ mod tests {
     }
 
     #[test]
-    fn composed_hex_and_trace_views_reserve_header_space_inside_the_budget() {
-        let hex = with_bounded_header(
-            "OFFSET    HEX BYTES                                      ASCII",
-            render_hex_window(&Artifact::new(vec![0xff; 4 * 1024]), 0, 1_000),
-        );
-        assert!(hex.starts_with("OFFSET"));
-        assert!(hex.len() <= 4 * 1024);
-
+    fn trace_view_reserves_header_space_inside_the_budget() {
         let traces = (1..=32)
             .map(|step| StepTrace {
                 step,
@@ -2093,6 +2217,75 @@ mod tests {
         );
         assert!(trace.starts_with("STEP  OPERATION"));
         assert!(trace.len() <= 4 * 1024);
+    }
+
+    #[test]
+    fn hex_table_adapts_columns_and_keeps_no_color_structure() {
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Output;
+        app.zoom = Some(Pane::Output);
+        app.output.status = OutputStatus::Ready;
+        app.output.view = ViewMode::Hex;
+        app.output.active_artifact = Some(Artifact::new((0..32).collect()));
+
+        let full = rendered_app(80, 10, &mut app);
+        assert!(full.contains("00 01 02 03 04 05 06 07"));
+        assert!(full.contains("08 09 0A 0B 0C 0D 0E 0F"));
+        assert!(full.contains("ASCII"));
+
+        let middle = rendered_app(62, 10, &mut app);
+        assert!(middle.contains("08 09 0A 0B 0C 0D 0E 0F"));
+        assert!(!middle.contains("ASCII"));
+
+        let narrow = rendered_app(40, 10, &mut app);
+        assert!(narrow.contains("00000008"));
+        assert!(!narrow.contains("8–15"));
+    }
+
+    #[test]
+    fn hex_table_colors_offsets_bytes_and_ascii() {
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(now(), false);
+        app.focus = Pane::Output;
+        app.zoom = Some(Pane::Output);
+        app.output.status = OutputStatus::Ready;
+        app.output.view = ViewMode::Hex;
+        app.output.active_artifact = Some(Artifact::new(vec![0x00, b'A']));
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let (row, offset, hex) = buffer
+            .content()
+            .chunks(80)
+            .enumerate()
+            .find_map(|(row, cells)| {
+                let offset = cells.windows(8).position(|cells| {
+                    cells
+                        .iter()
+                        .map(|cell| cell.symbol())
+                        .eq(["0", "0", "0", "0", "0", "0", "0", "0"])
+                })?;
+                let hex = cells.windows(5).position(|cells| {
+                    cells
+                        .iter()
+                        .map(|cell| cell.symbol())
+                        .eq(["0", "0", " ", "4", "1"])
+                })?;
+                Some((row as u16, offset as u16, hex as u16))
+            })
+            .unwrap();
+        assert_eq!(buffer[(offset, row)].fg, CYAN);
+        assert_eq!(buffer[(hex, row)].fg, YELLOW);
+        assert!(
+            buffer
+                .content()
+                .chunks(80)
+                .nth(row as usize)
+                .unwrap()
+                .iter()
+                .any(|cell| cell.symbol() == "A" && cell.fg == GREEN)
+        );
     }
 
     #[test]

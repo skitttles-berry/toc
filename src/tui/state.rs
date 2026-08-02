@@ -16,8 +16,8 @@ use crate::{
 
 use super::{
     views::{
-        Artifact, EffectiveView, ViewMode, effective_view, last_text_offset, next_text_offset,
-        previous_text_offset,
+        Artifact, EffectiveView, ViewMode, effective_view, hex_bytes_per_row, last_text_offset,
+        next_text_offset, previous_text_offset,
     },
     worker::{PreviewJob, PreviewResult},
 };
@@ -1051,6 +1051,25 @@ impl App {
         self.mark_dirty();
     }
 
+    fn output_columns(&self) -> usize {
+        self.mouse_regions
+            .output_content
+            .map_or(78, |area| area.width as usize)
+    }
+
+    pub(super) fn reflow_hex_offset(&mut self, new_columns: usize) {
+        let old_bytes_per_row = hex_bytes_per_row(self.output_columns());
+        let new_bytes_per_row = hex_bytes_per_row(new_columns);
+        if old_bytes_per_row == new_bytes_per_row {
+            return;
+        }
+        let visible_byte = self.output.row_offset.saturating_mul(old_bytes_per_row);
+        let maximum = self.output.active_artifact.as_ref().map_or(0, |artifact| {
+            artifact.bytes().len().saturating_sub(1) / new_bytes_per_row
+        });
+        self.output.row_offset = (visible_byte / new_bytes_per_row).min(maximum);
+    }
+
     fn output_max_offset(&self) -> (bool, usize) {
         match effective_view(
             self.output.view,
@@ -1067,10 +1086,10 @@ impl App {
             EffectiveView::Unavailable => (true, 0),
             EffectiveView::Hex => (
                 false,
-                self.output
-                    .active_artifact
-                    .as_ref()
-                    .map_or(0, |artifact| artifact.bytes().len().saturating_sub(1) / 16),
+                self.output.active_artifact.as_ref().map_or(0, |artifact| {
+                    artifact.bytes().len().saturating_sub(1)
+                        / hex_bytes_per_row(self.output_columns())
+                }),
             ),
             EffectiveView::Trace => (false, self.output.traces.len().saturating_sub(1)),
         }
@@ -2628,6 +2647,22 @@ mod tests {
         assert_eq!(app.output.row_offset, 1);
         assert_eq!(app.request_id, request_id);
         assert!(matches!(app.output.status, OutputStatus::Ready));
+    }
+
+    #[test]
+    fn widening_hex_preserves_the_visible_byte_and_clamps_the_last_row() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.status = OutputStatus::Ready;
+        app.output.view = ViewMode::Hex;
+        app.output.active_artifact = Some(Artifact::new(vec![0; 40]));
+        app.mouse_regions.output_content = Some(Rect::new(0, 0, 59, 10));
+        app.output.row_offset = 4;
+
+        app.reflow_hex_offset(78);
+
+        assert_eq!(app.output.row_offset, 2);
     }
     #[test]
     fn trace_view_never_copies_an_underlying_artifact() {

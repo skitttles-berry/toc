@@ -265,54 +265,46 @@ pub(super) fn last_text_offset(artifact: &Artifact) -> usize {
     previous_text_offset(artifact, artifact.bytes().len())
 }
 
-pub(super) fn render_hex_window(artifact: &Artifact, row_offset: usize, rows: usize) -> String {
-    use std::fmt::Write as _;
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct HexRow<'a> {
+    pub(super) offset: usize,
+    pub(super) bytes: &'a [u8],
+}
 
-    let mut output = String::new();
-    for index in 0..rows {
-        let Some(row) = row_offset.checked_add(index) else {
-            break;
-        };
-        let Some(offset) = row.checked_mul(16) else {
+pub(super) fn hex_bytes_per_row(columns: usize) -> usize {
+    if columns < 60 { 8 } else { 16 }
+}
+
+pub(super) fn visible_hex_rows<'a>(
+    artifact: &'a Artifact,
+    row_offset: usize,
+    rows: usize,
+    columns: usize,
+) -> Vec<HexRow<'a>> {
+    let bytes_per_row = hex_bytes_per_row(columns);
+    let row_cost = match columns {
+        78.. => 77,
+        60..=77 => 59,
+        _ => 34,
+    };
+    let budget_rows = VISIBLE_TEXT_BYTE_BUDGET.saturating_sub(row_cost) / row_cost.max(1);
+    let mut visible = Vec::with_capacity(rows.min(budget_rows));
+    for row in row_offset..row_offset.saturating_add(rows.min(budget_rows)) {
+        let Some(offset) = row.checked_mul(bytes_per_row) else {
             break;
         };
         if offset >= artifact.bytes().len() {
             break;
         }
-        let end = offset.saturating_add(16).min(artifact.bytes().len());
-        let bytes = &artifact.bytes()[offset..end];
-        let mut line = format!("{offset:08X}  ");
-        for index in 0..16 {
-            if index == 8 {
-                line.push(' ');
-            }
-            match bytes.get(index) {
-                Some(byte) => write!(line, "{byte:02X} ").expect("writing to String cannot fail"),
-                None => line.push_str("   "),
-            }
-        }
-        if bytes.len() < 16 {
-            line.pop();
-        }
-        line.push_str(" |");
-        for byte in bytes {
-            line.push(if (0x20..=0x7e).contains(byte) {
-                char::from(*byte)
-            } else {
-                '.'
-            });
-        }
-        line.push('|');
-        let separator = usize::from(!output.is_empty());
-        if output.len() + separator + line.len() > VISIBLE_TEXT_BYTE_BUDGET {
-            break;
-        }
-        if separator == 1 {
-            output.push('\n');
-        }
-        output.push_str(&line);
+        let end = offset
+            .saturating_add(bytes_per_row)
+            .min(artifact.bytes().len());
+        visible.push(HexRow {
+            offset,
+            bytes: &artifact.bytes()[offset..end],
+        });
     }
-    output
+    visible
 }
 
 fn trace_status(status: crate::pipeline::StepStatus) -> &'static str {
@@ -632,27 +624,40 @@ mod tests {
     }
 
     #[test]
-    fn hex_window_uses_sixteen_bytes_uppercase_and_printable_ascii() {
-        let artifact = Artifact::new(vec![
-            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
-            0x0e, 0x0f, 0x20, 0x41, 0xff,
-        ]);
+    fn hex_rows_switch_between_sixteen_and_eight_bytes_at_exact_widths() {
+        let artifact = Artifact::new((0..40).collect());
+        assert_eq!(hex_bytes_per_row(78), 16);
+        assert_eq!(hex_bytes_per_row(60), 16);
+        assert_eq!(hex_bytes_per_row(59), 8);
 
+        let wide = visible_hex_rows(&artifact, 1, 2, 78);
+        assert_eq!(wide[0].offset, 16);
         assert_eq!(
-            render_hex_window(&artifact, 0, 2),
-            "00000000  00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  |................|\n00000010  20 41 FF                                         | A.|"
+            wide[0].bytes,
+            &[
+                16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+            ],
         );
+
+        let narrow = visible_hex_rows(&artifact, 1, 2, 59);
+        assert_eq!(narrow[0].offset, 8);
+        assert_eq!(narrow[0].bytes, &[8, 9, 10, 11, 12, 13, 14, 15]);
+        assert_eq!(narrow[1].offset, 16);
     }
 
     #[test]
-    fn hex_window_uses_checked_offsets_and_only_requested_rows() {
-        let artifact = Artifact::new((0..64).collect());
-
-        assert_eq!(
-            render_hex_window(&artifact, 2, 1),
-            "00000020  20 21 22 23 24 25 26 27  28 29 2A 2B 2C 2D 2E 2F  | !\"#$%&'()*+,-./|"
-        );
-        assert!(render_hex_window(&artifact, usize::MAX, 1).is_empty());
+    fn hex_rows_are_bounded_by_the_existing_view_budget() {
+        let artifact = Artifact::new(vec![0xff; 64 * 1024]);
+        for columns in [38, 60, 78] {
+            let rows = visible_hex_rows(&artifact, 0, 10_000, columns);
+            let row_cost = match columns {
+                78.. => 77,
+                60..=77 => 59,
+                _ => 34,
+            };
+            let rendered_cost = rows.len().saturating_add(1).saturating_mul(row_cost);
+            assert!(rendered_cost <= VISIBLE_TEXT_BYTE_BUDGET);
+        }
     }
 
     #[test]
