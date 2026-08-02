@@ -99,10 +99,28 @@ fn stacked_pane_heights(height: u16) -> [u16; 3] {
     [pipeline, input, output]
 }
 
-fn source_label(source: OutputSource) -> String {
-    match source {
-        OutputSource::Final => "FINAL".to_string(),
-        OutputSource::Step(index) => format!("STEP {:02}", index + 1),
+fn output_title(app: &App, available_width: u16) -> String {
+    let view = match app.output.view {
+        ViewMode::Smart => "SMART",
+        ViewMode::Text => "TEXT",
+        ViewMode::Hex => "HEX",
+        ViewMode::Trace => "TRACE",
+    };
+    let base = match app.output.source {
+        OutputSource::Final => format!("» OUTPUT / {view}"),
+        OutputSource::Step(index) => format!("» OUTPUT / STEP {:02} / {view}", index + 1),
+    };
+    let Some(artifact) = app.output.active_artifact.as_ref() else {
+        return base;
+    };
+    if !matches!(app.output.status, OutputStatus::Ready) {
+        return base;
+    }
+    let with_size = format!("{base} · {} B", artifact.bytes().len());
+    if with_size.width().saturating_add(2) <= available_width as usize {
+        with_size
+    } else {
+        base
     }
 }
 
@@ -119,14 +137,7 @@ fn render_input(
 }
 
 fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect, mouse_regions: &mut MouseRegions) {
-    let source = source_label(app.output.source);
-    let view = match app.output.view {
-        ViewMode::Smart => "Smart",
-        ViewMode::Text => "Text",
-        ViewMode::Hex => "Hex",
-        ViewMode::Trace => "Trace",
-    };
-    let title = format!("» OUTPUT / {source} / {}", view.to_ascii_uppercase());
+    let title = output_title(app, area.width);
     let block = pane_block(app, &title, app.focus == Pane::Output);
     let inner = block.inner(area);
     mouse_regions.output = Some(area);
@@ -300,30 +311,13 @@ fn render_pipeline(
     frame.render_widget(List::new(items).style(Style::default()), inner);
 }
 
-fn pane_label(pane: Pane) -> &'static str {
-    match pane {
-        Pane::Input => "Input",
-        Pane::Output => "Output",
-        Pane::Pipeline => "Pipeline",
-    }
-}
-
 fn render_app_bar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let title_style = if app.no_color {
         Style::default()
     } else {
         Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
     };
-    let focus_style = if app.no_color {
-        Style::default()
-    } else {
-        Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
-    };
-    let line = Line::from(vec![
-        Span::styled(">_ TOC", title_style),
-        Span::raw("  │  FOCUS: "),
-        Span::styled(pane_label(app.focus).to_ascii_uppercase(), focus_style),
-    ]);
+    let line = Line::from(Span::styled(">_ TOC", title_style));
     frame.render_widget(Paragraph::new(line), area);
 }
 
@@ -348,12 +342,12 @@ const INPUT_COMMANDS: &[DockCommand] = &[
 ];
 const PIPELINE_COMMANDS: &[DockCommand] = &[
     DockCommand {
-        key: Some("j/k"),
+        key: Some("↑/↓"),
         label: "Select",
         divider_before: false,
     },
     DockCommand {
-        key: Some("J/K"),
+        key: Some("Shift+↑/↓"),
         label: "Move",
         divider_before: false,
     },
@@ -363,8 +357,23 @@ const PIPELINE_COMMANDS: &[DockCommand] = &[
         divider_before: true,
     },
     DockCommand {
+        key: Some("Delete/d"),
+        label: "Delete",
+        divider_before: true,
+    },
+    DockCommand {
         key: Some("Enter"),
         label: "Inspect",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("a"),
+        label: "Add",
+        divider_before: true,
+    },
+    DockCommand {
+        key: Some("z"),
+        label: "Zoom",
         divider_before: false,
     },
 ];
@@ -375,7 +384,12 @@ const OUTPUT_COMMANDS: &[DockCommand] = &[
         divider_before: false,
     },
     DockCommand {
-        key: Some("v/V"),
+        key: Some("Shift+Enter"),
+        label: "Raw",
+        divider_before: false,
+    },
+    DockCommand {
+        key: Some("v"),
         label: "View",
         divider_before: false,
     },
@@ -402,17 +416,7 @@ const GLOBAL_COMMANDS: &[DockCommand] = &[
         divider_before: false,
     },
     DockCommand {
-        key: Some("F3"),
-        label: "Pretty",
-        divider_before: true,
-    },
-    DockCommand {
-        key: Some("F4"),
-        label: "Raw",
-        divider_before: false,
-    },
-    DockCommand {
-        key: Some("Ctrl+P"),
+        key: Some("Ctrl+p"),
         label: "Add",
         divider_before: true,
     },
@@ -422,7 +426,7 @@ const GLOBAL_COMMANDS: &[DockCommand] = &[
         divider_before: false,
     },
     DockCommand {
-        key: Some("Ctrl+Q"),
+        key: Some("Ctrl+q"),
         label: "Quit",
         divider_before: false,
     },
@@ -514,7 +518,7 @@ fn footer_first_line(app: &App, width: u16) -> Line<'static> {
         Pane::Input => dock_line(app, "INPUT", INPUT_COMMANDS, width),
         Pane::Pipeline => dock_line(app, "PIPELINE", PIPELINE_COMMANDS, width),
         Pane::Output if app.can_copy() => dock_line(app, "OUTPUT", OUTPUT_COMMANDS, width),
-        Pane::Output => dock_line(app, "OUTPUT", &OUTPUT_COMMANDS[1..], width),
+        Pane::Output => dock_line(app, "OUTPUT", &OUTPUT_COMMANDS[2..], width),
     }
 }
 
@@ -820,20 +824,20 @@ fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegion
     let (title, body) = match app.focus {
         Pane::Input => (
             "Input Help",
-            "Text editing: tui-textarea defaults\nTab / Shift+Tab  Next / previous pane\nCtrl+P  Add transform · F3/F4 Pretty/Raw Copy\nF1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit\nEsc  Close zoom or cancel request\nMouse Click  Focus only".to_string(),
+            "Text editing: tui-textarea defaults\nTab / Shift+Tab  Next / previous pane\nCtrl+p  Add transform\nF1  Context help\nCtrl+q  Quit\nCtrl+c  Force quit\nEsc  Close zoom or cancel request\nMouse Click  Focus only".to_string(),
         ),
         Pane::Pipeline => (
             "Pipeline Help",
-            "Up/Down or j/k  Select step\nShift+Up/Down or J/K  Reorder\nSpace  Toggle step\nDelete or d  Delete step\nEnter  Inspect step\na / Ctrl+P  Add transform · F3/F4 Pretty/Raw Copy\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit\nMouse Click  Focus/select · Wheel  Move selection".to_string(),
+            "↑/↓  Select step\nShift+↑/↓  Reorder\nSpace  Toggle step\nDelete/d  Delete step\nEnter  Inspect step\na  Add transform\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+p  Add transform\nCtrl+q  Quit\nCtrl+c  Force quit\nMouse Click  Focus/select · Wheel  Move selection".to_string(),
         ),
         Pane::Output => (
             "Output Help",
             format!(
-                "v/V  Next / previous view\np  Show selected step\nf  Restore final\nEnter/y  {} · F3/F4 Pretty/Raw Copy\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+P  Add transform\n? / F1  Context help\nCtrl+Q  Quit\nCtrl+C  Force quit\nMouse Click  Focus only · Wheel  Scroll",
+                "v  Next view\np  Show selected step\nf  Restore final\n{}\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+p  Add transform\n? / F1  Context help\nCtrl+q  Quit\nCtrl+c  Force quit\nMouse Click  Focus only · Wheel  Scroll",
                 if app.can_copy() {
-                    "Copy whole result"
+                    "Enter  Pretty copy\nShift+Enter  Raw copy"
                 } else {
-                    "Copy unavailable"
+                    "Enter / Shift+Enter  Copy unavailable"
                 }
             ),
         ),
@@ -842,14 +846,14 @@ fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegion
     let compact = area.height < 17;
     let body = if compact {
         match app.focus {
-            Pane::Input => "Text edit · Tab focus\nF3/F4 Pretty/Raw\nCtrl+P Add · F1 Help\nCtrl+Q Quit · Ctrl+C Force\n[Esc Close]".to_string(),
-            Pane::Pipeline => "j/k Select · J/K Move\nSpace Toggle · d Delete\nF3/F4 Pretty/Raw\nEnter Inspect · a Add · z Zoom\n[Esc Close]".to_string(),
+            Pane::Input => "Text edit · Tab focus\nCtrl+p Add · F1 Help\nCtrl+q Quit · Ctrl+c Force\n[Esc Close]".to_string(),
+            Pane::Pipeline => "↑/↓ Select · Shift+↑/↓ Move\nSpace Toggle · Delete/d Delete\nEnter Inspect · a Add · z Zoom\n[Esc Close]".to_string(),
             Pane::Output => format!(
-                "v/V View · p Step · f Final\nF3/F4 Pretty/Raw\nEnter/y {}\nArrows/Page Scroll · z Zoom\n[Esc Close]",
+                "v View · p Step · f Final\n{}\nArrows/Page Scroll · z Zoom\n[Esc Close]",
                 if app.can_copy() {
-                    "Copy"
+                    "Enter Pretty · Shift+Enter Raw"
                 } else {
-                    "Copy unavailable"
+                    "Enter / Shift+Enter unavailable"
                 }
             ),
         }
@@ -1531,7 +1535,7 @@ mod tests {
 
             assert!(pipeline < input && input < output);
             assert!(lines[0].contains(">_ TOC"));
-            assert!(lines[0].contains("FOCUS: OUTPUT"));
+            assert!(!lines[0].contains("FOCUS:"));
             assert!(lines[14].starts_with("OUTPUT │"));
             assert!(lines[15].starts_with("GLOBAL │"));
         }
@@ -1562,7 +1566,7 @@ mod tests {
     fn app_bar_is_unboxed_and_footer_has_exactly_two_roles() {
         let lines = rendered_lines(120, 16, Pane::Output);
         assert!(lines[0].starts_with(">_ TOC"));
-        assert!(lines[0].contains("│  FOCUS: OUTPUT"));
+        assert!(!lines[0].contains("FOCUS:"));
         assert!(!lines[0].contains('┏'));
         assert!(lines[14].starts_with("OUTPUT │"));
         assert!(lines[15].starts_with("GLOBAL │"));
@@ -1583,8 +1587,8 @@ mod tests {
         assert!(lines[14].contains("Clipboard unavailable"));
         assert!(!lines[14].contains("INPUT │"));
         assert!(lines[15].starts_with("GLOBAL │"));
-        assert!(lines[15].contains("[ F3 ] Pretty"));
-        assert!(lines[15].contains("[ F4 ] Raw"));
+        assert!(lines[15].contains("[ Ctrl+p ] Add"));
+        assert!(lines[15].contains("[ Ctrl+q ] Quit"));
     }
 
     #[test]
@@ -1611,7 +1615,7 @@ mod tests {
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"valid text".to_vec()));
         let text = rendered_app(89, 20, &mut app);
-        assert!(text.contains("» OUTPUT / FINAL / SMART"));
+        assert!(text.contains("» OUTPUT / SMART"));
         assert!(text.contains("valid text"));
 
         app.output.source = OutputSource::Step(1);
@@ -1635,6 +1639,48 @@ mod tests {
         assert!(trace.contains("» OUTPUT / STEP 02 / TRACE"));
         assert!(trace.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
         assert!(trace.contains("#2 hex-decode OK"));
+    }
+
+    #[test]
+    fn app_bar_omits_focus_and_output_title_shows_only_useful_source_and_size() {
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Output;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"valid text".to_vec()));
+
+        let final_screen = rendered_app(120, 20, &mut app);
+        assert!(final_screen.lines().next().unwrap().starts_with(">_ TOC"));
+        assert!(!final_screen.contains("FOCUS:"));
+        assert!(final_screen.contains("» OUTPUT / SMART · 10 B"));
+        assert!(!final_screen.contains("/ FINAL"));
+
+        app.output.source = OutputSource::Step(1);
+        let step_screen = rendered_app(120, 20, &mut app);
+        assert!(step_screen.contains("» OUTPUT / STEP 02 / SMART · 10 B"));
+
+        app.output.status = OutputStatus::Debouncing { deadline: now() };
+        let pending = rendered_app(120, 20, &mut app);
+        assert!(pending.contains("» OUTPUT / STEP 02 / SMART"));
+        assert!(!pending.contains("SMART · 10 B"));
+    }
+
+    #[test]
+    fn dock_and_help_show_lowercase_current_keys_without_hangul_aliases() {
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Output;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+
+        let screen = rendered_app(120, 20, &mut app);
+        let lines = screen.lines().collect::<Vec<_>>();
+        assert!(lines[18].contains("[ Enter ] Pretty"));
+        assert!(lines[18].contains("[ Shift+Enter ] Raw"));
+        assert!(lines[18].contains("[ v ] View"));
+        assert!(lines[19].contains("[ Ctrl+p ] Add"));
+        assert!(lines[19].contains("[ Ctrl+q ] Quit"));
+        for removed in ["F3", "F4", "v/V", "Enter/y", "ㅔ", "ㅂ"] {
+            assert!(!screen.contains(removed), "unexpected {removed}: {screen}");
+        }
     }
 
     #[test]
@@ -1719,10 +1765,10 @@ mod tests {
                 &[
                     "Input Help",
                     "Tab",
-                    "Ctrl+P",
+                    "Ctrl+p",
                     "F1",
-                    "Ctrl+Q",
-                    "Ctrl+C",
+                    "Ctrl+q",
+                    "Ctrl+c",
                     "Esc",
                 ][..],
                 "Mouse Click  Focus only",
@@ -1731,14 +1777,15 @@ mod tests {
                 Pane::Pipeline,
                 &[
                     "Pipeline Help",
-                    "j/k",
-                    "J/K",
+                    "↑/↓",
+                    "Shift+↑/↓",
+                    "Delete/d",
                     "Enter",
                     "a",
                     "z",
                     "? / F1",
-                    "Ctrl+P",
-                    "Ctrl+C",
+                    "Ctrl+p",
+                    "Ctrl+c",
                 ][..],
                 "Mouse Click  Focus/select · Wheel  Move selection",
             ),
@@ -1746,14 +1793,15 @@ mod tests {
                 Pane::Output,
                 &[
                     "Output Help",
-                    "v/V",
+                    "v",
                     "p",
                     "f",
-                    "Enter/y",
+                    "Enter",
+                    "Shift+Enter",
                     "z",
                     "? / F1",
-                    "Ctrl+P",
-                    "Ctrl+C",
+                    "Ctrl+p",
+                    "Ctrl+c",
                 ][..],
                 "Mouse Click  Focus only · Wheel  Scroll",
             ),
@@ -1841,7 +1889,7 @@ mod tests {
 
             let screen = rendered_app(40, 10, &mut app);
 
-            for expected in [title, "F3/F4 Pretty/Raw", "[Esc Close]"] {
+            for expected in [title, "[Esc Close]"] {
                 assert!(screen.contains(expected), "missing {expected}: {screen}");
             }
         }
@@ -1890,7 +1938,7 @@ mod tests {
             let screen = rendered_app(80, 20, &mut app);
             assert!(!screen.contains("Copy whole result"));
             assert!(screen.contains("Copy unavailable"));
-            assert!(!screen.contains("Enter/y  Copy whole result"));
+            assert!(screen.contains("Enter / Shift+Enter  Copy unavailable"));
         }
 
         let mut copyable = App::new(start, true);
@@ -1899,9 +1947,10 @@ mod tests {
         copyable.output.active_artifact = Some(Artifact::new(b"ready".to_vec()));
         key(&mut copyable, KeyCode::F(1), KeyModifiers::NONE, start);
         let screen = rendered_app(80, 20, &mut copyable);
-        assert!(screen.contains("Copy whole result"));
+        assert!(screen.contains("Enter  Pretty copy"));
+        assert!(screen.contains("Shift+Enter  Raw copy"));
         assert!(!screen.contains("Copy unavailable"));
-        assert!(screen.contains("Enter/y"));
+        assert!(!screen.contains("Enter/y"));
     }
 
     #[test]
@@ -1912,7 +1961,7 @@ mod tests {
         app.output.active_artifact = Some(Artifact::new(b"stale secret".to_vec()));
 
         let smart = rendered_app(89, 20, &mut app);
-        assert!(smart.contains("» OUTPUT / FINAL / SMART"));
+        assert!(smart.contains("» OUTPUT / SMART"));
         assert!(smart.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
         assert!(smart.contains("chain exceeds 32 steps"));
         assert!(!smart.contains("stale secret"));
@@ -2002,7 +2051,7 @@ mod tests {
 
         let screen = rendered_app(120, 20, &mut app);
 
-        assert!(screen.contains("» OUTPUT / FINAL / TEXT"));
+        assert!(screen.contains("» OUTPUT / TEXT"));
         assert!(screen.contains("Switch to Hex view"));
         assert!(!screen.contains("sec"));
         assert_eq!(app.output.view, ViewMode::Text);
@@ -2316,7 +2365,7 @@ mod tests {
             b"final"
         );
         assert_eq!(app.output.traces, final_traces);
-        assert!(screen.contains("» OUTPUT / FINAL / TRACE"));
+        assert!(screen.contains("» OUTPUT / TRACE"));
         assert!(screen.contains("STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS"));
         assert!(screen.contains("#2 hex-encode"));
         assert!(hex_row.contains("[ON]  ✓ Hex Encode"));
@@ -2480,27 +2529,21 @@ mod tests {
             app.zoom = Some(pane);
 
             let screen = rendered_app(120, 16, &mut app);
+            let title = match pane {
+                Pane::Input => "> INPUT",
+                Pane::Output => "» OUTPUT",
+                Pane::Pipeline => "$ PIPELINE",
+            };
 
-            assert!(screen.contains(&format!(
-                "{} {}",
-                match pane {
-                    Pane::Input => ">",
-                    Pane::Output => "»",
-                    Pane::Pipeline => "$",
-                },
-                pane_label(pane).to_ascii_uppercase()
-            )));
+            assert!(screen.contains(title));
             for hidden in [Pane::Input, Pane::Output, Pane::Pipeline] {
                 if hidden != pane {
-                    assert!(!screen.contains(&format!(
-                        "{} {}",
-                        match hidden {
-                            Pane::Input => ">",
-                            Pane::Output => "»",
-                            Pane::Pipeline => "$",
-                        },
-                        pane_label(hidden).to_ascii_uppercase()
-                    )));
+                    let hidden_title = match hidden {
+                        Pane::Input => "> INPUT",
+                        Pane::Output => "» OUTPUT",
+                        Pane::Pipeline => "$ PIPELINE",
+                    };
+                    assert!(!screen.contains(hidden_title));
                 }
             }
         }
@@ -2627,22 +2670,22 @@ mod tests {
         let wide = rendered_app(120, 20, &mut app);
         let wide_lines = wide.lines().collect::<Vec<_>>();
         assert!(wide_lines[18].contains(
-            "OUTPUT │ [ Enter ] Pretty  [ v/V ] View │ [ p ] Step  [ f ] Final │ [ z ] Zoom"
+            "OUTPUT │ [ Enter ] Pretty  [ Shift+Enter ] Raw  [ v ] View │ [ p ] Step  [ f ] Final │ [ z ] Zoom"
         ));
         assert!(
             wide_lines[19]
-                .contains("GLOBAL │ [ Tab ] Focus │ [ F3 ] Pretty  [ F4 ] Raw │ [ Ctrl+P ] Add")
+                .contains("GLOBAL │ [ Tab ] Focus │ [ Ctrl+p ] Add  [ F1 ] Help  [ Ctrl+q ] Quit")
         );
-        assert!(wide_lines[19].contains("[ F1 ] Help  [ Ctrl+Q ] Quit"));
 
         let narrow = rendered_app(40, 10, &mut app);
         let narrow_lines = narrow.lines().collect::<Vec<_>>();
         assert!(narrow_lines[8].starts_with("OUTPUT │ [ Enter ] Pretty"));
-        assert!(narrow_lines[8].contains("[ v/V ] View"));
+        assert!(!narrow_lines[8].contains("[ Shift+Enter ]"));
+        assert!(!narrow_lines[8].contains("[ v ] View"));
         assert!(!narrow_lines[8].contains("[ p ]"));
         assert!(narrow_lines[9].starts_with("GLOBAL │ [ Tab ] Focus"));
-        assert!(narrow_lines[9].contains("[ F3 ] Pretty"));
-        assert!(!narrow_lines[9].contains("[ F4 ]"));
+        assert!(narrow_lines[9].contains("[ Ctrl+p ] Add"));
+        assert!(!narrow_lines[9].contains("[ F1 ]"));
     }
 
     #[test]

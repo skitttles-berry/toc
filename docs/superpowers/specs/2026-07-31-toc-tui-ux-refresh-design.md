@@ -10,9 +10,11 @@
 ---
 
 > 2026-08-02 승인된 `2026-08-01-toc-tui-shortcuts-output-design.md`가 이 문서의
-> 키 계약을 대체한다. 아래 `F3`/`F4`, `j`/`k`, `J`/`K`, `v`/`V`, `Enter`/`y`
-> 설명은 당시 구현 기록으로 보존한다. 현재는 영문 소문자와 두벌식 한글 별칭,
-> Output `Enter` Pretty·`Shift+Enter` Raw Copy, `Delete`/`d`/`ㅇ` 삭제를 사용한다.
+> 화면·도움말 계약을 대체한다. 아래 `FOCUS`, `FINAL`, `F3`/`F4`, `j`/`k`,
+> `J`/`K`, `v`/`V`, `Enter`/`y` 설명은 당시 구현 기록으로 보존한다. 현재 App Bar는
+> `>_ TOC`만 표시하고, Output은 FINAL을 생략한 제목과 Ready Artifact 크기를 공간이
+> 허용할 때만 표시한다. Dock과 Help는 영문 소문자, `↑`/`↓`, `Shift+↑`/`Shift+↓`,
+> `Enter` Pretty·`Shift+Enter` Raw Copy, `Delete`/`d`를 표시한다.
 
 # 1. 목적과 범위
 
