@@ -151,9 +151,14 @@ release redraw 측정의 무조건 다시 그리기 최솟값·중앙값·최댓
 Bash·Zsh 기본 PTY와 두 셸의 macOS 복사 경로가 통과했고, 각 `pbpaste`는
 소문자 `ff`였다. 자동화 PTY에서 일반 Enter와 키보드 향상 프로토콜의
 Shift+Enter 시퀀스를 주입해 Footer의 `Copied Pretty`·`Copied Raw` 구분과
-Raw 복사 결과 `{"a":1}`을 확인했다. 종료 코드 0과 터미널 복구 시퀀스도
-확인했지만, 대상 터미널이 물리 Shift+Enter 입력에서 해당 시퀀스를 생성하는지는
-이 자동화로 검증하지 않았다.
+Raw 복사 결과 `{"a":1}`을 확인했다. 자동화 PTY에서는 종료 코드 0과 키보드
+향상·마우스·붙여넣기·대체 화면 해제 시퀀스를 확인했다. 별도의 새 Apple
+Terminal에서 release TUI를 Ctrl+q로 종료한 뒤 스크린샷과 접근성 상태가 셸
+프롬프트로 복귀한 것을 확인했다. `printf 'TOC_TERMINAL_RESTORED\n'`은 입력
+문자열과 결과를 정상 표시했고, `stty -a`는 `icanon`·`echo`가 활성화된 상태였다.
+화면 클릭 뒤에도 마우스 escape 문자 없이 `TOC_MOUSE_RESTORED`와 다음 프롬프트가
+출력됐다. 대상 터미널이 물리 Shift+Enter 입력에서 해당 시퀀스를 생성하는지는
+검증하지 않았다.
 
 2026-08-01 `codex/quiet-prism`에서 형식, 경고 금지 잠금 Clippy, rustdoc,
 잠금 패키징과 임시 경로 오프라인 잠금 설치를 실행했다. 전체 시험은 264개
