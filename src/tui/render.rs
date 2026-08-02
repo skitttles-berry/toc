@@ -177,14 +177,11 @@ fn hex_ascii_cell(app: &App, bytes: &[u8]) -> Cell<'static> {
     let mut spans = Vec::with_capacity(16);
     for index in 0..16 {
         match bytes.get(index) {
-            Some(byte) => spans.push(Span::styled(
-                if (0x20..=0x7e).contains(byte) {
-                    char::from(*byte).to_string()
-                } else {
-                    ".".to_string()
-                },
+            Some(byte) if (0x20..=0x7e).contains(byte) => spans.push(Span::styled(
+                char::from(*byte).to_string(),
                 hex_style(app, GREEN),
             )),
+            Some(_) => spans.push(Span::styled(".", hex_style(app, MUTED))),
             None => spans.push(Span::styled(" ", hex_style(app, MUTED))),
         }
     }
@@ -2790,7 +2787,7 @@ mod tests {
     }
 
     #[test]
-    fn hex_table_colors_offsets_bytes_and_ascii() {
+    fn hex_table_styles_every_cell_kind_and_disables_all_colors() {
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(now(), false);
@@ -2802,6 +2799,20 @@ mod tests {
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
         let buffer = terminal.backend().buffer();
+        let (header_row, header) = buffer
+            .content()
+            .chunks(80)
+            .enumerate()
+            .find_map(|(row, cells)| {
+                let header = cells.windows(6).position(|cells| {
+                    cells
+                        .iter()
+                        .map(|cell| cell.symbol())
+                        .eq(["O", "F", "F", "S", "E", "T"])
+                })?;
+                Some((row as u16, header as u16))
+            })
+            .unwrap();
         let (row, offset, hex) = buffer
             .content()
             .chunks(80)
@@ -2822,16 +2833,40 @@ mod tests {
                 Some((row as u16, offset as u16, hex as u16))
             })
             .unwrap();
+        let cells = buffer.content().chunks(80).nth(row as usize).unwrap();
+        let ascii = cells
+            .iter()
+            .enumerate()
+            .skip((hex + 5) as usize)
+            .find_map(|(column, cell)| (cell.symbol() == ".").then_some(column as u16))
+            .unwrap();
+
+        assert_eq!(buffer[(header, header_row)].fg, MUTED);
         assert_eq!(buffer[(offset, row)].fg, CYAN);
         assert_eq!(buffer[(hex, row)].fg, YELLOW);
+        assert_eq!(buffer[(hex + 3, row)].fg, TEXT);
+        assert_eq!(buffer[(hex + 6, row)].fg, MUTED);
+        assert_eq!(buffer[(ascii, row)].fg, MUTED);
+        assert_eq!(buffer[(ascii + 1, row)].fg, GREEN);
+        assert_eq!(buffer[(ascii + 2, row)].fg, MUTED);
+
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Output;
+        app.zoom = Some(Pane::Output);
+        app.output.status = OutputStatus::Ready;
+        app.output.view = ViewMode::Hex;
+        app.output.active_artifact = Some(Artifact::new(vec![0x00, b'A']));
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
         assert!(
-            buffer
+            terminal
+                .backend()
+                .buffer()
                 .content()
-                .chunks(80)
-                .nth(row as usize)
-                .unwrap()
                 .iter()
-                .any(|cell| cell.symbol() == "A" && cell.fg == GREEN)
+                .all(|cell| cell.fg == Color::Reset)
         );
     }
 

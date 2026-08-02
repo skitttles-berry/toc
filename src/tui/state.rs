@@ -2377,27 +2377,46 @@ mod tests {
     #[test]
     fn removed_navigation_and_uppercase_view_keys_are_no_ops() {
         let start = now();
-        let mut app = App::new(start, true);
-        app.steps = ["base64-encode", "url-encode"]
-            .into_iter()
-            .map(|id| TransformStep {
-                definition: transform_by_id(id).unwrap(),
-                enabled: true,
-            })
-            .collect();
-        app.focus = Pane::Pipeline;
-
         for (code, modifiers) in [
             (KeyCode::Char('j'), KeyModifiers::NONE),
             (KeyCode::Char('k'), KeyModifiers::NONE),
             (KeyCode::Char('J'), KeyModifiers::SHIFT),
             (KeyCode::Char('K'), KeyModifiers::SHIFT),
         ] {
-            key(&mut app, code, modifiers, start);
-        }
-        assert_eq!(app.selected_step, 0);
-        assert_eq!(app.steps[0].definition.id, "base64-encode");
+            let mut app = App::new(start, true);
+            app.steps = ["base64-encode", "url-encode", "hex-encode"]
+                .into_iter()
+                .map(|id| TransformStep {
+                    definition: transform_by_id(id).unwrap(),
+                    enabled: true,
+                })
+                .collect();
+            app.focus = Pane::Pipeline;
+            app.selected_step = 1;
+            app.request_id = 7;
+            app.output.status = OutputStatus::Ready;
+            app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
+            app.take_dirty();
 
+            assert!(key(&mut app, code, modifiers, start).is_empty());
+            assert_eq!(app.selected_step, 1);
+            assert_eq!(
+                app.steps
+                    .iter()
+                    .map(|step| step.definition.id)
+                    .collect::<Vec<_>>(),
+                ["base64-encode", "url-encode", "hex-encode"]
+            );
+            assert_eq!(app.request_id, 7);
+            assert!(matches!(app.output.status, OutputStatus::Ready));
+            assert_eq!(
+                app.output.active_artifact.as_ref().unwrap().bytes(),
+                b"result"
+            );
+            assert!(!app.take_dirty());
+        }
+
+        let mut app = App::new(start, true);
         app.focus = Pane::Output;
         app.output.view = ViewMode::Smart;
         key(&mut app, KeyCode::Char('V'), KeyModifiers::SHIFT, start);

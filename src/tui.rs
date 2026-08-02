@@ -1,6 +1,9 @@
 use std::{
     io::{self, Write as _},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -50,25 +53,24 @@ fn execute_tracked<W: io::Write, C: crossterm::Command>(
     execute!(writer, command)
 }
 
-fn push_keyboard_enhancement<W: io::Write>(writer: &mut W, active: &mut bool) -> io::Result<()> {
-    execute_tracked(
+fn push_keyboard_enhancement<W: io::Write>(writer: &mut W, active: &AtomicBool) -> io::Result<()> {
+    active.store(true, Ordering::Relaxed);
+    execute!(
         writer,
-        active,
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
     )
 }
 
-fn pop_keyboard_enhancement<W: io::Write>(writer: &mut W, active: &mut bool) {
-    if *active {
+fn pop_keyboard_enhancement<W: io::Write>(writer: &mut W, active: &AtomicBool) {
+    if active.swap(false, Ordering::Relaxed) {
         let _ = execute!(writer, PopKeyboardEnhancementFlags);
-        *active = false;
     }
 }
 
 struct TerminalSession {
     raw: bool,
     alternate: bool,
-    keyboard_enhanced: bool,
+    keyboard_enhanced: Arc<AtomicBool>,
     paste: bool,
     mouse: bool,
     cursor_hidden: bool,
@@ -79,7 +81,7 @@ impl TerminalSession {
         let mut session = Self {
             raw: false,
             alternate: false,
-            keyboard_enhanced: false,
+            keyboard_enhanced: Arc::new(AtomicBool::new(false)),
             paste: false,
             mouse: false,
             cursor_hidden: false,
@@ -90,7 +92,7 @@ impl TerminalSession {
         let mut stdout = io::stdout();
         execute_tracked(&mut stdout, &mut session.alternate, EnterAlternateScreen)
             .map_err(|error| AppError::Tui(error.to_string()))?;
-        push_keyboard_enhancement(&mut stdout, &mut session.keyboard_enhanced)
+        push_keyboard_enhancement(&mut stdout, &session.keyboard_enhanced)
             .map_err(|error| AppError::Tui(error.to_string()))?;
         execute_tracked(&mut stdout, &mut session.paste, EnableBracketedPaste)
             .map_err(|error| AppError::Tui(error.to_string()))?;
@@ -115,7 +117,7 @@ impl TerminalSession {
             let _ = execute!(stdout, DisableBracketedPaste);
             self.paste = false;
         }
-        pop_keyboard_enhancement(&mut stdout, &mut self.keyboard_enhanced);
+        pop_keyboard_enhancement(&mut stdout, &self.keyboard_enhanced);
         if self.alternate {
             let _ = execute!(stdout, LeaveAlternateScreen);
             self.alternate = false;
@@ -217,13 +219,15 @@ fn run_loop(
     }
 }
 
-fn best_effort_restore_terminal(keyboard_enhanced: bool) {
-    let mut stdout = io::stdout();
+fn write_best_effort_restore<W: io::Write>(stdout: &mut W, keyboard_enhanced: &AtomicBool) {
     let _ = execute!(stdout, Show, DisableMouseCapture, DisableBracketedPaste);
-    if keyboard_enhanced {
-        let _ = execute!(stdout, PopKeyboardEnhancementFlags);
-    }
+    pop_keyboard_enhancement(stdout, keyboard_enhanced);
     let _ = execute!(stdout, LeaveAlternateScreen);
+}
+
+fn best_effort_restore_terminal(keyboard_enhanced: &AtomicBool) {
+    let mut stdout = io::stdout();
+    write_best_effort_restore(&mut stdout, keyboard_enhanced);
     let _ = disable_raw_mode();
     let _ = stdout.flush();
 }
@@ -231,12 +235,12 @@ fn best_effort_restore_terminal(keyboard_enhanced: bool) {
 pub fn run() -> Result<i32, AppError> {
     let mut session = TerminalSession::enter()?;
     let ui_thread = thread::current().id();
-    let keyboard_enhanced = session.keyboard_enhanced;
+    let keyboard_enhanced = Arc::clone(&session.keyboard_enhanced);
     let previous_hook = Arc::new(Mutex::new(Some(std::panic::take_hook())));
     let hook_state = Arc::clone(&previous_hook);
     std::panic::set_hook(Box::new(move |information| {
         if thread::current().id() == ui_thread {
-            best_effort_restore_terminal(keyboard_enhanced);
+            best_effort_restore_terminal(&keyboard_enhanced);
         } else if let Ok(hook) = hook_state.lock()
             && let Some(previous) = hook.as_ref()
         {
@@ -322,18 +326,34 @@ mod tests {
     #[test]
     fn keyboard_enhancement_is_pushed_once_and_popped_only_when_active() {
         let mut writer = Vec::new();
-        let mut active = false;
+        let active = AtomicBool::new(false);
 
-        push_keyboard_enhancement(&mut writer, &mut active).unwrap();
-        assert!(active);
+        push_keyboard_enhancement(&mut writer, &active).unwrap();
+        assert!(active.load(Ordering::Relaxed));
         assert_eq!(writer, b"\x1b[>1u");
 
-        pop_keyboard_enhancement(&mut writer, &mut active);
-        assert!(!active);
+        pop_keyboard_enhancement(&mut writer, &active);
+        assert!(!active.load(Ordering::Relaxed));
         assert_eq!(writer, b"\x1b[>1u\x1b[<1u");
 
-        pop_keyboard_enhancement(&mut writer, &mut active);
+        pop_keyboard_enhancement(&mut writer, &active);
         assert_eq!(writer, b"\x1b[>1u\x1b[<1u");
+    }
+
+    #[test]
+    fn ui_panic_restore_pops_keyboard_once_before_leaving_alternate_screen() {
+        let mut writer = Vec::new();
+        let active = Arc::new(AtomicBool::new(false));
+
+        push_keyboard_enhancement(&mut writer, &active).unwrap();
+        let hook_active = Arc::clone(&active);
+        write_best_effort_restore(&mut writer, &hook_active);
+        pop_keyboard_enhancement(&mut writer, &active);
+
+        let output = String::from_utf8(writer).unwrap();
+        assert_eq!(output.match_indices("\x1b[>1u").count(), 1);
+        assert_eq!(output.match_indices("\x1b[<1u").count(), 1);
+        assert!(output.find("\x1b[<1u").unwrap() < output.find("\x1b[?1049l").unwrap());
     }
 
     #[test]
