@@ -876,7 +876,7 @@ rtk git commit -m 'test(tui): 새 키 입력 PTY 계약 검증'
 ```markdown
 - 전역: `Tab`/`Shift+Tab` 패널 이동, `Ctrl+p`/`Ctrl+ㅔ` 변환 추가, `F1` 도움말
 - Pipeline: `↑`/`↓` 선택, `Shift+↑`/`Shift+↓` 이동, `Space` 전환,
-  `Delete`/`d`/`ㅇ` 삭제, `Enter` 검사
+  `Delete`/`d`/`ㅇ` 삭제, `Enter` 검사, `a`/`ㅁ` 추가, `z`/`ㅋ` 확대
 - Output: `v`/`ㅍ` 보기, `p`/`ㅔ` 단계, `f`/`ㄹ` 최종,
   `Enter` Pretty Copy, `Shift+Enter` Raw Copy, `z`/`ㅋ` 확대
 - `Esc`: 창·확대 닫기 또는 실행 취소, `Ctrl+q`/`Ctrl+ㅂ` 정상 종료,

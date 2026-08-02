@@ -83,12 +83,12 @@ Trace는 등록된 변환 이름과 단계 상태를 표로 표시합니다. Out
 처리가 시작된 뒤 1초를 넘으면 Footer에 이전 결과를 표시 중이라는 안내와 `Esc`
 취소 키를 표시합니다. 실패하거나 취소되면 이전 결과를 현재 결과처럼 남기지 않습니다.
 
-- 전역: `Tab`/`Shift+Tab` 패널 이동, `Ctrl+p` 변환 추가, `F1` 도움말,
-  `Ctrl+q` 정상 종료, `Ctrl+c` 강제 종료
+- 전역: `Tab`/`Shift+Tab` 패널 이동, `Ctrl+p`/`Ctrl+ㅔ` 변환 추가, `F1` 도움말,
+  `Ctrl+q`/`Ctrl+ㅂ` 정상 종료, `Ctrl+c` 강제 종료
 - Pipeline: `↑`/`↓` 선택, `Shift+↑`/`Shift+↓` 이동, `Space` 전환,
-  `Delete`/`d` 삭제, `Enter` 검사, `a` 추가, `z` 확대
-- Output: `Enter` Pretty Copy, `Shift+Enter` Raw Copy, `v` 보기,
-  `p` 단계, `f` 최종, `z` 확대
+  `Delete`/`d`/`ㅇ` 삭제, `Enter` 검사, `a`/`ㅁ` 추가, `z`/`ㅋ` 확대
+- Output: `Enter` Pretty Copy, `Shift+Enter` Raw Copy, `v`/`ㅍ` 보기,
+  `p`/`ㅔ` 단계, `f`/`ㄹ` 최종, `z`/`ㅋ` 확대
 - `Esc`: 창·확대 닫기 또는 실행 취소
 
 Dock과 도움말은 영문 소문자 키를 기준으로 표시하며 한글 별칭과 `F3`, `F4`,
