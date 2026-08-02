@@ -372,6 +372,15 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let detail = failure.zip(detail_area).and_then(|(trace, detail_area)| {
         let error = trace.error.as_ref()?;
         let detail_width = detail_area.width.saturating_sub(1) as usize;
+        if detail_area.height == 1 {
+            let summary = trace_prefix(
+                &render_transform_error_summary(error),
+                detail_width,
+                remaining_budget,
+            );
+            remaining_budget = remaining_budget.saturating_sub(summary.len());
+            return Some((detail_area, summary, None));
+        }
         let title = trace_prefix(
             &format!(
                 "STEP {} · {}",
@@ -382,16 +391,13 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
             remaining_budget,
         );
         remaining_budget = remaining_budget.saturating_sub(title.len());
-        let summary = (detail_area.height >= 2).then(|| {
-            let summary = trace_prefix(
-                &render_transform_error_summary(error),
-                detail_width,
-                remaining_budget,
-            );
-            remaining_budget = remaining_budget.saturating_sub(summary.len());
-            summary
-        });
-        Some((detail_area, title, summary))
+        let summary = trace_prefix(
+            &render_transform_error_summary(error),
+            detail_width,
+            remaining_budget,
+        );
+        remaining_budget = remaining_budget.saturating_sub(summary.len());
+        Some((detail_area, title, Some(summary)))
     });
 
     let start = if area.height < 5 {
@@ -2646,6 +2652,27 @@ mod tests {
         assert!(screen.contains("STEP 3 · JSON Prettify"));
         assert!(screen.contains("output is not valid UTF-8 (6 bytes)"));
         assert!(!screen.contains("#1"));
+
+        let backend = TestBackend::new(69, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_trace_table(frame, &app, frame.area()))
+            .unwrap();
+        let shortest = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(69)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(shortest.contains("#3"));
+        assert!(shortest.contains("ERROR"));
+        assert!(shortest.contains("output is not valid UTF-8 (6 bytes)"));
+        assert!(!shortest.contains("STEP 3 · JSON Prettify"));
+        assert!(!shortest.contains("736563726574"));
+        assert!(!shortest.contains("secret"));
     }
 
     #[test]
