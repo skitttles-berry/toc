@@ -58,8 +58,9 @@ Input·Output 분할을 사용하고, 40~89열에서는 Pipeline 30%, Input 30%,
 Dock이며, 상태 메시지는 첫째 줄만 대체합니다. 너비가 부족하면 우선순위가 낮은
 완전한 명령 그룹만 생략하며, 키 바인딩은 바꾸지 않습니다.
 
-Output은 `Smart`, `Text`, `Hex`, `Trace` 보기를 제공합니다. `p`는 선택
-단계까지 다시 계산하고 `f`는 보관된 최종 결과로 돌아갑니다. 유효한 JSON 결과는
+Output은 `Smart`, `Text`, `Hex`, `Trace` 보기를 제공합니다. `p`/`ㅔ`는 선택
+단계까지 다시 계산하고 `f`/`ㄹ`은 보관된 최종 결과로 돌아갑니다. `v`/`ㅍ`는
+다음 보기를, `z`/`ㅋ`는 Output 확대를 전환합니다. 유효한 JSON 결과는
 Pretty Copy에서 두 칸 들여쓰고 Raw Copy에서 구조 공백을 제거합니다. 그 밖의
 UTF-8은 원문, 비 UTF-8은 공백 없는 소문자 Hex로 복사합니다. 복사는 표시 View가
 아니라 현재 Output의 FINAL 또는 STEP 원본을 사용하며 Trace에서는 비활성입니다.
@@ -69,11 +70,18 @@ UTF-8은 원문, 비 UTF-8은 공백 없는 소문자 Hex로 복사합니다. �
 처리가 시작된 뒤 1초를 넘으면 Footer에 이전 결과를 표시 중이라는 안내와 `Esc`
 취소 키를 표시합니다. 실패하거나 취소되면 이전 결과를 현재 결과처럼 남기지 않습니다.
 
-- 전역: `Tab`/`Shift+Tab` 패널 이동, `F3` Pretty Copy, `F4` Raw Copy,
-  `Ctrl+P` 변환 추가, `F1` 도움말
-- Pipeline: `j`/`k` 선택, `J`/`K` 이동, `Space` 전환, `d` 삭제, `Enter` 검사
-- Output: `v`/`V` 보기, `p` 단계, `f` 최종, `Enter`/`y` Pretty Copy, `z` 확대
-- `Esc`: 창·확대 닫기 또는 실행 취소, `Ctrl+Q`: 정상 종료, `Ctrl+C`: 강제 종료
+- 전역: `Tab`/`Shift+Tab` 패널 이동, `Ctrl+P`/`Ctrl+ㅔ` 변환 추가, `F1` 도움말
+- Pipeline: 방향키 선택, `Shift+방향키` 이동, `Space` 전환,
+  `Delete`/`d`/`ㅇ` 삭제, `Enter` 검사, `a`/`ㅁ` 추가, `z`/`ㅋ` 확대
+- Output: `Enter` Pretty Copy, `Shift+Enter` Raw Copy, `v`/`ㅍ` 보기,
+  `p`/`ㅔ` 단계, `f`/`ㄹ` 최종, `z`/`ㅋ` 확대
+- `Esc`: 창·확대 닫기 또는 실행 취소, `Ctrl+Q`/`Ctrl+ㅂ`: 정상 종료,
+  `Ctrl+C`: 강제 종료
+
+도움말은 영문 소문자 키를 기준으로 표시하지만, 주요 문자 단축키는 같은
+두벌식 위치의 한글 별칭도 직접 처리합니다. `F3`, `F4`, `j`, `k`, `J`, `K`,
+`V`, `y`는 단축키로 사용하지 않습니다. 확인 창에서는 `Enter`/`y`/`ㅛ`로 승인하고
+`Esc`/`n`/`ㅜ`로 취소합니다.
 
 점진적 키보드 향상을 지원하는 터미널에서만 `Shift+Enter`를 `Enter`와 구분할 수
 있습니다. 지원하지 않는 터미널에서는 Raw Copy 키가 제한될 수 있습니다.

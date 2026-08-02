@@ -9,6 +9,11 @@
 
 ---
 
+> 2026-08-02 승인된 `2026-08-01-toc-tui-shortcuts-output-design.md`가 이 문서의
+> 키 계약을 대체한다. 아래 `F3`/`F4`, `j`/`k`, `J`/`K`, `v`/`V`, `Enter`/`y`
+> 설명은 당시 구현 기록으로 보존한다. 현재는 영문 소문자와 두벌식 한글 별칭,
+> Output `Enter` Pretty·`Shift+Enter` Raw Copy, `Delete`/`d`/`ㅇ` 삭제를 사용한다.
+
 # 1. 목적과 범위
 
 이 설계는 현재 TUI 작업판의 기능 구조를 유지하면서 Pipeline 상태 표시,

@@ -35,10 +35,12 @@ pub(super) fn debounce_for(input_bytes: usize) -> Duration {
 
 fn confirmation_choice(key: &KeyEvent) -> Option<bool> {
     match (key.code, key.modifiers) {
-        (KeyCode::Enter | KeyCode::Char('y'), KeyModifiers::NONE)
-        | (KeyCode::Char('Y'), KeyModifiers::SHIFT) => Some(true),
-        (KeyCode::Esc | KeyCode::Char('n'), KeyModifiers::NONE)
-        | (KeyCode::Char('N'), KeyModifiers::SHIFT) => Some(false),
+        (KeyCode::Enter, KeyModifiers::NONE) | (KeyCode::Char('y' | 'ㅛ'), KeyModifiers::NONE) => {
+            Some(true)
+        }
+        (KeyCode::Esc, KeyModifiers::NONE) | (KeyCode::Char('n' | 'ㅜ'), KeyModifiers::NONE) => {
+            Some(false)
+        }
         _ => None,
     }
 }
@@ -461,11 +463,13 @@ impl App {
     }
 
     fn delete_selected(&mut self, now: Instant) {
-        if self.steps.get(self.selected_step).is_none() {
+        let Some(step) = self.steps.get(self.selected_step) else {
             return;
-        }
+        };
+        let removed = step.definition.display_name;
         self.steps.remove(self.selected_step);
         self.selected_step = self.selected_step.min(self.steps.len().saturating_sub(1));
+        self.set_status(Some(format!("Removed {removed}")));
         self.changed(now);
     }
 
@@ -1035,12 +1039,12 @@ impl App {
         }
     }
 
-    fn cycle_view(&mut self, backwards: bool) {
-        self.output.view = match (self.output.view, backwards) {
-            (ViewMode::Smart, false) | (ViewMode::Hex, true) => ViewMode::Text,
-            (ViewMode::Text, false) | (ViewMode::Trace, true) => ViewMode::Hex,
-            (ViewMode::Hex, false) | (ViewMode::Smart, true) => ViewMode::Trace,
-            (ViewMode::Trace, false) | (ViewMode::Text, true) => ViewMode::Smart,
+    fn cycle_view(&mut self) {
+        self.output.view = match self.output.view {
+            ViewMode::Smart => ViewMode::Text,
+            ViewMode::Text => ViewMode::Hex,
+            ViewMode::Hex => ViewMode::Trace,
+            ViewMode::Trace => ViewMode::Smart,
         };
         self.output.byte_offset = 0;
         self.output.row_offset = 0;
@@ -1133,17 +1137,12 @@ impl App {
 
     fn handle_output_key(&mut self, key: KeyEvent, now: Instant) -> Vec<Effect> {
         match (key.code, key.modifiers) {
-            (KeyCode::Enter | KeyCode::Char('y'), KeyModifiers::NONE) => {
-                self.request_copy(CopyMode::Pretty)
-            }
-            (KeyCode::Char('p'), KeyModifiers::NONE) => self.request_selected_step(now),
-            (KeyCode::Char('f'), KeyModifiers::NONE) => self.restore_final(),
-            (KeyCode::Char('v'), KeyModifiers::NONE) => {
-                self.cycle_view(false);
-                Vec::new()
-            }
-            (KeyCode::Char('V'), KeyModifiers::SHIFT) => {
-                self.cycle_view(true);
+            (KeyCode::Enter, KeyModifiers::NONE) => self.request_copy(CopyMode::Pretty),
+            (KeyCode::Enter, KeyModifiers::SHIFT) => self.request_copy(CopyMode::Raw),
+            (KeyCode::Char('p' | 'ㅔ'), KeyModifiers::NONE) => self.request_selected_step(now),
+            (KeyCode::Char('f' | 'ㄹ'), KeyModifiers::NONE) => self.restore_final(),
+            (KeyCode::Char('v' | 'ㅍ'), KeyModifiers::NONE) => {
+                self.cycle_view();
                 Vec::new()
             }
             (KeyCode::Up | KeyCode::Left, KeyModifiers::NONE) => {
@@ -1170,7 +1169,7 @@ impl App {
                 self.output_home_or_end(true);
                 Vec::new()
             }
-            (KeyCode::Char('z'), KeyModifiers::NONE) => {
+            (KeyCode::Char('z' | 'ㅋ'), KeyModifiers::NONE) => {
                 self.toggle_zoom(Pane::Output);
                 Vec::new()
             }
@@ -1186,16 +1185,14 @@ impl App {
             (KeyCode::Down, modifiers) if modifiers == KeyModifiers::SHIFT => {
                 self.move_selected(1, now);
             }
-            (KeyCode::Char('K'), KeyModifiers::SHIFT) => self.move_selected(-1, now),
-            (KeyCode::Char('J'), KeyModifiers::SHIFT) => self.move_selected(1, now),
-            (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+            (KeyCode::Up, KeyModifiers::NONE) => {
                 let next = self.selected_step.saturating_sub(1);
                 if self.selected_step != next {
                     self.selected_step = next;
                     self.mark_dirty();
                 }
             }
-            (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+            (KeyCode::Down, KeyModifiers::NONE) => {
                 let next = self
                     .selected_step
                     .saturating_add(1)
@@ -1206,12 +1203,12 @@ impl App {
                 }
             }
             (KeyCode::Char(' '), KeyModifiers::NONE) => self.toggle_selected(now),
-            (KeyCode::Delete | KeyCode::Char('d'), KeyModifiers::NONE) => {
+            (KeyCode::Delete | KeyCode::Char('d' | 'ㅇ'), KeyModifiers::NONE) => {
                 self.delete_selected(now);
             }
             (KeyCode::Enter, KeyModifiers::NONE) => self.open_inspector(),
-            (KeyCode::Char('a'), KeyModifiers::NONE) => self.open_picker(),
-            (KeyCode::Char('z'), KeyModifiers::NONE) => self.toggle_zoom(Pane::Pipeline),
+            (KeyCode::Char('a' | 'ㅁ'), KeyModifiers::NONE) => self.open_picker(),
+            (KeyCode::Char('z' | 'ㅋ'), KeyModifiers::NONE) => self.toggle_zoom(Pane::Pipeline),
             _ => {}
         }
     }
@@ -1224,11 +1221,6 @@ impl App {
         if self.modal.is_some() {
             return self.handle_modal_key(key, now);
         }
-        match (key.code, key.modifiers) {
-            (KeyCode::F(3), KeyModifiers::NONE) => return self.request_copy(CopyMode::Pretty),
-            (KeyCode::F(4), KeyModifiers::NONE) => return self.request_copy(CopyMode::Raw),
-            _ => {}
-        }
         if key.code == KeyCode::Esc && key.modifiers == KeyModifiers::NONE {
             if self.zoom.take().is_some() {
                 self.mark_dirty();
@@ -1238,11 +1230,11 @@ impl App {
             return Vec::new();
         }
         match (key.code, key.modifiers) {
-            (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+            (KeyCode::Char('p' | 'ㅔ'), KeyModifiers::CONTROL) => {
                 self.open_picker();
                 return Vec::new();
             }
-            (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
+            (KeyCode::Char('q' | 'ㅂ'), KeyModifiers::CONTROL) => {
                 return self.request_quit();
             }
             (KeyCode::Tab, KeyModifiers::NONE) => {
@@ -1999,7 +1991,7 @@ mod tests {
         app.output.active_artifact = Some(Artifact::new(vec![0x1b]));
 
         app.request_copy(CopyMode::Pretty);
-        assert!(key(&mut app, KeyCode::Char('n'), KeyModifiers::NONE, start).is_empty());
+        assert!(key(&mut app, KeyCode::Char('ㅜ'), KeyModifiers::NONE, start).is_empty());
         assert!(app.modal.is_none());
 
         app.request_copy(CopyMode::Pretty);
@@ -2011,7 +2003,7 @@ mod tests {
         app.insert_paste("x", start);
         app.request_quit();
         assert!(matches!(
-            key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE, start).as_slice(),
+            key(&mut app, KeyCode::Char('ㅛ'), KeyModifiers::NONE, start).as_slice(),
             [Effect::Quit(0)]
         ));
     }
@@ -2034,16 +2026,8 @@ mod tests {
             assert!(matches!(app.modal, Some(Modal::UnsafeCopyConfirm { .. })));
         }
 
-        assert!(matches!(
-            key(
-                &mut app,
-                KeyCode::Char('Y'),
-                KeyModifiers::SHIFT,
-                start
-            )
-            .as_slice(),
-            [Effect::Copy(ClipboardPayload { text, .. })] if text == "secret\x1b"
-        ));
+        assert!(key(&mut app, KeyCode::Char('Y'), KeyModifiers::SHIFT, start).is_empty());
+        assert!(matches!(app.modal, Some(Modal::UnsafeCopyConfirm { .. })));
     }
     #[test]
     fn quit_confirmation_rejects_modified_keys_without_discarding_input() {
@@ -2065,7 +2049,7 @@ mod tests {
         }
 
         assert!(key(&mut app, KeyCode::Char('N'), KeyModifiers::SHIFT, start).is_empty());
-        assert!(app.modal.is_none());
+        assert!(matches!(app.modal, Some(Modal::QuitConfirm)));
         assert_eq!(app.input_text(), "keep");
     }
     #[test]
@@ -2131,65 +2115,288 @@ mod tests {
         assert_eq!(app.input_text(), "source");
     }
     #[test]
-    fn global_copy_keys_use_the_active_output_from_every_pane() {
+    fn latin_and_hangul_global_shortcuts_open_palette_or_quit() {
         let start = now();
-        for pane in [Pane::Input, Pane::Pipeline, Pane::Output] {
-            for (code, expected_kind, expected_text) in [
-                (KeyCode::F(3), CopyKind::Pretty, "{\n  \"a\": 1\n}"),
-                (KeyCode::F(4), CopyKind::Raw, "{\"a\":1}"),
-            ] {
-                let mut app = App::new(start, true);
-                app.focus = pane;
-                app.output.status = OutputStatus::Ready;
-                app.output.active_artifact = Some(Artifact::new(b"{ \"a\" : 1 }".to_vec()));
-
-                assert!(matches!(
-                    key(&mut app, code, KeyModifiers::NONE, start).as_slice(),
-                    [Effect::Copy(ClipboardPayload { text, kind })]
-                        if text == expected_text && *kind == expected_kind
-                ));
-            }
+        for character in ['p', 'ㅔ'] {
+            let mut app = App::new(start, true);
+            key(
+                &mut app,
+                KeyCode::Char(character),
+                KeyModifiers::CONTROL,
+                start,
+            );
+            assert!(matches!(app.modal, Some(Modal::TransformPicker { .. })));
+        }
+        for character in ['q', 'ㅂ'] {
+            let mut app = App::new(start, true);
+            assert!(matches!(
+                key(
+                    &mut app,
+                    KeyCode::Char(character),
+                    KeyModifiers::CONTROL,
+                    start,
+                )
+                .as_slice(),
+                [Effect::Quit(0)]
+            ));
         }
     }
     #[test]
-    fn modal_keys_take_priority_over_global_copy_keys() {
+    fn output_enter_selects_pretty_or_raw_and_removed_copy_keys_do_nothing() {
         let start = now();
         let mut app = App::new(start, true);
+        app.focus = Pane::Output;
         app.output.status = OutputStatus::Ready;
-        app.output.active_artifact = Some(Artifact::new(b"{\"a\":1}".to_vec()));
-        app.open_picker();
+        app.output.active_artifact = Some(Artifact::new(b"{ \"a\" : 1 }".to_vec()));
 
-        assert!(key(&mut app, KeyCode::F(3), KeyModifiers::NONE, start).is_empty());
-        assert!(key(&mut app, KeyCode::F(4), KeyModifiers::NONE, start).is_empty());
-        assert!(matches!(app.modal, Some(Modal::TransformPicker { .. })));
+        assert!(matches!(
+            key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start).as_slice(),
+            [Effect::Copy(ClipboardPayload { text, kind: CopyKind::Pretty })]
+                if text == "{\n  \"a\": 1\n}"
+        ));
+        assert!(matches!(
+            key(&mut app, KeyCode::Enter, KeyModifiers::SHIFT, start).as_slice(),
+            [Effect::Copy(ClipboardPayload { text, kind: CopyKind::Raw })]
+                if text == "{\"a\":1}"
+        ));
+        for code in [KeyCode::Char('y'), KeyCode::F(3), KeyCode::F(4)] {
+            assert!(key(&mut app, code, KeyModifiers::NONE, start).is_empty());
+        }
     }
     #[test]
-    fn global_copy_uses_the_current_step_artifact_not_the_cached_final() {
+    fn output_copy_uses_the_current_step_artifact_not_the_cached_final() {
         let start = now();
         let mut app = App::new(start, true);
-        app.focus = Pane::Pipeline;
+        app.focus = Pane::Output;
         app.output.source = OutputSource::Step(0);
         app.output.status = OutputStatus::Ready;
         app.output.final_artifact = Some(Artifact::new(b"{\"final\":true}".to_vec()));
         app.output.active_artifact = Some(Artifact::new(b"{ \"step\" : 1 }".to_vec()));
 
         assert!(matches!(
-            key(&mut app, KeyCode::F(4), KeyModifiers::NONE, start).as_slice(),
+            key(&mut app, KeyCode::Enter, KeyModifiers::SHIFT, start).as_slice(),
             [Effect::Copy(ClipboardPayload { text, kind })]
                 if text == "{\"step\":1}" && *kind == CopyKind::Raw
         ));
     }
     #[test]
-    fn trace_view_blocks_global_and_output_copy_keys() {
+    fn unavailable_output_states_block_both_enter_copy_modes() {
+        let start = now();
+        for status in [
+            OutputStatus::Failed(PipelineError::TooManySteps { max: 32 }),
+            OutputStatus::Cancelled,
+            OutputStatus::running(start, ExecutionTarget::Final),
+            OutputStatus::Debouncing { deadline: start },
+        ] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Output;
+            app.output.status = status;
+            app.output.active_artifact = Some(Artifact::new(b"hidden".to_vec()));
+            for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+                assert!(key(&mut app, KeyCode::Enter, modifiers, start).is_empty());
+            }
+        }
+
+        let mut trace = App::new(start, true);
+        trace.focus = Pane::Output;
+        trace.output.status = OutputStatus::Ready;
+        trace.output.view = ViewMode::Trace;
+        trace.output.active_artifact = Some(Artifact::new(b"hidden".to_vec()));
+        for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+            assert!(key(&mut trace, KeyCode::Enter, modifiers, start).is_empty());
+        }
+
+        let mut absent = App::new(start, true);
+        absent.focus = Pane::Output;
+        absent.output.status = OutputStatus::Ready;
+        for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+            assert!(key(&mut absent, KeyCode::Enter, modifiers, start).is_empty());
+        }
+    }
+    #[test]
+    fn latin_and_hangul_pane_shortcuts_share_state_transitions() {
+        let start = now();
+
+        for character in ['v', 'ㅍ'] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Output;
+            key(
+                &mut app,
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+                start,
+            );
+            assert_eq!(app.output.view, ViewMode::Text);
+        }
+        for character in ['p', 'ㅔ'] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Output;
+            app.add_transform("base64-encode", start);
+            assert!(matches!(
+                key(
+                    &mut app,
+                    KeyCode::Char(character),
+                    KeyModifiers::NONE,
+                    start
+                )
+                .as_slice(),
+                [
+                    Effect::Cancel(_),
+                    Effect::Submit(PreviewJob {
+                        target: ExecutionTarget::Step(0),
+                        ..
+                    })
+                ]
+            ));
+        }
+        for character in ['f', 'ㄹ'] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Output;
+            app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+            key(
+                &mut app,
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+                start,
+            );
+            assert_eq!(app.output.source, OutputSource::Final);
+            assert!(matches!(app.output.status, OutputStatus::Ready));
+        }
+        for character in ['z', 'ㅋ'] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Output;
+            key(
+                &mut app,
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+                start,
+            );
+            assert_eq!(app.zoom, Some(Pane::Output));
+        }
+        for character in ['a', 'ㅁ'] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Pipeline;
+            key(
+                &mut app,
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+                start,
+            );
+            assert!(matches!(app.modal, Some(Modal::TransformPicker { .. })));
+        }
+    }
+    #[test]
+    fn latin_and_hangul_confirmation_keys_share_actions() {
+        let start = now();
+        for character in ['y', 'ㅛ'] {
+            let mut app = App::new(start, true);
+            app.output.status = OutputStatus::Ready;
+            app.output.active_artifact = Some(Artifact::new(vec![0x1b]));
+            app.request_copy(CopyMode::Pretty);
+            assert!(matches!(
+                key(
+                    &mut app,
+                    KeyCode::Char(character),
+                    KeyModifiers::NONE,
+                    start
+                )
+                .as_slice(),
+                [Effect::Copy(_)]
+            ));
+        }
+        for character in ['n', 'ㅜ'] {
+            let mut app = App::new(start, true);
+            app.output.status = OutputStatus::Ready;
+            app.output.active_artifact = Some(Artifact::new(vec![0x1b]));
+            app.request_copy(CopyMode::Pretty);
+            assert!(
+                key(
+                    &mut app,
+                    KeyCode::Char(character),
+                    KeyModifiers::NONE,
+                    start
+                )
+                .is_empty()
+            );
+            assert!(app.modal.is_none());
+        }
+    }
+    #[test]
+    fn removed_copy_keys_do_nothing_in_every_pane() {
+        let start = now();
+        for pane in [Pane::Input, Pane::Pipeline, Pane::Output] {
+            let mut app = App::new(start, true);
+            app.focus = pane;
+            app.output.status = OutputStatus::Ready;
+            app.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+            for code in [KeyCode::F(3), KeyCode::F(4)] {
+                assert!(key(&mut app, code, KeyModifiers::NONE, start).is_empty());
+            }
+        }
+    }
+    #[test]
+    fn empty_pipeline_delete_aliases_leave_state_unchanged() {
+        let start = now();
+        for code in [KeyCode::Delete, KeyCode::Char('d'), KeyCode::Char('ㅇ')] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Pipeline;
+            app.selected_step = 3;
+            app.request_id = 7;
+            app.output.status = OutputStatus::Ready;
+            app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
+
+            assert!(key(&mut app, code, KeyModifiers::NONE, start).is_empty());
+            assert_eq!(app.selected_step, 3);
+            assert_eq!(app.request_id, 7);
+            assert!(matches!(app.output.status, OutputStatus::Ready));
+            assert_eq!(
+                app.output.active_artifact.as_ref().unwrap().bytes(),
+                b"result"
+            );
+        }
+    }
+    #[test]
+    fn removed_navigation_and_uppercase_view_keys_are_no_ops() {
         let start = now();
         let mut app = App::new(start, true);
-        app.focus = Pane::Output;
-        app.output.status = OutputStatus::Ready;
-        app.output.view = ViewMode::Trace;
-        app.output.active_artifact = Some(Artifact::new(b"hidden".to_vec()));
+        app.steps = ["base64-encode", "url-encode"]
+            .into_iter()
+            .map(|id| TransformStep {
+                definition: transform_by_id(id).unwrap(),
+                enabled: true,
+            })
+            .collect();
+        app.focus = Pane::Pipeline;
 
-        for code in [KeyCode::F(3), KeyCode::F(4), KeyCode::Enter] {
-            assert!(key(&mut app, code, KeyModifiers::NONE, start).is_empty());
+        for (code, modifiers) in [
+            (KeyCode::Char('j'), KeyModifiers::NONE),
+            (KeyCode::Char('k'), KeyModifiers::NONE),
+            (KeyCode::Char('J'), KeyModifiers::SHIFT),
+            (KeyCode::Char('K'), KeyModifiers::SHIFT),
+        ] {
+            key(&mut app, code, modifiers, start);
+        }
+        assert_eq!(app.selected_step, 0);
+        assert_eq!(app.steps[0].definition.id, "base64-encode");
+
+        app.focus = Pane::Output;
+        app.output.view = ViewMode::Smart;
+        key(&mut app, KeyCode::Char('V'), KeyModifiers::SHIFT, start);
+        assert_eq!(app.output.view, ViewMode::Smart);
+
+        app.insert_paste("keep", start);
+        app.request_quit();
+        for character in ['Y', 'N'] {
+            assert!(
+                key(
+                    &mut app,
+                    KeyCode::Char(character),
+                    KeyModifiers::SHIFT,
+                    start
+                )
+                .is_empty()
+            );
+            assert!(matches!(app.modal, Some(Modal::QuitConfirm)));
         }
     }
     #[test]
@@ -2214,7 +2421,25 @@ mod tests {
         assert_eq!(app.steps[0].definition.id, "base64-encode");
     }
     #[test]
-    fn pipeline_supports_all_selection_edit_inspect_palette_and_zoom_keys() {
+    fn pipeline_delete_aliases_share_one_path_and_report_the_removed_transform() {
+        let start = now();
+        for code in [KeyCode::Delete, KeyCode::Char('d'), KeyCode::Char('ㅇ')] {
+            let mut app = App::new(start, true);
+            app.add_transform("base64-encode", start);
+            app.add_transform("format-json", start);
+            app.focus = Pane::Pipeline;
+            app.selected_step = 1;
+
+            key(&mut app, code, KeyModifiers::NONE, start);
+
+            assert_eq!(app.steps.len(), 1);
+            assert_eq!(app.selected_step, 0);
+            assert_eq!(app.status.as_deref(), Some("Removed JSON Prettify"));
+            assert!(matches!(app.output.status, OutputStatus::Debouncing { .. }));
+        }
+    }
+    #[test]
+    fn pipeline_supports_arrow_selection_edit_inspect_palette_and_zoom_keys() {
         let start = now();
         let mut app = App::new(start, true);
         app.steps = ["base64-encode", "url-encode", "format-json"]
@@ -2226,10 +2451,6 @@ mod tests {
             .collect();
         app.focus = Pane::Pipeline;
 
-        key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE, start);
-        assert_eq!(app.selected_step, 1);
-        key(&mut app, KeyCode::Char('k'), KeyModifiers::NONE, start);
-        assert_eq!(app.selected_step, 0);
         key(&mut app, KeyCode::Down, KeyModifiers::SHIFT, start);
         assert_eq!(app.selected_step, 1);
         assert_eq!(app.steps[1].definition.id, "base64-encode");
@@ -2238,28 +2459,22 @@ mod tests {
         assert_eq!(app.steps[0].definition.id, "base64-encode");
         key(&mut app, KeyCode::Down, KeyModifiers::NONE, start);
         assert_eq!(app.selected_step, 1);
-        key(&mut app, KeyCode::Char('J'), KeyModifiers::SHIFT, start);
-        assert_eq!(app.selected_step, 2);
-        assert_eq!(app.steps[2].definition.id, "url-encode");
-        key(&mut app, KeyCode::Char('K'), KeyModifiers::SHIFT, start);
-        assert_eq!(app.selected_step, 1);
-        assert_eq!(app.steps[1].definition.id, "url-encode");
 
         key(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, start);
         assert!(!app.steps[1].enabled);
-        key(&mut app, KeyCode::Char('d'), KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Char('ㅇ'), KeyModifiers::NONE, start);
         assert_eq!(app.steps.len(), 2);
 
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
         assert!(app.modal.is_some());
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
-        key(&mut app, KeyCode::Char('a'), KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Char('ㅁ'), KeyModifiers::NONE, start);
         assert!(app.modal.is_some());
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
 
-        key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Char('ㅋ'), KeyModifiers::NONE, start);
         assert_eq!(app.zoom, Some(Pane::Pipeline));
-        key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Char('ㅋ'), KeyModifiers::NONE, start);
         assert!(app.zoom.is_none());
     }
     #[test]
@@ -2332,7 +2547,7 @@ mod tests {
             assert_eq!(app.output.view, expected);
         }
         key(&mut app, KeyCode::Char('V'), KeyModifiers::SHIFT, start);
-        assert_eq!(app.output.view, ViewMode::Trace);
+        assert_eq!(app.output.view, ViewMode::Smart);
 
         assert!(matches!(
             key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start).as_slice(),
@@ -2345,13 +2560,7 @@ mod tests {
         );
         assert_eq!(app.output.source, OutputSource::Final);
         app.output.view = ViewMode::Smart;
-        assert!(matches!(
-            key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE, start).as_slice(),
-            [Effect::Copy(ClipboardPayload {
-                text,
-                kind: CopyKind::Pretty,
-            })] if text == "final"
-        ));
+        assert!(key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE, start).is_empty());
         assert!(matches!(
             key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start).as_slice(),
             [Effect::Copy(ClipboardPayload {

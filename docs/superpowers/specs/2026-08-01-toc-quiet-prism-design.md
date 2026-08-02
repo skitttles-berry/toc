@@ -9,6 +9,11 @@
 
 ---
 
+> 2026-08-02 승인된 `2026-08-01-toc-tui-shortcuts-output-design.md`가 이 문서의
+> "모든 키 바인딩 유지" 결정을 대체한다. 아래의 이전 키 표기는 Quiet Prism 구현
+> 당시의 기록으로 남긴다. 현재는 영문 소문자와 두벌식 한글 별칭, Output
+> `Enter` Pretty·`Shift+Enter` Raw Copy, `Delete`/`d`/`ㅇ` 삭제를 사용한다.
+
 # 1. 목적과 범위
 
 이 설계는 현재 `Pipeline + Input + Output` 작업판의 구조와 조작을 유지하면서
