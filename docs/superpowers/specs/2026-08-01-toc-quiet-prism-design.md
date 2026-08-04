@@ -12,9 +12,11 @@
 > 2026-08-02 승인된 `2026-08-01-toc-tui-shortcuts-output-design.md`가 이 문서의
 > App Bar·Output 제목·Dock·Help 계약을 대체한다. 아래의 `FOCUS`, `FINAL`과 이전
 > 키 표기는 Quiet Prism 구현 당시의 기록으로 남긴다. 현재 App Bar는 `>_ TOC`만,
-> FINAL을 생략한 Output 제목은 Ready Artifact 크기를 공간이 허용할 때만 표시한다.
-> Dock과 Help는 영문 소문자, `↑`/`↓`, `Shift+↑`/`Shift+↓`, `Enter` Pretty·
-> `Shift+Enter` Raw Copy, `Delete`/`d`를 표시한다.
+> FINAL을 생략한 Ready Output 제목은 `BYTE 현재/전체` 또는 `ROW 현재/전체`를
+> 공간에 맞춰 표시한다. Dock과 Help는 영문 소문자, `↑`/`↓`,
+> `Shift+↑`/`Shift+↓`, `Enter` Pretty·`Shift+Enter` Raw Copy, `Delete`/`d`를
+> 표시한다. 복사는 전용 작업자에서 준비·기록하며 일반 상태는 2초 또는 다음
+> 사용자 조작에 해제된다. Output 페이지 이동은 실제 Viewport 크기를 사용한다.
 
 # 1. 목적과 범위
 
@@ -223,21 +225,29 @@ Popup보다 오른쪽과 아래에 한 셀만 표시한다. 새 렌더링 crate�
 
 # 7. 코드 경계
 
-프로덕션 코드 변경은 기존 두 파일에 한정한다.
+현재 프로덕션 코드 경계는 다음과 같다.
 
 ```text
+src/tui.rs
+  터미널 수명, Preview·클립보드 작업자 이벤트 루프, 공유 Quiet Prism 색상 상수
+
 src/tui/state.rs
-  실행 시작 시각, 안내 전환, pending target, 이전 결과 보존과 캐시 무효화
+  실행·복사 상태 전이, 일반 상태 수명, Output Viewport 보정
+
+src/tui/clipboard.rs
+  복사 payload 준비, 위험 문자 검사와 시스템 클립보드 단일 작업자
 
 src/tui/render.rs
   Quiet Prism 스타일, Grouped Command Dock, 이전 결과 렌더링,
-  장시간 처리 문구, Modal Dim과 Shadow
+  복사 진행 문구, 위치 제목, Modal Dim과 Shadow
+
+src/tui/views.rs
+  Text·Hex·Trace의 공유 페이지·행 계산과 Trace 상태 문자열
 ```
 
 `README.md`와 기존 관련 설계 문서의 현재 동작 설명은 구현 커밋에서 최소 diff로
-현행화한다. Pipeline 실행 엔진, 작업자, View window renderer, 변환 구현과 CLI는
-변경하지 않는다. 새 모듈, trait, 테마 registry, 설정 parser와 의존성은 추가하지
-않는다.
+현행화한다. Pipeline 실행 엔진, Preview 작업자, 변환 구현과 CLI는 변경하지
+않는다. 새 trait, 테마 registry, 설정 parser와 의존성은 추가하지 않는다.
 
 # 8. 오류와 보안
 

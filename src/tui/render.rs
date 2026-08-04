@@ -19,23 +19,15 @@ use crate::{
 };
 
 use super::{
-    state::{App, Modal, MouseRegions, OutputSource, OutputStatus, Pane},
+    BACKGROUND, BORDER, CYAN, GREEN, MUTED, RED, SURFACE_HIGH, TEXT, YELLOW,
+    state::{App, CopyPhase, Modal, MouseRegions, OutputSource, OutputStatus, Pane},
     views::{
         EffectiveView, TEXT_VIEW_UNAVAILABLE_MESSAGE, VISIBLE_TEXT_BYTE_BUDGET, ViewMode,
         effective_view, render_pipeline_error_summary, render_text_window,
-        render_transform_error_summary, trace_status, visible_hex_rows,
+        render_transform_error_summary, trace_failure_detail_height, trace_start_row, trace_status,
+        trace_visible_row_capacity, visible_hex_rows,
     },
 };
-
-const BACKGROUND: Color = Color::Rgb(0x11, 0x11, 0x1b);
-const SURFACE_HIGH: Color = Color::Rgb(0x24, 0x24, 0x38);
-const BORDER: Color = Color::Rgb(0x36, 0x3a, 0x4f);
-const TEXT: Color = Color::Rgb(0xcd, 0xd6, 0xf4);
-const MUTED: Color = Color::Rgb(0x6c, 0x70, 0x86);
-const CYAN: Color = Color::Rgb(0x89, 0xdc, 0xeb);
-const GREEN: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
-const YELLOW: Color = Color::Rgb(0xf9, 0xe2, 0xaf);
-const RED: Color = Color::Rgb(0xf3, 0x8b, 0xa8);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WidthMode {
@@ -104,7 +96,7 @@ fn stacked_pane_heights(height: u16) -> [u16; 3] {
     [pipeline, input, output]
 }
 
-fn output_title(app: &App, available_width: u16) -> String {
+fn output_title(app: &App, available_width: u16, output_columns: usize) -> String {
     let view = match app.output.view {
         ViewMode::Smart => "SMART",
         ViewMode::Text => "TEXT",
@@ -115,12 +107,40 @@ fn output_title(app: &App, available_width: u16) -> String {
         OutputSource::Final => format!("» OUTPUT / {view}"),
         OutputSource::Step(index) => format!("» OUTPUT / STEP {:02} / {view}", index + 1),
     };
-    let Some(artifact) = app.output.active_artifact.as_ref() else {
-        return base;
-    };
     if !matches!(app.output.status, OutputStatus::Ready) {
         return base;
     }
+    let counter = if app.output.view == ViewMode::Trace {
+        let total = app.output.traces.len();
+        (total > 0).then(|| {
+            let current = app.output.row_offset.min(total - 1) + 1;
+            format!("ROW {current}/{total}")
+        })
+    } else {
+        app.output.active_artifact.as_ref().map(|artifact| {
+            let total = artifact.bytes().len();
+            let current = match effective_view(app.output.view, Some(artifact), false) {
+                EffectiveView::Hex => app
+                    .output
+                    .row_offset
+                    .saturating_mul(super::views::hex_bytes_per_row(output_columns)),
+                EffectiveView::Text | EffectiveView::Unavailable | EffectiveView::Trace => {
+                    app.output.byte_offset
+                }
+            }
+            .min(total);
+            format!("BYTE {current}/{total}")
+        })
+    };
+    if let Some(counter) = counter {
+        let with_counter = format!("{base} · {counter}");
+        if with_counter.width().saturating_add(2) <= available_width as usize {
+            return with_counter;
+        }
+    }
+    let Some(artifact) = app.output.active_artifact.as_ref() else {
+        return base;
+    };
     let with_size = format!("{base} · {} B", artifact.bytes().len());
     if with_size.width().saturating_add(2) <= available_width as usize {
         with_size
@@ -345,15 +365,7 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .iter()
         .position(|trace| trace.status == StepStatus::Failed);
     let failure = failure_index.and_then(|index| traces.get(index));
-    let detail_height = failure
-        .filter(|trace| trace.error.is_some())
-        .map_or(0, |_| {
-            if area.height >= 5 {
-                3
-            } else {
-                area.height.saturating_sub(2).min(2)
-            }
-        });
+    let detail_height = trace_failure_detail_height(traces, area.height as usize) as u16;
     let (table_area, detail_area) = if detail_height == 0 {
         (area, None)
     } else if area.height >= 5 {
@@ -375,7 +387,6 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 detail_width,
                 remaining_budget,
             );
-            remaining_budget = remaining_budget.saturating_sub(summary.len());
             return Some((detail_area, summary, None));
         }
         let title = trace_prefix(
@@ -393,21 +404,13 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
             detail_width,
             remaining_budget,
         );
-        remaining_budget = remaining_budget.saturating_sub(summary.len());
         Some((detail_area, title, Some(summary)))
     });
 
-    let start = if area.height < 5 {
-        failure_index.unwrap_or(app.output.row_offset)
-    } else {
-        app.output.row_offset
-    }
-    .min(traces.len());
-    let visible_rows = table_area.height.saturating_sub(1) as usize;
-    let budget_rows = remaining_budget / columns.max(1);
-    let take = visible_rows
-        .min(budget_rows)
-        .min(traces.len().saturating_sub(start));
+    let start =
+        trace_start_row(traces, app.output.row_offset, area.height as usize).min(traces.len());
+    let visible_rows = trace_visible_row_capacity(traces, area.height as usize, columns);
+    let take = visible_rows.min(traces.len().saturating_sub(start));
     let rows = traces
         .iter()
         .skip(start)
@@ -504,23 +507,16 @@ fn render_output(
     area: Rect,
     mouse_regions: &mut MouseRegions,
 ) {
-    let title = output_title(app, area.width);
+    let inner = pane_block(app, "", app.focus == Pane::Output).inner(area);
+    app.reflow_output_viewport(inner);
+    let title = output_title(app, area.width, inner.width as usize);
     let block = pane_block(app, &title, app.focus == Pane::Output);
-    let inner = block.inner(area);
     mouse_regions.output = Some(area);
     mouse_regions.output_content = Some(inner);
     frame.render_widget(block, area);
 
     let rows = inner.height as usize;
     let columns = inner.width as usize;
-    if effective_view(
-        app.output.view,
-        app.output.active_artifact.as_ref(),
-        matches!(app.output.status, OutputStatus::Failed(_)),
-    ) == EffectiveView::Hex
-    {
-        app.reflow_hex_offset(columns);
-    }
     let text = match &app.output.status {
         OutputStatus::Idle => String::new(),
         OutputStatus::Cancelled if app.output.traces.is_empty() => "Cancelled".to_string(),
@@ -868,6 +864,12 @@ fn footer_status(app: &App, width: usize) -> Option<String> {
             }
             .to_string(),
         ),
+        _ if matches!(app.copy_phase, CopyPhase::Preparing { .. }) => {
+            Some("Preparing copy…".to_string())
+        }
+        _ if matches!(app.copy_phase, CopyPhase::Writing { .. }) => {
+            Some("Writing clipboard…".to_string())
+        }
         _ => app
             .status
             .as_ref()
@@ -1104,16 +1106,6 @@ fn render_picker(
     mouse_regions.cancel_action = Some(action_rect(hint_area, hint, "[Esc Cancel]", false));
 }
 
-fn step_status(status: StepStatus) -> &'static str {
-    match status {
-        StepStatus::Succeeded => "OK",
-        StepStatus::Disabled => "OFF",
-        StepStatus::Failed => "ERROR",
-        StepStatus::NotExecuted => "NOT RUN",
-        StepStatus::Cancelled => "CANCELLED",
-    }
-}
-
 fn render_inspector(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegions) {
     let Some(step) = app.steps.get(app.selected_step) else {
         return;
@@ -1129,7 +1121,7 @@ fn render_inspector(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseR
     } else if app.output.status.running_target() == Some(ExecutionTarget::Step(app.selected_step)) {
         "RUNNING"
     } else if let Some(trace) = trace {
-        step_status(trace.status)
+        trace_status(trace.status)
     } else {
         "NOT RUN"
     };
@@ -1193,12 +1185,12 @@ fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegion
         ),
         Pane::Pipeline => (
             "Pipeline Help",
-            "↑/↓  Select step\nShift+↑/↓  Reorder\nSpace  Toggle step\nDelete/d  Delete step\nEnter  Inspect step\na  Add transform\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+p  Add transform\nCtrl+q  Quit\nCtrl+c  Force quit\nMouse Click  Focus/select · Wheel  Move selection".to_string(),
+            "↑/↓  Select step\nShift+↑/↓  Reorder\nSpace  Toggle step\nDelete/d  Delete step\nEnter  Inspect step\na  Add transform\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+p  Add transform\nCtrl+q  Quit\nCtrl+c  Force quit · Esc  Close zoom or cancel request\nMouse Click  Focus/select · Wheel  Move selection".to_string(),
         ),
         Pane::Output => (
             "Output Help",
             format!(
-                "v  Next view\np  Show selected step\nf  Restore final\n{}\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+p  Add transform\n? / F1  Context help\nCtrl+q  Quit\nCtrl+c  Force quit\nMouse Click  Focus only · Wheel  Scroll",
+                "v  Next view\np  Show selected step\nf  Restore final\n{}\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+p  Add transform\n? / F1  Context help\nCtrl+q  Quit\nCtrl+c  Force quit · Esc  Close zoom or cancel request\nMouse Click  Focus only · Wheel  Scroll",
                 if app.can_copy() {
                     "Enter  Pretty copy\nShift+Enter  Raw copy"
                 } else {
@@ -1377,9 +1369,10 @@ pub(super) fn draw_if_dirty<B: Backend>(
 #[cfg(test)]
 mod tests {
     use super::super::{
+        clipboard::{ClipboardPayload, CopyKind},
         state::{
-            AppEvent, ClipboardPayload, CopyKind, Effect, LONG_RUNNING_AFTER, Modal, OutputSource,
-            OutputStatus, Pane, debounce_for,
+            AppEvent, CopyPhase, Effect, LONG_RUNNING_AFTER, Modal, OutputSource, OutputStatus,
+            Pane, debounce_for,
         },
         views::{Artifact, ViewMode},
         worker::PreviewResult,
@@ -1540,6 +1533,73 @@ mod tests {
         assert!(delayed.contains("Still processing · Previous result shown"));
     }
 
+    #[test]
+    fn footer_prioritizes_preview_state_copy_progress_and_transient_status() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.status = Some("Copied Pretty".to_string());
+        app.copy_phase = CopyPhase::Preparing { request_id: 1 };
+
+        let preparing = rendered_app(80, 16, &mut app);
+        assert!(
+            preparing
+                .lines()
+                .nth(14)
+                .unwrap()
+                .contains("Preparing copy…")
+        );
+
+        app.copy_phase = CopyPhase::Writing {
+            request_id: 1,
+            kind: CopyKind::Pretty,
+        };
+        let writing = rendered_app(80, 16, &mut app);
+        assert!(
+            writing
+                .lines()
+                .nth(14)
+                .unwrap()
+                .contains("Writing clipboard…")
+        );
+
+        app.output.status = OutputStatus::running(start, ExecutionTarget::Final);
+        app.handle_event(AppEvent::Tick(start + LONG_RUNNING_AFTER));
+        let running = rendered_app(80, 16, &mut app);
+        assert!(
+            running
+                .lines()
+                .nth(14)
+                .unwrap()
+                .contains("Still processing")
+        );
+        assert!(
+            !running
+                .lines()
+                .nth(14)
+                .unwrap()
+                .contains("Writing clipboard")
+        );
+
+        app.output.status = OutputStatus::Cancelled;
+        let cancelled = rendered_app(80, 16, &mut app);
+        assert!(cancelled.lines().nth(14).unwrap().contains("Cancelled"));
+    }
+
+    #[test]
+    fn pipeline_and_output_help_include_global_escape_on_the_ctrl_c_row() {
+        let start = now();
+        for pane in [Pane::Pipeline, Pane::Output] {
+            let mut app = App::new(start, true);
+            app.focus = pane;
+            key(&mut app, KeyCode::F(1), KeyModifiers::NONE, start);
+
+            let screen = rendered_app(80, 20, &mut app);
+
+            assert!(screen.contains("Ctrl+c  Force quit · Esc  Close zoom or cancel request"));
+        }
+    }
+
     fn click(app: &mut App, area: Rect, now: Instant) -> Vec<Effect> {
         app.handle_event(AppEvent::Mouse(
             MouseEvent {
@@ -1677,12 +1737,16 @@ mod tests {
                 kind: CopyKind::Pretty,
             },
         });
+        app.copy_phase = CopyPhase::AwaitingConfirmation { request_id: 1 };
         rendered_app(120, 24, &mut app);
         let confirm = app.mouse_regions.confirm_action.unwrap();
         let effects = click(&mut app, confirm, start);
         assert!(matches!(
             effects.as_slice(),
-            [Effect::Copy(ClipboardPayload { text, .. })] if text == "exact\u{1b}payload"
+            [Effect::WriteClipboard {
+                request_id: 1,
+                payload: ClipboardPayload { text, .. },
+            }] if text == "exact\u{1b}payload"
         ));
 
         app.modal = Some(Modal::Help);
@@ -1784,9 +1848,15 @@ mod tests {
         }));
         assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
 
-        app.handle_event(AppEvent::ClipboardFinished {
+        app.copy_phase = CopyPhase::Writing {
+            request_id: 1,
             kind: CopyKind::Pretty,
-            result: Err("Clipboard unavailable".to_string()),
+        };
+        app.handle_event(AppEvent::ClipboardWriteFinished {
+            request_id: 1,
+            kind: CopyKind::Pretty,
+            result: Err(()),
+            now: start,
         });
         assert!(draw_if_dirty(&mut terminal, &mut app).unwrap());
 
@@ -1941,15 +2011,22 @@ mod tests {
 
     #[test]
     fn status_replaces_only_the_focused_help_line() {
-        let mut app = App::new(now(), true);
-        app.handle_event(AppEvent::ClipboardFinished {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.copy_phase = CopyPhase::Writing {
+            request_id: 1,
             kind: CopyKind::Pretty,
-            result: Err("Clipboard unavailable".to_string()),
+        };
+        app.handle_event(AppEvent::ClipboardWriteFinished {
+            request_id: 1,
+            kind: CopyKind::Pretty,
+            result: Err(()),
+            now: start,
         });
         let screen = rendered_app(80, 16, &mut app);
         let lines: Vec<_> = screen.lines().collect();
 
-        assert!(lines[14].contains("Clipboard unavailable"));
+        assert!(lines[14].contains("Copy unavailable"));
         assert!(!lines[14].contains("INPUT │"));
         assert!(lines[15].starts_with("GLOBAL │"));
         assert!(lines[15].contains("[ Ctrl+p ] Add"));
@@ -2027,17 +2104,80 @@ mod tests {
         let final_screen = rendered_app(120, 20, &mut app);
         assert!(final_screen.lines().next().unwrap().starts_with(">_ TOC"));
         assert!(!final_screen.contains("FOCUS:"));
-        assert!(final_screen.contains("» OUTPUT / SMART · 10 B"));
+        assert!(final_screen.contains("» OUTPUT / SMART · BYTE 0/10"));
         assert!(!final_screen.contains("/ FINAL"));
 
         app.output.source = OutputSource::Step(1);
         let step_screen = rendered_app(120, 20, &mut app);
-        assert!(step_screen.contains("» OUTPUT / STEP 02 / SMART · 10 B"));
+        assert!(step_screen.contains("» OUTPUT / STEP 02 / SMART · BYTE 0/10"));
 
         app.output.status = OutputStatus::Debouncing { deadline: now() };
         let pending = rendered_app(120, 20, &mut app);
         assert!(pending.contains("» OUTPUT / STEP 02 / SMART"));
+        assert!(!pending.contains("BYTE"));
         assert!(!pending.contains("SMART · 10 B"));
+    }
+
+    #[test]
+    fn output_title_uses_byte_or_row_position_then_size_then_base_fallbacks() {
+        let mut app = App::new(now(), true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(vec![b'x'; 100]));
+
+        app.output.view = ViewMode::Text;
+        app.output.byte_offset = 12;
+        assert_eq!(output_title(&app, 120, 78), "» OUTPUT / TEXT · BYTE 12/100");
+
+        app.output.view = ViewMode::Hex;
+        app.output.row_offset = 2;
+        app.mouse_regions.output_content = Some(Rect::new(0, 0, 78, 4));
+        assert_eq!(output_title(&app, 120, 78), "» OUTPUT / HEX · BYTE 32/100");
+
+        app.output.view = ViewMode::Smart;
+        app.output.active_artifact = Some(Artifact::new(vec![0xff; 100]));
+        assert_eq!(
+            output_title(&app, 120, 78),
+            "» OUTPUT / SMART · BYTE 32/100"
+        );
+
+        app.output.view = ViewMode::Trace;
+        app.output.active_artifact = None;
+        app.output.row_offset = 3;
+        app.output.traces = (1..=10)
+            .map(|step| StepTrace {
+                step,
+                transform_id: "base64-encode",
+                input_bytes: None,
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            })
+            .collect();
+        assert_eq!(output_title(&app, 120, 78), "» OUTPUT / TRACE · ROW 4/10");
+
+        app.output.view = ViewMode::Text;
+        app.output.active_artifact = Some(Artifact::new(vec![b'x'; 100]));
+        assert_eq!(output_title(&app, 25, 78), "» OUTPUT / TEXT · 100 B");
+        assert_eq!(output_title(&app, 17, 78), "» OUTPUT / TEXT");
+
+        app.output.status = OutputStatus::running(now(), ExecutionTarget::Final);
+        assert_eq!(output_title(&app, 120, 78), "» OUTPUT / TEXT");
+    }
+
+    #[test]
+    fn resized_hex_title_uses_the_new_row_width() {
+        let mut app = App::new(now(), true);
+        app.output.status = OutputStatus::Ready;
+        app.output.view = ViewMode::Hex;
+        app.output.active_artifact = Some(Artifact::new(vec![0xff; 80]));
+        app.output.row_offset = 7;
+        app.reflow_output_viewport(Rect::new(0, 0, 59, 4));
+
+        app.reflow_output_viewport(Rect::new(0, 0, 78, 4));
+
+        assert_eq!(app.output.row_offset, 2);
+        assert_eq!(output_title(&app, 120, 78), "» OUTPUT / HEX · BYTE 32/80");
     }
 
     #[test]
@@ -3329,16 +3469,23 @@ mod tests {
     #[test]
     fn clipboard_failure_replaces_contextual_help_at_every_usable_width() {
         for (width, height) in [(120, 16), (90, 13), (40, 10)] {
-            let mut app = App::new(now(), true);
-            app.handle_event(AppEvent::ClipboardFinished {
+            let start = now();
+            let mut app = App::new(start, true);
+            app.copy_phase = CopyPhase::Writing {
+                request_id: 1,
                 kind: CopyKind::Pretty,
-                result: Err("Clipboard unavailable".to_string()),
+            };
+            app.handle_event(AppEvent::ClipboardWriteFinished {
+                request_id: 1,
+                kind: CopyKind::Pretty,
+                result: Err(()),
+                now: start,
             });
 
             let screen = rendered_app(width, height, &mut app);
             let context = screen.lines().rev().nth(1).unwrap();
 
-            assert!(context.starts_with("Clipboard unavailable"));
+            assert!(context.starts_with("Copy unavailable"));
             assert!(!context.contains("Ctrl+P"));
         }
     }
@@ -3496,10 +3643,7 @@ mod tests {
         let backend = TestBackend::new(80, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(now(), true);
-        app.handle_event(AppEvent::ClipboardFinished {
-            kind: CopyKind::Pretty,
-            result: Err("clipboard\n\u{1b}[2J".to_string()),
-        });
+        app.status = Some("clipboard\n\u{1b}[2J".to_string());
         app.focus = Pane::Output;
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 

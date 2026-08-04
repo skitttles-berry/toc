@@ -233,6 +233,59 @@ pub(super) fn last_text_offset(artifact: &Artifact) -> usize {
     previous_text_offset(artifact, artifact.bytes().len())
 }
 
+pub(super) fn next_text_page_offset(
+    artifact: &Artifact,
+    offset: usize,
+    rows: usize,
+    columns: usize,
+) -> usize {
+    if rows == 0 || columns == 0 {
+        return offset.min(artifact.bytes().len());
+    }
+    let next = render_text_window(artifact, offset, rows, columns).next_offset;
+    if next >= artifact.bytes().len() {
+        offset.min(artifact.bytes().len())
+    } else {
+        next
+    }
+}
+
+pub(super) fn previous_text_page_offset(
+    artifact: &Artifact,
+    offset: usize,
+    rows: usize,
+    columns: usize,
+) -> usize {
+    if !artifact.is_utf8() || rows == 0 || columns == 0 {
+        return 0;
+    }
+    let bytes = artifact.bytes();
+    let target = utf8_boundary_at_or_before(bytes, offset);
+    if target == 0 {
+        return 0;
+    }
+    let search_start =
+        utf8_boundary_at_or_before(bytes, target.saturating_sub(VISIBLE_TEXT_BYTE_BUDGET));
+    let mut candidate = search_start;
+    // ponytail: this scan is capped at 4 KiB; cache page starts only if profiling
+    // shows repeated reverse navigation spending measurable time here.
+    while candidate < target {
+        if render_text_window(artifact, candidate, rows, columns).next_offset >= target {
+            return candidate;
+        }
+        let next = next_text_offset(artifact, candidate);
+        if next <= candidate {
+            break;
+        }
+        candidate = next.min(target);
+    }
+    search_start
+}
+
+pub(super) fn last_text_page_offset(artifact: &Artifact, rows: usize, columns: usize) -> usize {
+    previous_text_page_offset(artifact, artifact.bytes().len(), rows, columns)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct HexRow<'a> {
     pub(super) offset: usize,
@@ -243,6 +296,20 @@ pub(super) fn hex_bytes_per_row(columns: usize) -> usize {
     if columns < 60 { 8 } else { 16 }
 }
 
+fn hex_row_cost(columns: usize) -> usize {
+    match columns {
+        78.. => 77,
+        60..=77 => 59,
+        _ => 34,
+    }
+}
+
+pub(super) fn hex_visible_row_capacity(rows: usize, columns: usize) -> usize {
+    let row_cost = hex_row_cost(columns);
+    let budget_rows = VISIBLE_TEXT_BYTE_BUDGET.saturating_sub(row_cost) / row_cost.max(1);
+    rows.min(budget_rows)
+}
+
 pub(super) fn visible_hex_rows<'a>(
     artifact: &'a Artifact,
     row_offset: usize,
@@ -250,14 +317,9 @@ pub(super) fn visible_hex_rows<'a>(
     columns: usize,
 ) -> Vec<HexRow<'a>> {
     let bytes_per_row = hex_bytes_per_row(columns);
-    let row_cost = match columns {
-        78.. => 77,
-        60..=77 => 59,
-        _ => 34,
-    };
-    let budget_rows = VISIBLE_TEXT_BYTE_BUDGET.saturating_sub(row_cost) / row_cost.max(1);
-    let mut visible = Vec::with_capacity(rows.min(budget_rows));
-    for row in row_offset..row_offset.saturating_add(rows.min(budget_rows)) {
+    let visible_rows = hex_visible_row_capacity(rows, columns);
+    let mut visible = Vec::with_capacity(visible_rows);
+    for row in row_offset..row_offset.saturating_add(visible_rows) {
         let Some(offset) = row.checked_mul(bytes_per_row) else {
             break;
         };
@@ -273,6 +335,57 @@ pub(super) fn visible_hex_rows<'a>(
         });
     }
     visible
+}
+
+pub(super) fn trace_failure_detail_height(
+    traces: &[crate::pipeline::StepTrace],
+    area_height: usize,
+) -> usize {
+    let has_failure_detail = traces
+        .iter()
+        .take(crate::MAX_STEPS)
+        .find(|trace| trace.status == crate::pipeline::StepStatus::Failed)
+        .is_some_and(|trace| trace.error.is_some());
+    if !has_failure_detail {
+        0
+    } else if area_height >= 5 {
+        3
+    } else {
+        area_height.saturating_sub(2).min(2)
+    }
+}
+
+pub(super) fn trace_visible_row_capacity(
+    traces: &[crate::pipeline::StepTrace],
+    area_height: usize,
+    columns: usize,
+) -> usize {
+    let detail_height = trace_failure_detail_height(traces, area_height);
+    let geometry_rows = area_height.saturating_sub(detail_height).saturating_sub(1);
+    let header_cost = if columns >= 70 { 34 } else { 23 };
+    let detail_cost = detail_height
+        .min(2)
+        .saturating_mul(columns.saturating_sub(1));
+    let budget_rows = VISIBLE_TEXT_BYTE_BUDGET
+        .saturating_sub(header_cost)
+        .saturating_sub(detail_cost)
+        / columns.max(1);
+    geometry_rows.min(budget_rows)
+}
+
+pub(super) fn trace_start_row(
+    traces: &[crate::pipeline::StepTrace],
+    row_offset: usize,
+    area_height: usize,
+) -> usize {
+    if area_height >= 5 {
+        return row_offset;
+    }
+    traces
+        .iter()
+        .take(crate::MAX_STEPS)
+        .position(|trace| trace.status == crate::pipeline::StepStatus::Failed)
+        .unwrap_or(row_offset)
 }
 
 pub(super) fn trace_status(status: crate::pipeline::StepStatus) -> &'static str {
@@ -545,6 +658,55 @@ mod tests {
     }
 
     #[test]
+    fn text_page_boundaries_reuse_rendering_rules_for_ascii_and_unicode() {
+        for (text, rows, columns, next, previous, last) in [
+            ("abcdef", 2, 2, 4, 0, 2),
+            ("가나다라", 1, 4, 6, 0, 6),
+            ("a\u{301}bc", 1, 2, 4, 0, 3),
+            ("a\nb\nc", 2, 10, 3, 0, 2),
+            ("\u{1b}ab", 1, 4, 1, 0, 1),
+        ] {
+            let artifact = Artifact::new(text.as_bytes().to_vec());
+
+            assert_eq!(
+                next_text_page_offset(&artifact, 0, rows, columns),
+                next,
+                "next page for {text:?}"
+            );
+            assert_eq!(
+                previous_text_page_offset(&artifact, next, rows, columns),
+                previous,
+                "previous page for {text:?}"
+            );
+            assert_eq!(
+                last_text_page_offset(&artifact, rows, columns),
+                last,
+                "last page for {text:?}"
+            );
+            assert_eq!(
+                next_text_page_offset(&artifact, last, rows, columns),
+                last,
+                "PageDown must stop when the end is already visible for {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reverse_text_page_search_never_inspects_beyond_four_kibibytes() {
+        let artifact = Artifact::new("가".repeat(8_192).into_bytes());
+        let offset = artifact.bytes().len();
+
+        let previous = previous_text_page_offset(&artifact, offset, 2, 4);
+
+        assert!(offset.saturating_sub(previous) <= VISIBLE_TEXT_BYTE_BUDGET);
+        assert!(
+            std::str::from_utf8(artifact.bytes())
+                .unwrap()
+                .is_char_boundary(previous)
+        );
+    }
+
+    #[test]
     fn hex_rows_switch_between_sixteen_and_eight_bytes_at_exact_widths() {
         let artifact = Artifact::new((0..40).collect());
         assert_eq!(hex_bytes_per_row(78), 16);
@@ -579,6 +741,57 @@ mod tests {
             let rendered_cost = rows.len().saturating_add(1).saturating_mul(row_cost);
             assert!(rendered_cost <= VISIBLE_TEXT_BYTE_BUDGET);
         }
+    }
+
+    #[test]
+    fn visible_data_row_capacity_excludes_headers_and_trace_failure_detail() {
+        use crate::{
+            error::TransformError,
+            pipeline::{StepStatus, StepTrace},
+        };
+
+        assert_eq!(hex_visible_row_capacity(9, 78), 9);
+        assert!(hex_visible_row_capacity(10_000, 78) < 10_000);
+
+        let success = StepTrace {
+            step: 1,
+            transform_id: "base64-encode",
+            input_bytes: Some(1),
+            output_bytes: Some(4),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        };
+        let failure = StepTrace {
+            status: StepStatus::Failed,
+            error: Some(TransformError::InvalidBase64 { position: Some(0) }),
+            ..success.clone()
+        };
+
+        assert_eq!(
+            trace_visible_row_capacity(std::slice::from_ref(&success), 8, 80),
+            7
+        );
+        assert_eq!(
+            trace_failure_detail_height(std::slice::from_ref(&failure), 8),
+            3
+        );
+        assert_eq!(
+            trace_visible_row_capacity(std::slice::from_ref(&failure), 8, 80),
+            4
+        );
+        assert_eq!(
+            trace_failure_detail_height(std::slice::from_ref(&failure), 4),
+            2
+        );
+        assert_eq!(
+            trace_visible_row_capacity(std::slice::from_ref(&failure), 4, 80),
+            1
+        );
+
+        let traces = [success, failure];
+        assert_eq!(trace_start_row(&traces, 0, 4), 1);
+        assert_eq!(trace_start_row(&traces, 0, 5), 0);
     }
 
     #[test]

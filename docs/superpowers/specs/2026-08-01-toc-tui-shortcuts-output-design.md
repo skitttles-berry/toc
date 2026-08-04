@@ -1,7 +1,7 @@
 # toc TUI 단축키·출력 보기 개선 설계
 
 **작성일:** 2026-08-01  
-**상태:** 승인됨  
+**상태:** 사용자 승인·구현 완료  
 **대상 버전:** 0.2.x
 
 ## 1. 목적
@@ -10,8 +10,8 @@
 단축키를 사용할 수 있게 한다. Output의 Hex와 Trace는 Ratatui 표를 사용해
 열 정렬, 상태 색상과 작은 화면 대응을 개선한다.
 
-이번 변경은 기존 상태·실행·복사 흐름을 재사용한다. 새 의존성, 사용자 키맵,
-실행 엔진 변경은 추가하지 않는다.
+이번 변경은 기존 상태·실행 흐름을 재사용하고 대용량 복사 준비만 별도 단일
+작업자로 분리한다. 새 의존성, 사용자 키맵, 실행 엔진 변경은 추가하지 않는다.
 
 ## 2. 범위
 
@@ -28,7 +28,10 @@
 - 최종 Output 제목의 `FINAL` 제거
 - Hex·Trace의 Ratatui 표 렌더링과 반응형 열 구성
 - Trace 첫 실패 상세 자동 표시
-- Output 제목의 준비된 결과 바이트 크기
+- Output 제목의 현재 바이트·행 위치
+- 대용량 복사 준비와 시스템 쓰기의 UI 스레드 분리
+- 일반 Footer 상태의 2초 또는 사용자 조작 시 만료
+- Output Viewport 크기에 맞춘 페이지 이동과 Resize 보정
 - Pipeline 삭제 완료 상태
 - 관련 도움말, README와 기존 TUI 설계 문서 현행화
 
@@ -52,6 +55,7 @@ CLI 지연은 `cargo run`의 기본 Debug 빌드가 원인이었다. Release 실
 4. 색상 없이도 열, 상태 문자열과 기호만으로 의미를 구분할 수 있어야 한다.
 5. Artifact와 Trace 전문을 렌더링용 단일 문자열로 만들지 않는다.
 6. 화면에 보이는 행만 생성하고 기존 4 KiB 렌더링 예산을 유지한다.
+7. Quiet Prism 색상 상수와 Trace 상태 문자열은 각각 기존 단일 경로에서 공유한다.
 
 ## 4. 키 바인딩
 
@@ -101,6 +105,11 @@ View 순서는 Smart → Text → Hex → Trace → Smart다. `V` 역방향 전�
 `y` Pretty Copy는 제거한다. Trace와 복사 불가능 상태에서는 `Enter`와
 `Shift+Enter`가 아무 효과도 만들지 않는다.
 
+`PageUp`과 `PageDown`은 마지막으로 렌더링한 Output 내부 크기를 사용한다.
+Text는 그래핌·제어 문자·줄바꿈 규칙으로 계산한 이전·다음 페이지 시작점으로,
+Hex와 Trace는 Header와 실패 상세를 제외한 실제 데이터 행 수만큼 이동한다.
+`End`는 마지막 데이터가 포함된 전체 페이지 시작점으로 이동한다.
+
 ### 4.4 Modal
 
 확인 Modal은 `Enter`, `y`, `ㅛ`를 승인으로, `Esc`, `n`, `ㅜ`를
@@ -132,20 +141,20 @@ App Bar는 `>_ TOC`만 표시한다. `FOCUS: INPUT`, `FOCUS: PIPELINE`,
 준비된 최종 결과는 다음과 같이 표시한다.
 
 ```text
-» OUTPUT / HEX · 17 B
+» OUTPUT / HEX · BYTE 32/100
 ```
 
 선택 단계 결과만 출처를 추가한다.
 
 ```text
-» OUTPUT / STEP 02 / HEX · 17 B
+» OUTPUT / STEP 02 / TRACE · ROW 4/10
 ```
 
-최종 결과에는 `FINAL`을 표시하지 않는다. 결과 크기는
-`OutputStatus::Ready`이고 활성 Artifact가 있을 때만 바이트 단위로 표시한다.
-실행·지연·실패·취소 상태에서는 이전 Artifact 크기를 현재 결과처럼 표시하지
-않는다. 너비가 부족하면 바이트 크기를 먼저 생략하고 Output, 단계 출처와
-View 이름은 유지한다.
+최종 결과에는 `FINAL`을 표시하지 않는다. `OutputStatus::Ready`일 때
+Text·Smart·Hex는 0부터 시작하는 `BYTE 현재/전체`, Trace는 1부터 시작하는
+`ROW 현재/전체`를 표시한다. 실행·지연·실패·취소 상태에서는 보이는 이전
+Artifact에 카운터를 붙이지 않는다. 너비가 부족하면 기존 `· N B`, 기본 제목
+순서로 축약한다.
 
 ### 5.3 Footer와 Help
 
@@ -158,6 +167,13 @@ OUTPUT │ Enter Pretty  Shift+Enter Raw  v View │ p Step  f Final │ z Zoom
 전역 Footer와 F1 Help에서 `F3/F4`, `j/k`, `J/K`, `v/V`와
 `Enter/y` 표기를 제거한다. 한글 별칭은 표시하지 않으며 `Ctrl+p`,
 `Ctrl+q`도 영문 소문자로 표기한다.
+
+Pipeline·Output 전체 Help는 기존 높이를 유지하고 `Ctrl+c`와 같은 행에
+`Esc Close zoom or cancel request`를 표시한다. Footer 첫째 줄의 우선순위는
+실패·취소, 장시간 변환, 복사 진행, 일반 상태, 패널 명령 순서다. 복사 준비와
+쓰기 중에는 각각 `Preparing copy…`, `Writing clipboard…`를 표시한다.
+일반 상태는 2초 또는 다음 키 입력·Input 붙여넣기·좌클릭·휠 중 먼저 발생한
+시점에 사라진다.
 
 ## 6. Pipeline 삭제
 
@@ -203,9 +219,10 @@ Offset은 바이트 위치를 나타내는 8자리 대문자 16진수다.
 ### 7.3 Viewport
 
 행당 바이트를 결정하는 순수 함수를 렌더링과 스크롤 범위 계산이 함께
-사용한다. Resize 뒤 현재 Offset을 새 행 크기에 맞춰 정렬하고 유효 범위로
-보정한다. 따라서 넓은 화면과 좁은 화면을 전환해도 결과 끝을 벗어난 빈
-Viewport가 나타나지 않는다.
+사용한다. Page 이동은 실제 데이터 행 수를 사용하며 최대 Offset은 전체 행에서
+보이는 행을 뺀 값이다. Resize 뒤 현재 최상단 바이트를 새 행 크기에 맞춰
+정렬하고 유효 범위로 보정한다. 따라서 넓은 화면과 좁은 화면을 전환해도 결과
+끝을 벗어난 빈 Viewport가 나타나지 않는다.
 
 보이는 행만 생성하고 Header를 제외한 실제 높이만큼 제한한다. 생성된 텍스트와
 셀 내용의 합은 기존 4 KiB 예산을 넘지 않는다.
@@ -252,14 +269,23 @@ Output 내부 높이가 5행 이상일 때 최대 3행을 상세에 예약한다
 실패 행과 `ERROR` 상태를 우선하고, 상세는 남은 공간에 맞춰 그래핌 경계에서
 축약한다.
 
+Header와 실패 상세를 뺀 실제 데이터 행 수를 렌더링과 페이지 이동이 함께
+사용한다. 마지막 페이지의 최대 행은 전체 Trace 행에서 이 수를 뺀 값이다.
+
 입력·출력 전문, 비 UTF-8 미리보기와 외부 제어 문자는 상세에 포함하지 않는다.
 기존 오류 요약 함수와 외부 문자열 Escape 경로를 재사용한다.
 
 ## 9. 복사와 오류
 
 - Pretty·Raw payload 생성과 JSON 처리 규칙은 변경하지 않는다.
-- `Shift+Enter`는 기존 Raw Copy 요청 경로를 사용한다.
-- 위험한 제어 문자는 기존 확인 Modal을 거친다.
+- `Artifact`의 저비용 스냅샷, 복사 모드와 요청 번호를 전용 단일 작업자에 보낸다.
+- 작업자는 JSON 정리, Binary Hex 변환, 위험 문자 검사와 시스템 쓰기를 수행한다.
+- `arboard::Clipboard`는 작업자 안에서 지연 생성하고 TUI 종료까지 유지한다.
+- 복사 상태는 `Idle → Preparing → AwaitingConfirmation → Writing → Idle`이다.
+- 복사 중 추가 Enter는 무시하고, 다른 요청 번호의 늦은 결과는 폐기한다.
+- 위험한 제어 문자는 준비된 payload를 소유하는 기존 확인 Modal을 거친다.
+- 확인 취소나 F1 전환은 준비된 payload를 폐기한다.
+- 준비·쓰기 실패와 채널 종료는 `Copy unavailable`로 복구한다.
 - 클립보드 실패는 기존 화면 상태와 Artifact를 유지한다.
 - Trace, 실패, 취소, 실행, 지연과 Artifact 부재 상태에서는 복사를 차단한다.
 - Hex·Trace의 화면 스타일은 복사 payload에 영향을 주지 않는다.
@@ -274,8 +300,12 @@ Output 내부 높이가 5행 이상일 때 최대 3행을 상세에 예약한다
 - `j`, `k`, `J`, `K`, `V`, `F3`, `F4`가 아무 효과도 만들지 않음
 - 각 영문 소문자와 한글 별칭이 같은 상태·Effect를 만듦
 - `Ctrl+p/ㅔ`, `Ctrl+q/ㅂ`가 같은 동작을 함
-- `Enter`는 Pretty, `Shift+Enter`는 Raw payload를 만듦
+- `Enter`는 Pretty, `Shift+Enter`는 Raw 복사를 요청함
 - Trace와 복사 불가능 상태에서 두 Enter 조합이 차단됨
+- 준비 중 중복 요청 차단, Artifact 스냅샷 보존과 늦은 결과 폐기
+- 위험 문자 확인 전 시스템 쓰기 금지
+- 준비·쓰기 실패와 채널 종료의 비치명적 복구
+- 일반 상태의 2초 만료와 사용자 조작 시 즉시 해제
 - `Delete/d/ㅇ`가 같은 단계를 삭제하고 선택 위치를 보정함
 - 빈 Pipeline 삭제가 진정한 무동작임
 - 삭제가 기존 최종 결과 재계산을 예약함
@@ -285,14 +315,18 @@ Output 내부 높이가 5행 이상일 때 최대 3행을 상세에 예약한다
 
 - App Bar에 `FOCUS`가 없음
 - 최종 Output 제목에 `FINAL`이 없고 단계 결과에만 `STEP NN`이 있음
-- 준비된 결과에만 바이트 크기가 있음
+- 준비된 결과에만 바이트·행 위치가 있고 좁은 제목은 크기·기본 제목으로 축약됨
+- Footer 우선순위와 복사 진행 문구가 정확함
 - Footer와 Help가 영문 소문자 기준이며 제거된 키를 포함하지 않음
+- Pipeline·Output Help에 실제 `Esc` 계약이 있음
 - 78열 이상, 60–77열, 60열 미만 Hex 열과 행당 바이트가 정확함
 - Hex Offset, 바이트 분류 색상과 `NO_COLOR` 구조가 정확함
 - 넓은 Trace의 여섯 열과 좁은 Trace의 병합 열이 정확함
 - 모든 Trace 상태의 문자열·색상과 `NO_COLOR` 구조가 정확함
 - 첫 실패 상세와 작은 높이 축약이 안전함
-- Viewport와 4 KiB 예산을 넘지 않음
+- Text의 ASCII·한글·결합문자·개행·제어 문자 페이지 경계가 정확함
+- Hex 8·16바이트 행, Trace 상세 유무와 Resize 보정이 정확함
+- `PageUp`·`PageDown`·`Home`·`End` 경계와 4 KiB 예산을 넘지 않음
 
 ### 10.3 회귀
 
@@ -313,6 +347,7 @@ Output 내부 높이가 5행 이상일 때 최대 3행을 상세에 예약한다
 - `README.md`의 TUI 키 바인딩과 최신 검증 요약
 - `docs/superpowers/specs/2026-07-31-toc-tui-ux-refresh-design.md`
 - `docs/superpowers/specs/2026-08-01-toc-quiet-prism-design.md`
+- `docs/superpowers/specs/2026-07-31-toc-tui-workbench-design.md`
 
 기존 문서의 `F3/F4`, `j/k`, `J/K`, `v/V`, `Enter/y`, `FINAL`,
 `FOCUS` 설명을 새 계약과 동기화한다.
@@ -326,5 +361,8 @@ Output 내부 높이가 5행 이상일 때 최대 3행을 상세에 예약한다
 - Pipeline 삭제가 기존 재계산 흐름과 안전하게 결합된다.
 - App Bar와 Output 제목에서 승인된 중복 정보가 제거된다.
 - Hex와 Trace가 승인된 반응형 표·색상·첫 실패 상세를 제공한다.
+- 대용량 복사 준비와 시스템 쓰기가 UI 스레드를 막지 않는다.
+- 일반 상태가 자동 또는 사용자 조작으로 해제되고 실제 `Esc` 도움말이 표시된다.
+- Output 페이지 이동과 위치 카운터가 실제 Viewport에 맞는다.
 - 색상 비활성, 작은 화면과 오류 상태에서도 정보가 손실되지 않는다.
 - 관련 문서와 기존 회귀 시험이 함께 현행화된다.

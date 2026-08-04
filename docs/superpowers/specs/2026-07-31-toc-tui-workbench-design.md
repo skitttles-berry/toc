@@ -9,6 +9,11 @@
 
 ---
 
+> 2026-08-02 `2026-08-01-toc-tui-shortcuts-output-design.md`의 후속 구현으로
+> 대용량 복사는 별도 단일 작업자에서 준비·기록한다. 일반 Footer 상태는 2초 또는
+> 다음 사용자 조작에 해제되고, Output 페이지 이동·위치 제목은 실제 Viewport를
+> 사용한다. 공개 CLI·변환·키 바인딩과 의존성은 바뀌지 않는다.
+
 # 1. 목적과 범위
 
 이 설계는 현재 v0.2의 비파괴 TUI를 바이트 Pipeline 작업판으로 고도화한다. 사용자가 입력한 원문은 계속 Input에 남기고, Pipeline 결과와 단계별 상태는 Output에서 확인한다.
@@ -27,7 +32,8 @@
 * 읽기 전용 단계 Inspector
 * 기존 8개 변환을 대상으로 한 Operation Palette
 * 크기에 따른 50밀리초 또는 200밀리초 지연 실행
-* 최신 요청만 반영하는 단일 작업 스레드
+* 최신 요청만 반영하는 단일 Preview 작업 스레드
+* 복사 준비와 시스템 쓰기를 담당하는 단일 클립보드 작업 스레드
 * 바이너리 결과의 소문자 Hex 복사
 * 컨텍스트 도움말, 패널 Zoom과 적응형 Unicode 표시
 
@@ -137,6 +143,7 @@ TUI만 `AllowBinary` 보고서 실행 경로를 사용한다. CLI와 TUI에 변�
 src/tui.rs          터미널 시작·복구, 이벤트 루프와 외부 효과
 src/tui/state.rs    App 상태, 키 입력과 상태 전이
 src/tui/worker.rs   지연 실행, 최신 요청과 Pipeline 작업
+src/tui/clipboard.rs 복사 준비, 위험 문자 검사와 시스템 클립보드 쓰기
 src/tui/render.rs   레이아웃, 패널, Overlay와 상태 표시줄
 src/tui/views.rs    Smart 판정, Text·Hex·Trace 표시
 ```
@@ -155,7 +162,8 @@ App
 ├── final result and active result
 ├── step traces
 ├── request_id and debounce deadline
-├── modal and status
+├── copy phase and copy request_id
+├── modal, status and status deadline
 └── dirty
 ```
 
@@ -179,9 +187,9 @@ Input 또는 Pipeline이 변경되면 최종 결과 요청을 예약한다.
 
 입력 제한 1 MiB와 65,536줄, 단계 출력 제한 64 MiB, 최대 32단계는 유지한다.
 
-## 4.3 최신 요청 우선 작업자
+## 4.3 최신 요청 우선 Preview 작업자
 
-현재처럼 운영체제 작업 스레드 하나를 사용한다. 실행 중 새 요청이 오면 대기 슬롯에는 최신 요청 하나만 남긴다. 작업자는 각 단계 실행 전후에 자신이 최신 요청인지 확인한다.
+Preview에는 운영체제 작업 스레드 하나를 사용한다. 실행 중 새 요청이 오면 대기 슬롯에는 최신 요청 하나만 남긴다. 작업자는 각 단계 실행 전후에 자신이 최신 요청인지 확인한다.
 
 이미 시작한 동기 변환 하나를 강제로 중단하지 않는다. 오래 걸리는 단계가 끝나면 다음 단계로 넘어가지 않고 취소한다. 완료된 오래된 보고서도 상태, 화면, 복사 가능 여부나 클립보드 상태를 변경하지 못한다.
 
@@ -189,7 +197,13 @@ Modal과 Zoom이 없는 상태에서 `Esc`를 누르면 현재 요청 ID를 무�
 
 이 구조는 현재 8개 내장 변환에 충분하며 Tokio를 추가하지 않는다.
 
-결과 채널이 종료되면 작업자를 자동 재시작하지 않고 안전한 TUI 오류로 종료하며 기존 터미널 복구 경로를 실행한다.
+Preview 결과 채널이 종료되면 작업자를 자동 재시작하지 않고 안전한 TUI 오류로 종료하며 기존 터미널 복구 경로를 실행한다.
+
+클립보드는 별도 단일 작업자가 Artifact 스냅샷과 복사 요청 번호를 받아 JSON
+정리, Binary Hex 변환, 위험 문자 검사와 시스템 쓰기를 수행한다. 한 요청이
+준비·확인·쓰기 중이면 추가 요청을 쌓지 않는다. 늦은 요청 번호는 폐기하고,
+작업자 채널 종료와 준비·쓰기 실패는 TUI를 종료하지 않고 `Copy unavailable`로
+복구한다.
 
 ## 4.4 단계 결과 재계산
 
@@ -226,7 +240,10 @@ Pipeline, Input, Output을 차례대로 30%, 30%, 40%로 쌓아 표시한다. `T
 
 편집기와 결과를 렌더링하지 않고 터미널 크기를 늘리라는 안내만 표시한다.
 
-높이 12행 이상에서는 각 패널에 최소 3개의 테두리 행을 남긴다. Pipeline 실패, 취소 또는 일반 상태는 Footer 첫째 줄만 대체하며, 둘째 줄 공통 도움말은 항상 표시한다.
+높이 12행 이상에서는 각 패널에 최소 3개의 테두리 행을 남긴다. 실패·취소,
+장시간 변환, 복사 진행, 일반 상태 순으로 Footer 첫째 줄만 대체하며, 둘째 줄
+공통 도움말은 항상 표시한다. 일반 상태는 2초 또는 다음 키 입력·Input 붙여넣기·
+좌클릭·휠에 해제된다.
 
 Modal이 열려 있으면 Modal 영역만 입력 판정에 사용한다. Pipeline·Input·Output의
 테두리와 내용 클릭은 해당 패널에 포커스를 주고, Pipeline·Add Transform의 실제
@@ -341,11 +358,16 @@ STEP  OPERATION  INPUT  OUTPUT  TIME  STATUS
 
 ## 6.5 결과 원본과 복사
 
-기본 원본은 최종 결과다. Pipeline 선택 이동만으로 Output은 바뀌지 않는다. `p`를 누르면 선택 단계 결과를 표시하고 `f`를 누르면 최종 결과로 돌아간다. 현재 Context Bar는 없으며 Output 제목이 `FINAL` 또는 `STEP NN`과 View를 표시한다. 두 줄 Footer의 첫 줄은 포커스 도움말 또는 완료·오류 상태를, 둘째 줄은 공통 키 도움말을 표시한다.
+기본 원본은 최종 결과다. Pipeline 선택 이동만으로 Output은 바뀌지 않는다. `p`를 누르면 선택 단계 결과를 표시하고 `f`를 누르면 최종 결과로 돌아간다. 현재 Context Bar는 없으며 Output 제목은 최종 결과의 `FINAL`을 생략하고 단계 결과에만 `STEP NN`을 표시한다. Ready 상태의 Text·Smart·Hex에는 0부터 시작하는 `BYTE 현재/전체`, Trace에는 1부터 시작하는 `ROW 현재/전체`를 덧붙이고 공간이 부족하면 기존 크기와 기본 제목 순으로 축약한다. 두 줄 Footer의 첫 줄은 포커스 도움말 또는 완료·오류 상태를, 둘째 줄은 공통 키 도움말을 표시한다.
+
+`PageUp`·`PageDown`은 마지막 Output 내부 크기를 사용한다. Text는 렌더링과 같은
+그래핌·제어 문자·줄바꿈 규칙을, Hex·Trace는 실제 데이터 행 수를 사용한다.
+`End`는 마지막 전체 페이지 시작점으로 이동하며 Resize 뒤 Hex의 최상단 바이트를
+새 행 폭과 Viewport에 맞춰 보정한다.
 
 유효한 JSON 결과는 Pretty Copy에서 두 칸 들여쓰고 Raw Copy에서 구조 공백을 제거한다. JSON 변환은 숫자 토큰과 문자열 안 공백을 다시 쓰지 않으며, Pretty Copy도 리터럴 `\u0061`을 `a`로 바꾸지 않는다. JSON으로 해석할 수 없는 유효한 UTF-8 결과는 두 복사 모드에서 원문 전체를 유지하고 기존 위험한 제어 문자 확인 절차를 적용한다. 비 UTF-8 결과는 공백 없는 소문자 Hex 문자열로 복사하며 Footer 첫 줄에 `Copied Pretty`, `Copied Raw`, `Copied as Hex` 완료 상태를 각각 표시한다. Trace와 실패·취소·실행·지연 중인 상태, 오래되거나 없는 Artifact에는 복사를 허용하지 않는다.
 
-복사 형식은 현재 View가 아니라 원본 Artifact와 선택한 Pretty 또는 Raw 모드로 결정한다. 따라서 Text를 수동 고정한 상태에서 바이너리 결과가 나오더라도 복사 payload는 소문자 compact Hex이고 완료 상태는 `Copied as Hex`다. Hex 문자열의 두 배 길이는 검사된 산술로 계산한다. 위험한 UTF-8은 한 번 만든 payload를 확인 Modal이 소유하고 승인 시 운영체제 쓰기 효과로 이동하며, 취소나 다른 Modal 전환 시 폐기한다. 그 사이 활성 Artifact가 바뀌어도 승인 대상은 처음 확인한 payload다. 할당, JSON 출력 한도 또는 운영체제 클립보드 작업이 실패하면 Input, Pipeline, Artifact, 결과 원본과 Trace를 유지한 채 안전한 화면 오류로 처리한다.
+복사 형식은 현재 View가 아니라 Enter 시점의 원본 Artifact 스냅샷과 선택한 Pretty 또는 Raw 모드로 결정한다. 따라서 Text를 수동 고정한 상태에서 바이너리 결과가 나오더라도 복사 payload는 소문자 compact Hex이고 완료 상태는 `Copied as Hex`다. Hex 문자열의 두 배 길이는 검사된 산술로 계산한다. 작업자가 만든 위험한 UTF-8 payload는 확인 Modal이 소유하고 승인 시 같은 작업자의 시스템 쓰기로 이동하며, 취소나 F1 전환 시 폐기한다. 그 사이 활성 Artifact가 바뀌어도 승인 대상은 처음 확인한 payload다. 준비, 할당, JSON 출력 한도, 채널 종료 또는 운영체제 클립보드 작업이 실패하면 Input, Pipeline, Artifact, 결과 원본과 Trace를 유지하고 `Copy unavailable`로 복구한다.
 
 # 7. 오류와 보안
 
@@ -456,7 +478,6 @@ disable 순서다.
 | Output 검색·선택 영역·부분 복사 | 긴 Text·Hex 결과의 재현 가능한 탐색 요구가 있을 때 |
 | 예산 기반 단계 결과 캐시 | 요청 시 재계산이 측정상 병목일 때 |
 | 변환 내부 협력 취소 | 한 단계가 사용자가 체감할 만큼 오래 실행되는 변환을 추가할 때 |
-| Viewport 행 기반 `PageUp`·`PageDown` | 고정 10단위 이동이 실제 터미널 높이에서 탐색을 방해하는 사례가 확인될 때 |
 | 붙여넣기 정규화 단일 패스 | 최대 약 8 MiB인 임시 정규화 버퍼가 측정상 메모리 문제로 확인될 때 |
 | Tokio·Task Scheduler | 네트워크나 다수 비동기 I/O 작업이 제품 범위에 들어올 때 |
 | 대용량 Streaming Pipeline | 현재 입력·출력 제한을 넘는 승인된 파일 사용 사례가 있을 때 |

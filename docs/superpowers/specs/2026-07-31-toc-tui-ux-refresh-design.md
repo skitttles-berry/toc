@@ -12,9 +12,11 @@
 > 2026-08-02 승인된 `2026-08-01-toc-tui-shortcuts-output-design.md`가 이 문서의
 > 화면·도움말 계약을 대체한다. 아래 `FOCUS`, `FINAL`, `F3`/`F4`, `j`/`k`,
 > `J`/`K`, `v`/`V`, `Enter`/`y` 설명은 당시 구현 기록으로 보존한다. 현재 App Bar는
-> `>_ TOC`만 표시하고, Output은 FINAL을 생략한 제목과 Ready Artifact 크기를 공간이
-> 허용할 때만 표시한다. Dock과 Help는 영문 소문자, `↑`/`↓`, `Shift+↑`/`Shift+↓`,
-> `Enter` Pretty·`Shift+Enter` Raw Copy, `Delete`/`d`를 표시한다.
+> `>_ TOC`만 표시하고, Ready Output은 `BYTE 현재/전체` 또는 `ROW 현재/전체`를
+> 공간에 맞춰 표시한다. Dock과 Help는 영문 소문자, `↑`/`↓`,
+> `Shift+↑`/`Shift+↓`, `Enter` Pretty·`Shift+Enter` Raw Copy, `Delete`/`d`를
+> 표시한다. 복사는 전용 작업자에서 준비·기록하며 일반 상태는 2초 또는 다음
+> 사용자 조작에 해제된다. 아래의 이전 복사 키·상태 수명 설명은 당시 기록이다.
 
 # 1. 목적과 범위
 
@@ -169,8 +171,8 @@ GLOBAL │  Tab  Focus │  F3  Pretty   F4  Raw │  Ctrl+P  Add   F1  Help   C
 역할과 순서, 키 바인딩은 바꾸지 않는다.
 
 Pipeline 오류, 복사 완료와 클립보드 오류 같은 상태가 있으면 첫 번째 줄을
-상태 메시지로 교체한다. 두 번째 공통 도움말은 유지한다. 다음 상태 변경이
-기존 `App.status`를 비우면 포커스 도움말을 다시 표시한다. 별도 타이머,
+상태 메시지로 교체한다. 두 번째 공통 도움말은 유지한다. 일반 상태는 2초 또는
+다음 키 입력·Input 붙여넣기·좌클릭·휠에 해제하여 포커스 도움말로 돌아간다.
 세 번째 상태 줄과 상단 도움말은 추가하지 않는다.
 
 F1 Context Help Modal은 유지한다. 여기서 "최하단에만"은 상시 노출되는
@@ -281,6 +283,10 @@ JSON 처리는 새 parser를 만들지 않고 등록된 `format-json`과
 확인 Modal은 그 payload를 소유하므로 확인 중 Output 결과가 바뀌어도
 승인 대상이 바뀌지 않는다. 취소와 다른 Modal 전환은 payload를 폐기한다.
 
+현재 구현은 payload 완성과 위험 문자 검사, 시스템 클립보드 쓰기를 전용 단일
+작업자에서 수행한다. 준비·쓰기 실패와 채널 종료는 TUI를 종료하지 않고
+`Copy unavailable`로 복구한다.
+
 클립보드 쓰기 실패는 Input, Pipeline, Artifact, 결과 원본과 Trace를
 보존한다. UTF-8 성공 상태는 각각 `Copied Pretty`, `Copied Raw`,
 바이너리 성공 상태는 두 모드 모두 `Copied as Hex`로 표시한다. 사용자
@@ -292,15 +298,18 @@ JSON 처리는 새 parser를 만들지 않고 등록된 `format-json`과
 
 ```text
 src/tui/state.rs
-  복사 모드, 중앙 payload 생성, F3/F4와 Enter 처리, 완료 상태
+  복사 요청·확인·쓰기 상태 전이, Enter 처리, 완료 상태
+
+src/tui/clipboard.rs
+  중앙 payload 생성, 위험 문자 검사와 시스템 클립보드 작업자
 
 src/tui/render.rs
   상단, 패널 스타일, Pipeline 행, 반응형 배치, 하단 도움말,
   Add Transform 렌더링
 ```
 
-Pipeline 실행 엔진, 작업자, View window renderer와 변환 구현은 변경하지
-않는다. 새 모듈, trait, formatter registry와 의존성은 추가하지 않는다.
+Pipeline 실행 엔진, Preview 작업자, View window renderer와 변환 구현은 변경하지
+않는다. 새 trait, formatter registry와 의존성은 추가하지 않는다.
 
 구현 시 `README.md`와 기존 TUI 작업판 설계의 화면·키·복사 설명을 같은
 논리적 변경에서 현행화한다.

@@ -18,15 +18,27 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{Terminal, backend::CrosstermBackend, style::Color};
 
 use crate::error::AppError;
 
+mod clipboard;
 mod render;
 mod state;
 mod views;
 mod worker;
 
+pub(super) const BACKGROUND: Color = Color::Rgb(0x11, 0x11, 0x1b);
+pub(super) const SURFACE_HIGH: Color = Color::Rgb(0x24, 0x24, 0x38);
+pub(super) const BORDER: Color = Color::Rgb(0x36, 0x3a, 0x4f);
+pub(super) const TEXT: Color = Color::Rgb(0xcd, 0xd6, 0xf4);
+pub(super) const MUTED: Color = Color::Rgb(0x6c, 0x70, 0x86);
+pub(super) const CYAN: Color = Color::Rgb(0x89, 0xdc, 0xeb);
+pub(super) const GREEN: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
+pub(super) const YELLOW: Color = Color::Rgb(0xf9, 0xe2, 0xaf);
+pub(super) const RED: Color = Color::Rgb(0xf3, 0x8b, 0xa8);
+
+use clipboard::{ClipboardResult, ClipboardWorker};
 use render::draw_if_dirty;
 use state::{App, AppEvent, Effect};
 use worker::PreviewWorker;
@@ -136,22 +148,6 @@ impl Drop for TerminalSession {
     }
 }
 
-fn set_clipboard_text(
-    clipboard: &mut Option<arboard::Clipboard>,
-    text: String,
-) -> Result<(), String> {
-    if clipboard.is_none() {
-        *clipboard =
-            Some(arboard::Clipboard::new().map_err(|_| "Clipboard unavailable".to_string())?);
-    }
-    let Some(clipboard) = clipboard.as_mut() else {
-        return Err("Clipboard unavailable".to_string());
-    };
-    clipboard
-        .set_text(text)
-        .map_err(|_| "Clipboard unavailable".to_string())
-}
-
 fn is_force_interrupt(key: &KeyEvent) -> bool {
     key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL
 }
@@ -159,9 +155,10 @@ fn is_force_interrupt(key: &KeyEvent) -> bool {
 fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
-    worker: &PreviewWorker,
-    clipboard: &mut Option<arboard::Clipboard>,
+    preview_worker: &PreviewWorker,
+    clipboard_worker: &ClipboardWorker,
 ) -> Result<i32, AppError> {
+    let mut clipboard_connected = true;
     loop {
         draw_if_dirty(terminal, app)?;
         let mut effects = Vec::new();
@@ -192,7 +189,7 @@ fn run_loop(
         }
 
         loop {
-            match worker.try_recv() {
+            match preview_worker.try_recv() {
                 Ok(result) => effects.extend(app.handle_event(AppEvent::PreviewFinished(result))),
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -202,16 +199,62 @@ fn run_loop(
                 }
             }
         }
+        if clipboard_connected {
+            loop {
+                match clipboard_worker.try_recv() {
+                    Ok(ClipboardResult::Prepared { request_id, result }) => {
+                        effects.extend(app.handle_event(AppEvent::ClipboardPrepared {
+                            request_id,
+                            result,
+                            now: Instant::now(),
+                        }))
+                    }
+                    Ok(ClipboardResult::Written {
+                        request_id,
+                        kind,
+                        result,
+                    }) => effects.extend(app.handle_event(AppEvent::ClipboardWriteFinished {
+                        request_id,
+                        kind,
+                        result,
+                        now: Instant::now(),
+                    })),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        clipboard_connected = false;
+                        effects.extend(app.handle_event(AppEvent::ClipboardWorkerStopped {
+                            now: Instant::now(),
+                        }));
+                        break;
+                    }
+                }
+            }
+        }
         effects.extend(app.handle_event(AppEvent::Tick(Instant::now())));
 
         for effect in effects {
             match effect {
-                Effect::Submit(job) => worker.submit(job),
-                Effect::Cancel(request_id) => worker.cancel(request_id),
-                Effect::Copy(payload) => {
-                    let kind = payload.kind;
-                    let result = set_clipboard_text(clipboard, payload.text);
-                    let _ = app.handle_event(AppEvent::ClipboardFinished { kind, result });
+                Effect::Submit(job) => preview_worker.submit(job),
+                Effect::Cancel(request_id) => preview_worker.cancel(request_id),
+                Effect::PrepareCopy(job) => {
+                    if !clipboard_connected || clipboard_worker.prepare(job).is_err() {
+                        clipboard_connected = false;
+                        let _ = app.handle_event(AppEvent::ClipboardWorkerStopped {
+                            now: Instant::now(),
+                        });
+                    }
+                }
+                Effect::WriteClipboard {
+                    request_id,
+                    payload,
+                } => {
+                    if !clipboard_connected || clipboard_worker.write(request_id, payload).is_err()
+                    {
+                        clipboard_connected = false;
+                        let _ = app.handle_event(AppEvent::ClipboardWorkerStopped {
+                            now: Instant::now(),
+                        });
+                    }
                 }
                 Effect::Quit(code) => return Ok(code),
             }
@@ -253,9 +296,9 @@ pub fn run() -> Result<i32, AppError> {
         let mut terminal =
             Terminal::new(backend).map_err(|error| AppError::Tui(error.to_string()))?;
         let mut app = App::new(Instant::now(), std::env::var_os("NO_COLOR").is_some());
-        let worker = PreviewWorker::new();
-        let mut clipboard = None;
-        run_loop(&mut terminal, &mut app, &worker, &mut clipboard)
+        let preview_worker = PreviewWorker::new();
+        let clipboard_worker = ClipboardWorker::new();
+        run_loop(&mut terminal, &mut app, &preview_worker, &clipboard_worker)
     }));
 
     session.restore();
@@ -387,11 +430,5 @@ mod tests {
         ] {
             assert!(!is_force_interrupt(&key));
         }
-    }
-
-    #[test]
-    fn clipboard_boundary_consumes_an_owned_string() {
-        let _: fn(&mut Option<arboard::Clipboard>, String) -> Result<(), String> =
-            set_clipboard_text;
     }
 }

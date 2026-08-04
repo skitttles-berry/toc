@@ -3,27 +3,31 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Position, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
 };
 use tui_textarea::{TextArea, WrapMode};
 
 use crate::{
-    MAX_STEPS, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT, TUI_OUTPUT_LIMIT, TUI_UNDO_HISTORY_LIMIT,
-    error::{PipelineError, TransformError},
+    MAX_STEPS, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT, TUI_UNDO_HISTORY_LIMIT,
+    error::PipelineError,
     pipeline::{ExecutionOutcome, ExecutionTarget, StepTrace, TransformStep},
     transforms::{TransformDefinition, transform_by_id, transforms},
 };
 
 use super::{
+    BACKGROUND, CYAN, YELLOW,
+    clipboard::{ClipboardPayload, CopyJob, CopyKind, CopyMode, PreparedCopy},
     views::{
-        Artifact, EffectiveView, ViewMode, effective_view, hex_bytes_per_row, last_text_offset,
-        next_text_offset, previous_text_offset,
+        Artifact, EffectiveView, ViewMode, effective_view, hex_bytes_per_row,
+        hex_visible_row_capacity, last_text_offset, last_text_page_offset, next_text_offset,
+        next_text_page_offset, previous_text_offset, previous_text_page_offset, trace_start_row,
+        trace_visible_row_capacity,
     },
     worker::{PreviewJob, PreviewResult},
 };
 
-// ponytail: fixed page stride; use viewport rows if terminal-sized paging becomes necessary.
-const OUTPUT_PAGE_SCROLL: usize = 10;
+#[cfg(test)]
+use super::clipboard::{checked_hex_len, clipboard_payload, format_text_for_copy, prepare_copy};
 
 pub(super) fn debounce_for(input_bytes: usize) -> Duration {
     if input_bytes <= 256 * 1024 {
@@ -59,6 +63,7 @@ pub(super) enum OutputSource {
 }
 
 pub(super) const LONG_RUNNING_AFTER: Duration = Duration::from_secs(1);
+pub(super) const TRANSIENT_STATUS_FOR: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum OutputStatus {
@@ -104,75 +109,11 @@ impl OutputStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CopyMode {
-    Pretty,
-    Raw,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CopyKind {
-    Pretty,
-    Raw,
-    Hex,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct ClipboardPayload {
-    pub(super) text: String,
-    pub(super) kind: CopyKind,
-}
-
-fn checked_hex_len(byte_len: usize) -> Option<usize> {
-    byte_len.checked_mul(2)
-}
-
-fn binary_hex(bytes: &[u8]) -> Result<String, ()> {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-
-    let capacity = checked_hex_len(bytes.len()).ok_or(())?;
-    let mut output = String::new();
-    output.try_reserve_exact(capacity).map_err(|_| ())?;
-    for &byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    Ok(output)
-}
-
-fn copy_exact_text(raw: &str) -> Result<String, ()> {
-    let mut text = String::new();
-    text.try_reserve_exact(raw.len()).map_err(|_| ())?;
-    text.push_str(raw);
-    Ok(text)
-}
-
-fn format_text_for_copy(raw: &str, mode: CopyMode, output_limit: usize) -> Result<String, ()> {
-    let transform_id = match mode {
-        CopyMode::Pretty => "format-json",
-        CopyMode::Raw => "minify-json",
-    };
-    let transform = transform_by_id(transform_id).expect("registered JSON copy transform");
-    match (transform.apply)(raw.as_bytes(), output_limit) {
-        Ok(bytes) => String::from_utf8(bytes).map_err(|_| ()),
-        Err(TransformError::InvalidJson { .. }) => copy_exact_text(raw),
-        Err(_) => Err(()),
-    }
-}
-
-fn clipboard_payload(artifact: &Artifact, mode: CopyMode) -> Result<ClipboardPayload, ()> {
-    match std::str::from_utf8(artifact.bytes()) {
-        Ok(raw) => Ok(ClipboardPayload {
-            text: format_text_for_copy(raw, mode, TUI_OUTPUT_LIMIT)?,
-            kind: match mode {
-                CopyMode::Pretty => CopyKind::Pretty,
-                CopyMode::Raw => CopyKind::Raw,
-            },
-        }),
-        Err(_) => Ok(ClipboardPayload {
-            text: binary_hex(artifact.bytes())?,
-            kind: CopyKind::Hex,
-        }),
-    }
+pub(super) enum CopyPhase {
+    Idle,
+    Preparing { request_id: u64 },
+    AwaitingConfirmation { request_id: u64 },
+    Writing { request_id: u64, kind: CopyKind },
 }
 
 pub(super) struct OutputState {
@@ -185,6 +126,7 @@ pub(super) struct OutputState {
     pub(super) traces: Vec<StepTrace>,
     pub(super) byte_offset: usize,
     pub(super) row_offset: usize,
+    viewport: Option<Rect>,
 }
 
 #[allow(dead_code)]
@@ -218,9 +160,19 @@ pub(super) enum AppEvent {
     Paste(String, Instant),
     Tick(Instant),
     PreviewFinished(PreviewResult),
-    ClipboardFinished {
+    ClipboardPrepared {
+        request_id: u64,
+        result: Result<PreparedCopy, ()>,
+        now: Instant,
+    },
+    ClipboardWriteFinished {
+        request_id: u64,
         kind: CopyKind,
-        result: Result<(), String>,
+        result: Result<(), ()>,
+        now: Instant,
+    },
+    ClipboardWorkerStopped {
+        now: Instant,
     },
     Resize,
 }
@@ -228,7 +180,11 @@ pub(super) enum AppEvent {
 pub(super) enum Effect {
     Submit(PreviewJob),
     Cancel(u64),
-    Copy(ClipboardPayload),
+    PrepareCopy(CopyJob),
+    WriteClipboard {
+        request_id: u64,
+        payload: ClipboardPayload,
+    },
     Quit(i32),
 }
 
@@ -240,10 +196,13 @@ pub(super) struct App {
     pub(super) selected_step: usize,
     pub(super) output: OutputState,
     pub(super) request_id: u64,
+    copy_request_id: u64,
+    pub(super) copy_phase: CopyPhase,
     pub(super) mouse_regions: MouseRegions,
     pub(super) modal: Option<Modal>,
     suspended_modal: Option<Modal>,
     pub(super) status: Option<String>,
+    status_deadline: Option<Instant>,
     pub(super) no_color: bool,
     input_limit: usize,
     input_line_limit: usize,
@@ -276,15 +235,11 @@ impl App {
         } else {
             textarea.set_cursor_style(
                 Style::default()
-                    .fg(Color::Rgb(0x11, 0x11, 0x1b))
-                    .bg(Color::Rgb(0x89, 0xdc, 0xeb))
+                    .fg(BACKGROUND)
+                    .bg(CYAN)
                     .add_modifier(Modifier::BOLD),
             );
-            textarea.set_selection_style(
-                Style::default()
-                    .fg(Color::Rgb(0x11, 0x11, 0x1b))
-                    .bg(Color::Rgb(0xf9, 0xe2, 0xaf)),
-            );
+            textarea.set_selection_style(Style::default().fg(BACKGROUND).bg(YELLOW));
         }
         Self {
             textarea,
@@ -302,12 +257,16 @@ impl App {
                 traces: Vec::new(),
                 byte_offset: 0,
                 row_offset: 0,
+                viewport: None,
             },
             request_id: 0,
+            copy_request_id: 0,
+            copy_phase: CopyPhase::Idle,
             mouse_regions: MouseRegions::default(),
             modal: None,
             suspended_modal: None,
             status: None,
+            status_deadline: None,
             no_color,
             input_limit,
             input_line_limit,
@@ -375,15 +334,23 @@ impl App {
         std::mem::take(&mut self.dirty)
     }
 
-    fn set_status(&mut self, status: Option<String>) {
+    fn set_status(&mut self, status: Option<String>, now: Instant) {
+        self.status_deadline = status.as_ref().map(|_| now + TRANSIENT_STATUS_FOR);
         if self.status != status {
             self.status = status;
             self.mark_dirty();
         }
     }
 
-    fn reject_input(&mut self) {
-        self.set_status(Some("Input limit reached".to_string()));
+    fn clear_status(&mut self) {
+        self.status_deadline = None;
+        if self.status.take().is_some() {
+            self.mark_dirty();
+        }
+    }
+
+    fn reject_input(&mut self, now: Instant) {
+        self.set_status(Some("Input limit reached".to_string()), now);
     }
 
     fn changed(&mut self, now: Instant) {
@@ -405,7 +372,7 @@ impl App {
         // ponytail: the 1 MiB cap and 2x precheck bound normalization output to
         // about 8 MiB; use a one-pass validator only if this ceiling measures poorly.
         if text.len() > remaining.saturating_mul(2) {
-            self.reject_input();
+            self.reject_input(now);
             return false;
         }
         let (normalized, replaced) = normalize_paste(text);
@@ -413,13 +380,14 @@ impl App {
             normalized.len(),
             normalized.bytes().filter(|byte| *byte == b'\n').count(),
         ) {
-            self.reject_input();
+            self.reject_input(now);
             return false;
         }
         let modified = self.textarea.insert_str(normalized);
         if modified {
             self.set_status(
                 (replaced > 0).then(|| format!("{replaced} control characters replaced")),
+                now,
             );
             self.changed(now);
         }
@@ -428,7 +396,7 @@ impl App {
 
     fn add_transform(&mut self, id: &str, now: Instant) -> bool {
         if self.steps.len() == MAX_STEPS {
-            self.set_status(Some("Pipeline limit reached".to_string()));
+            self.set_status(Some("Pipeline limit reached".to_string()), now);
             return false;
         }
         let Some(definition) = transform_by_id(id) else {
@@ -469,7 +437,7 @@ impl App {
         let removed = step.definition.display_name;
         self.steps.remove(self.selected_step);
         self.selected_step = self.selected_step.min(self.steps.len().saturating_sub(1));
-        self.set_status(Some(format!("Removed {removed}")));
+        self.set_status(Some(format!("Removed {removed}")), now);
         self.changed(now);
     }
 
@@ -503,6 +471,12 @@ impl App {
             self.suspended_modal = None;
         } else {
             self.suspended_modal = modal;
+        }
+        if matches!(
+            self.copy_phase,
+            CopyPhase::Preparing { .. } | CopyPhase::AwaitingConfirmation { .. }
+        ) {
+            self.copy_phase = CopyPhase::Idle;
         }
         self.modal = Some(Modal::Help);
         self.mark_dirty();
@@ -548,35 +522,94 @@ impl App {
     }
 
     fn request_copy(&mut self, mode: CopyMode) -> Vec<Effect> {
-        if !self.can_copy() {
+        if !self.can_copy() || self.copy_phase != CopyPhase::Idle {
             return Vec::new();
         }
-        let Some(artifact) = self.output.active_artifact.as_ref() else {
+        let Some(artifact) = self.output.active_artifact.clone() else {
             return Vec::new();
         };
-        let Ok(payload) = clipboard_payload(artifact, mode) else {
-            self.set_status(Some("Copy unavailable".to_string()));
-            return Vec::new();
-        };
-        if payload.kind != CopyKind::Hex && crate::error::contains_dangerous_control(&payload.text)
-        {
-            self.modal = Some(Modal::UnsafeCopyConfirm { payload });
-            self.mark_dirty();
-            Vec::new()
-        } else {
-            vec![Effect::Copy(payload)]
-        }
+        self.copy_request_id = self
+            .copy_request_id
+            .checked_add(1)
+            .expect("TUI copy request ID exhausted");
+        let request_id = self.copy_request_id;
+        self.copy_phase = CopyPhase::Preparing { request_id };
+        self.mark_dirty();
+        vec![Effect::PrepareCopy(CopyJob {
+            request_id,
+            artifact,
+            mode,
+        })]
     }
 
     fn confirm_unsafe_copy(&mut self) -> Vec<Effect> {
-        if !matches!(self.modal, Some(Modal::UnsafeCopyConfirm { .. })) {
+        let CopyPhase::AwaitingConfirmation { request_id } = self.copy_phase else {
+            return Vec::new();
+        };
+        let Some(Modal::UnsafeCopyConfirm { payload }) = self.modal.take() else {
+            return Vec::new();
+        };
+        let kind = payload.kind;
+        self.copy_phase = CopyPhase::Writing { request_id, kind };
+        self.mark_dirty();
+        vec![Effect::WriteClipboard {
+            request_id,
+            payload,
+        }]
+    }
+
+    fn finish_copy_preparation(
+        &mut self,
+        request_id: u64,
+        result: Result<PreparedCopy, ()>,
+        now: Instant,
+    ) -> Vec<Effect> {
+        if self.copy_phase != (CopyPhase::Preparing { request_id }) {
             return Vec::new();
         }
-        let Some(Modal::UnsafeCopyConfirm { payload }) = self.modal.take() else {
-            unreachable!("unsafe copy modal checked above")
+        let Ok(prepared) = result else {
+            self.copy_phase = CopyPhase::Idle;
+            self.set_status(Some("Copy unavailable".to_string()), now);
+            return Vec::new();
         };
-        self.mark_dirty();
-        vec![Effect::Copy(payload)]
+        if prepared.requires_confirmation {
+            self.copy_phase = CopyPhase::AwaitingConfirmation { request_id };
+            self.modal = Some(Modal::UnsafeCopyConfirm {
+                payload: prepared.payload,
+            });
+            self.mark_dirty();
+            Vec::new()
+        } else {
+            let kind = prepared.payload.kind;
+            self.copy_phase = CopyPhase::Writing { request_id, kind };
+            self.mark_dirty();
+            vec![Effect::WriteClipboard {
+                request_id,
+                payload: prepared.payload,
+            }]
+        }
+    }
+
+    fn finish_copy_write(
+        &mut self,
+        request_id: u64,
+        kind: CopyKind,
+        result: Result<(), ()>,
+        now: Instant,
+    ) {
+        if self.copy_phase != (CopyPhase::Writing { request_id, kind }) {
+            return;
+        }
+        self.copy_phase = CopyPhase::Idle;
+        self.set_status(
+            Some(match result {
+                Ok(()) if kind == CopyKind::Hex => "Copied as Hex".to_string(),
+                Ok(()) if kind == CopyKind::Raw => "Copied Raw".to_string(),
+                Ok(()) => "Copied Pretty".to_string(),
+                Err(()) => "Copy unavailable".to_string(),
+            }),
+            now,
+        );
     }
 
     fn request_quit(&mut self) -> Vec<Effect> {
@@ -597,6 +630,9 @@ impl App {
     }
 
     fn tick(&mut self, now: Instant) -> Vec<Effect> {
+        if self.status_deadline.is_some_and(|deadline| now >= deadline) {
+            self.clear_status();
+        }
         if let OutputStatus::Debouncing { deadline } = &self.output.status {
             if now < *deadline {
                 return Vec::new();
@@ -673,7 +709,7 @@ impl App {
 
     fn request_selected_step(&mut self, now: Instant) -> Vec<Effect> {
         if self.steps.get(self.selected_step).is_none() {
-            self.set_status(Some("No pipeline step selected".to_string()));
+            self.set_status(Some("No pipeline step selected".to_string()), now);
             return Vec::new();
         }
         self.request_id = self
@@ -690,9 +726,9 @@ impl App {
         })]
     }
 
-    fn restore_final(&mut self) -> Vec<Effect> {
+    fn restore_final(&mut self, now: Instant) -> Vec<Effect> {
         let Some(final_artifact) = self.output.final_artifact.clone() else {
-            self.set_status(Some("Final output unavailable".to_string()));
+            self.set_status(Some("Final output unavailable".to_string()), now);
             return Vec::new();
         };
         self.request_id = self
@@ -948,6 +984,7 @@ impl App {
                 Some(true) => self.confirm_unsafe_copy(),
                 Some(false) => {
                     self.modal = None;
+                    self.copy_phase = CopyPhase::Idle;
                     self.mark_dirty();
                     Vec::new()
                 }
@@ -1021,14 +1058,14 @@ impl App {
                 text.len(),
                 text.bytes().filter(|byte| *byte == b'\n').count(),
             ) {
-                self.reject_input();
+                self.reject_input(now);
                 return;
             }
         }
         if let Some((bytes, lines)) = input_growth
             && !self.can_insert(bytes, lines)
         {
-            self.reject_input();
+            self.reject_input(now);
             return;
         }
         let before = (self.textarea.cursor(), self.textarea.selection_range());
@@ -1051,23 +1088,67 @@ impl App {
         self.mark_dirty();
     }
 
-    fn output_columns(&self) -> usize {
-        self.mouse_regions
-            .output_content
-            .map_or(78, |area| area.width as usize)
+    pub(super) fn output_columns(&self) -> usize {
+        self.output.viewport.map_or(78, |area| area.width as usize)
     }
 
-    pub(super) fn reflow_hex_offset(&mut self, new_columns: usize) {
-        let old_bytes_per_row = hex_bytes_per_row(self.output_columns());
-        let new_bytes_per_row = hex_bytes_per_row(new_columns);
-        if old_bytes_per_row == new_bytes_per_row {
-            return;
+    fn output_rows(&self) -> usize {
+        self.output.viewport.map_or(10, |area| area.height as usize)
+    }
+
+    fn output_page_rows(&self, view: EffectiveView) -> usize {
+        match view {
+            EffectiveView::Hex => hex_visible_row_capacity(
+                self.output_rows().saturating_sub(1),
+                self.output_columns(),
+            ),
+            EffectiveView::Trace => trace_visible_row_capacity(
+                &self.output.traces,
+                self.output_rows(),
+                self.output_columns(),
+            ),
+            EffectiveView::Text | EffectiveView::Unavailable => self.output_rows(),
         }
-        let visible_byte = self.output.row_offset.saturating_mul(old_bytes_per_row);
-        let maximum = self.output.active_artifact.as_ref().map_or(0, |artifact| {
-            artifact.bytes().len().saturating_sub(1) / new_bytes_per_row
-        });
-        self.output.row_offset = (visible_byte / new_bytes_per_row).min(maximum);
+    }
+
+    pub(super) fn reflow_output_viewport(&mut self, viewport: Rect) {
+        match effective_view(
+            self.output.view,
+            self.output.active_artifact.as_ref(),
+            matches!(self.output.status, OutputStatus::Failed(_)),
+        ) {
+            EffectiveView::Hex => {
+                let old_bytes_per_row = hex_bytes_per_row(self.output_columns());
+                let new_columns = viewport.width as usize;
+                let new_bytes_per_row = hex_bytes_per_row(new_columns);
+                let visible_byte = self.output.row_offset.saturating_mul(old_bytes_per_row);
+                let maximum = self.output.active_artifact.as_ref().map_or(0, |artifact| {
+                    let total_rows = artifact.bytes().len().div_ceil(new_bytes_per_row);
+                    let visible_rows = hex_visible_row_capacity(
+                        (viewport.height as usize).saturating_sub(1),
+                        new_columns,
+                    );
+                    total_rows.saturating_sub(visible_rows.max(1))
+                });
+                self.output.row_offset = (visible_byte / new_bytes_per_row).min(maximum);
+            }
+            EffectiveView::Trace => {
+                let visible_rows = trace_visible_row_capacity(
+                    &self.output.traces,
+                    viewport.height as usize,
+                    viewport.width as usize,
+                );
+                let maximum = self.output.traces.len().saturating_sub(visible_rows.max(1));
+                self.output.row_offset = trace_start_row(
+                    &self.output.traces,
+                    self.output.row_offset,
+                    viewport.height as usize,
+                )
+                .min(maximum);
+            }
+            EffectiveView::Text | EffectiveView::Unavailable => {}
+        }
+        self.output.viewport = Some(viewport);
     }
 
     fn output_max_offset(&self) -> (bool, usize) {
@@ -1087,11 +1168,55 @@ impl App {
             EffectiveView::Hex => (
                 false,
                 self.output.active_artifact.as_ref().map_or(0, |artifact| {
-                    artifact.bytes().len().saturating_sub(1)
-                        / hex_bytes_per_row(self.output_columns())
+                    let bytes_per_row = hex_bytes_per_row(self.output_columns());
+                    let total_rows = artifact.bytes().len().div_ceil(bytes_per_row);
+                    total_rows.saturating_sub(self.output_page_rows(EffectiveView::Hex).max(1))
                 }),
             ),
-            EffectiveView::Trace => (false, self.output.traces.len().saturating_sub(1)),
+            EffectiveView::Trace => (
+                false,
+                self.output
+                    .traces
+                    .len()
+                    .saturating_sub(self.output_page_rows(EffectiveView::Trace).max(1)),
+            ),
+        }
+    }
+
+    fn page_output(&mut self, direction: i8) {
+        let view = effective_view(
+            self.output.view,
+            self.output.active_artifact.as_ref(),
+            matches!(self.output.status, OutputStatus::Failed(_)),
+        );
+        if view == EffectiveView::Text {
+            let Some(artifact) = self.output.active_artifact.as_ref() else {
+                return;
+            };
+            let next = if direction < 0 {
+                previous_text_page_offset(
+                    artifact,
+                    self.output.byte_offset,
+                    self.output_rows(),
+                    self.output_columns(),
+                )
+            } else {
+                next_text_page_offset(
+                    artifact,
+                    self.output.byte_offset,
+                    self.output_rows(),
+                    self.output_columns(),
+                )
+            };
+            if self.output.byte_offset != next {
+                self.output.byte_offset = next;
+                self.mark_dirty();
+            }
+            return;
+        }
+        let rows = self.output_page_rows(view);
+        if rows > 0 {
+            self.scroll_output(direction, rows);
         }
     }
 
@@ -1141,6 +1266,23 @@ impl App {
     }
 
     fn output_home_or_end(&mut self, end: bool) {
+        if end
+            && effective_view(
+                self.output.view,
+                self.output.active_artifact.as_ref(),
+                matches!(self.output.status, OutputStatus::Failed(_)),
+            ) == EffectiveView::Text
+        {
+            let Some(artifact) = self.output.active_artifact.as_ref() else {
+                return;
+            };
+            let next = last_text_page_offset(artifact, self.output_rows(), self.output_columns());
+            if self.output.byte_offset != next {
+                self.output.byte_offset = next;
+                self.mark_dirty();
+            }
+            return;
+        }
         let (bytes, maximum) = self.output_max_offset();
         let offset = if bytes {
             &mut self.output.byte_offset
@@ -1159,7 +1301,7 @@ impl App {
             (KeyCode::Enter, KeyModifiers::NONE) => self.request_copy(CopyMode::Pretty),
             (KeyCode::Enter, KeyModifiers::SHIFT) => self.request_copy(CopyMode::Raw),
             (KeyCode::Char('p' | 'ㅔ'), KeyModifiers::NONE) => self.request_selected_step(now),
-            (KeyCode::Char('f' | 'ㄹ'), KeyModifiers::NONE) => self.restore_final(),
+            (KeyCode::Char('f' | 'ㄹ'), KeyModifiers::NONE) => self.restore_final(now),
             (KeyCode::Char('v' | 'ㅍ'), KeyModifiers::NONE) => {
                 self.cycle_view();
                 Vec::new()
@@ -1173,11 +1315,11 @@ impl App {
                 Vec::new()
             }
             (KeyCode::PageUp, KeyModifiers::NONE) => {
-                self.scroll_output(-1, OUTPUT_PAGE_SCROLL);
+                self.page_output(-1);
                 Vec::new()
             }
             (KeyCode::PageDown, KeyModifiers::NONE) => {
-                self.scroll_output(1, OUTPUT_PAGE_SCROLL);
+                self.page_output(1);
                 Vec::new()
             }
             (KeyCode::Home, KeyModifiers::NONE) => {
@@ -1289,6 +1431,20 @@ impl App {
     }
 
     pub(super) fn handle_event(&mut self, event: AppEvent) -> Vec<Effect> {
+        let clears_status = match &event {
+            AppEvent::Key(_, _) => true,
+            AppEvent::Paste(_, _) => self.modal.is_none() && self.focus == Pane::Input,
+            AppEvent::Mouse(mouse, _) => matches!(
+                mouse.kind,
+                MouseEventKind::Down(MouseButton::Left)
+                    | MouseEventKind::ScrollUp
+                    | MouseEventKind::ScrollDown
+            ),
+            _ => false,
+        };
+        if clears_status {
+            self.clear_status();
+        }
         let request_id = self.request_id;
         let mut effects = match event {
             AppEvent::Tick(now) => self.tick(now),
@@ -1301,13 +1457,26 @@ impl App {
                 Vec::new()
             }
             AppEvent::Paste(_, _) => Vec::new(),
-            AppEvent::ClipboardFinished { kind, result } => {
-                self.set_status(Some(match result {
-                    Ok(()) if kind == CopyKind::Hex => "Copied as Hex".to_string(),
-                    Ok(()) if kind == CopyKind::Raw => "Copied Raw".to_string(),
-                    Ok(()) => "Copied Pretty".to_string(),
-                    Err(message) => crate::error::escape_external(&message, 512),
-                }));
+            AppEvent::ClipboardPrepared {
+                request_id,
+                result,
+                now,
+            } => self.finish_copy_preparation(request_id, result, now),
+            AppEvent::ClipboardWriteFinished {
+                request_id,
+                kind,
+                result,
+                now,
+            } => {
+                self.finish_copy_write(request_id, kind, result, now);
+                Vec::new()
+            }
+            AppEvent::ClipboardWorkerStopped { now } => {
+                self.copy_phase = CopyPhase::Idle;
+                if matches!(self.modal, Some(Modal::UnsafeCopyConfirm { .. })) {
+                    self.modal = None;
+                }
+                self.set_status(Some("Copy unavailable".to_string()), now);
                 Vec::new()
             }
             AppEvent::Key(key, now) => self.handle_key(key, now),
@@ -1346,7 +1515,7 @@ mod tests {
     use super::*;
     use crate::{
         TUI_OUTPUT_LIMIT,
-        error::PipelineError,
+        error::{PipelineError, TransformError},
         pipeline::{ExecutionOutcome, ExecutionReport, ExecutionTarget, StepStatus, execute},
         tui::views::{EffectiveView, effective_view},
     };
@@ -1359,6 +1528,44 @@ mod tests {
 
     fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, now: Instant) -> Vec<Effect> {
         app.handle_event(AppEvent::Key(KeyEvent::new(code, modifiers), now))
+    }
+
+    fn complete_copy_preparation(app: &mut App, effects: Vec<Effect>) -> Vec<Effect> {
+        let mut effects = effects.into_iter();
+        let Some(Effect::PrepareCopy(job)) = effects.next() else {
+            panic!("copy preparation was not requested");
+        };
+        assert!(effects.next().is_none());
+        let request_id = job.request_id;
+        let prepared = prepare_copy(job).unwrap();
+        app.handle_event(AppEvent::ClipboardPrepared {
+            request_id,
+            result: Ok(prepared),
+            now: now(),
+        })
+    }
+
+    fn request_prepared_copy(app: &mut App, mode: CopyMode) -> Vec<Effect> {
+        let effects = app.request_copy(mode);
+        complete_copy_preparation(app, effects)
+    }
+
+    fn finish_successful_copy(app: &mut App, effects: &[Effect], now: Instant) {
+        let [
+            Effect::WriteClipboard {
+                request_id,
+                payload,
+            },
+        ] = effects
+        else {
+            panic!("clipboard write was not requested");
+        };
+        app.handle_event(AppEvent::ClipboardWriteFinished {
+            request_id: *request_id,
+            kind: payload.kind,
+            result: Ok(()),
+            now,
+        });
     }
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16, modifiers: KeyModifiers) -> AppEvent {
@@ -1895,8 +2102,8 @@ mod tests {
                 app.output.active_artifact = Some(Artifact::new(bytes.clone()));
 
                 assert!(matches!(
-                    app.request_copy(CopyMode::Pretty).as_slice(),
-                    [Effect::Copy(ClipboardPayload { text, kind })]
+                    request_prepared_copy(&mut app, CopyMode::Pretty).as_slice(),
+                    [Effect::WriteClipboard { payload: ClipboardPayload { text, kind }, .. }]
                         if text == expected_text && *kind == expected_kind
                 ));
             }
@@ -1911,16 +2118,251 @@ mod tests {
         }
     }
     #[test]
+    fn copy_request_captures_one_snapshot_until_the_worker_finishes() {
+        let mut app = App::new(now(), true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"old result".to_vec()));
+
+        let effects = app.request_copy(CopyMode::Pretty);
+        app.output.active_artifact = Some(Artifact::new(b"new result".to_vec()));
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::PrepareCopy(job)] if job.artifact.bytes() == b"old result"
+        ));
+        assert!(matches!(app.copy_phase, CopyPhase::Preparing { .. }));
+        assert!(app.request_copy(CopyMode::Raw).is_empty());
+    }
+    #[test]
+    fn safe_prepared_copy_moves_to_worker_write() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"ready".to_vec()));
+        let preparation = app.request_copy(CopyMode::Pretty);
+        let [Effect::PrepareCopy(job)] = preparation.as_slice() else {
+            panic!("copy preparation was not requested");
+        };
+        let request_id = job.request_id;
+
+        let effects = app.handle_event(AppEvent::ClipboardPrepared {
+            request_id,
+            result: Ok(PreparedCopy {
+                payload: ClipboardPayload {
+                    text: "ready".to_string(),
+                    kind: CopyKind::Pretty,
+                },
+                requires_confirmation: false,
+            }),
+            now: start,
+        });
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::WriteClipboard { request_id: id, payload }]
+                if *id == request_id && payload.text == "ready"
+        ));
+        assert!(matches!(
+            app.copy_phase,
+            CopyPhase::Writing {
+                request_id: id,
+                kind: CopyKind::Pretty,
+            } if id == request_id
+        ));
+    }
+    #[test]
+    fn help_cancels_preparation_and_stale_results_are_discarded() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"snapshot".to_vec()));
+        let first = app.request_copy(CopyMode::Pretty);
+        let [Effect::PrepareCopy(first_job)] = first.as_slice() else {
+            panic!("first preparation was not requested");
+        };
+        let first_id = first_job.request_id;
+
+        key(&mut app, KeyCode::F(1), KeyModifiers::NONE, start);
+        assert_eq!(app.copy_phase, CopyPhase::Idle);
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+        let second = app.request_copy(CopyMode::Raw);
+        let [Effect::PrepareCopy(second_job)] = second.as_slice() else {
+            panic!("second preparation was not requested");
+        };
+        let second_id = second_job.request_id;
+
+        assert!(
+            app.handle_event(AppEvent::ClipboardPrepared {
+                request_id: first_id,
+                result: Ok(PreparedCopy {
+                    payload: ClipboardPayload {
+                        text: "stale".to_string(),
+                        kind: CopyKind::Pretty,
+                    },
+                    requires_confirmation: false,
+                }),
+                now: start,
+            })
+            .is_empty()
+        );
+        assert_eq!(
+            app.copy_phase,
+            CopyPhase::Preparing {
+                request_id: second_id
+            }
+        );
+    }
+
+    #[test]
+    fn clipboard_completion_accepts_only_the_current_write() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.copy_phase = CopyPhase::Writing {
+            request_id: 9,
+            kind: CopyKind::Raw,
+        };
+
+        app.handle_event(AppEvent::ClipboardWriteFinished {
+            request_id: 8,
+            kind: CopyKind::Raw,
+            result: Ok(()),
+            now: start,
+        });
+        assert!(matches!(app.copy_phase, CopyPhase::Writing { .. }));
+        assert!(app.status.is_none());
+
+        app.handle_event(AppEvent::ClipboardWriteFinished {
+            request_id: 9,
+            kind: CopyKind::Raw,
+            result: Ok(()),
+            now: start,
+        });
+        assert_eq!(app.copy_phase, CopyPhase::Idle);
+        assert_eq!(app.status.as_deref(), Some("Copied Raw"));
+    }
+
+    #[test]
+    fn clipboard_worker_stop_is_nonfatal_and_recovers_copy_state() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
+        assert!(matches!(
+            app.request_copy(CopyMode::Pretty).as_slice(),
+            [Effect::PrepareCopy(_)]
+        ));
+
+        let effects = app.handle_event(AppEvent::ClipboardWorkerStopped { now: start });
+
+        assert!(effects.is_empty());
+        assert_eq!(app.copy_phase, CopyPhase::Idle);
+        assert_eq!(app.status.as_deref(), Some("Copy unavailable"));
+        assert!(matches!(app.output.status, OutputStatus::Ready));
+    }
+    #[test]
+    fn copy_preparation_failure_is_nonfatal_and_preserves_ready_output() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
+        let preparation = app.request_copy(CopyMode::Pretty);
+        let [Effect::PrepareCopy(job)] = preparation.as_slice() else {
+            panic!("copy preparation was not requested");
+        };
+
+        app.handle_event(AppEvent::ClipboardPrepared {
+            request_id: job.request_id,
+            result: Err(()),
+            now: start,
+        });
+
+        assert_eq!(app.copy_phase, CopyPhase::Idle);
+        assert_eq!(app.status.as_deref(), Some("Copy unavailable"));
+        assert!(matches!(app.output.status, OutputStatus::Ready));
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"result"
+        );
+    }
+    #[test]
+    fn transient_status_expires_at_exactly_two_seconds() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.set_status(Some("Copied Pretty".to_string()), start);
+
+        app.handle_event(AppEvent::Tick(
+            start + TRANSIENT_STATUS_FOR - Duration::from_nanos(1),
+        ));
+        assert_eq!(app.status.as_deref(), Some("Copied Pretty"));
+
+        app.handle_event(AppEvent::Tick(start + TRANSIENT_STATUS_FOR));
+        assert!(app.status.is_none());
+    }
+
+    #[test]
+    fn next_key_input_paste_left_click_or_wheel_clears_transient_status() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+
+        app.set_status(Some("Copied Pretty".to_string()), start);
+        key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE, start);
+        assert!(app.status.is_none());
+
+        app.focus = Pane::Input;
+        app.set_status(Some("Removed step".to_string()), start);
+        app.handle_event(AppEvent::Paste("pasted".to_string(), start));
+        assert!(app.status.is_none());
+
+        app.set_status(Some("Copied Raw".to_string()), start);
+        app.handle_event(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            99,
+            99,
+            KeyModifiers::NONE,
+        ));
+        assert!(app.status.is_none());
+
+        app.set_status(Some("Input limit reached".to_string()), start);
+        app.handle_event(mouse(
+            MouseEventKind::ScrollDown,
+            99,
+            99,
+            KeyModifiers::NONE,
+        ));
+        assert!(app.status.is_none());
+    }
+    #[test]
     fn unsafe_preview_requires_confirmation_before_copy_effect() {
         let mut app = App::new(now(), true);
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"x\x1b[2J".to_vec()));
-        assert!(app.request_copy(CopyMode::Pretty).is_empty());
+        let preparation = app.request_copy(CopyMode::Pretty);
+        let [Effect::PrepareCopy(job)] = preparation.as_slice() else {
+            panic!("copy preparation was not requested");
+        };
+        let request_id = job.request_id;
+        assert!(
+            app.handle_event(AppEvent::ClipboardPrepared {
+                request_id,
+                result: Ok(PreparedCopy {
+                    payload: ClipboardPayload {
+                        text: "x\x1b[2J".to_string(),
+                        kind: CopyKind::Pretty,
+                    },
+                    requires_confirmation: true,
+                }),
+                now: now(),
+            })
+            .is_empty()
+        );
         assert!(matches!(app.modal, Some(Modal::UnsafeCopyConfirm { .. })));
         assert!(matches!(
             app.confirm_unsafe_copy().as_slice(),
-            [Effect::Copy(_)]
+            [Effect::WriteClipboard { request_id: id, .. }] if *id == request_id
         ));
+        assert!(matches!(app.copy_phase, CopyPhase::Writing { .. }));
     }
     #[test]
     fn unsafe_confirmation_owns_the_original_payload_until_approval() {
@@ -1928,15 +2370,18 @@ mod tests {
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"old\x1b".to_vec()));
 
-        assert!(app.request_copy(CopyMode::Pretty).is_empty());
+        assert!(request_prepared_copy(&mut app, CopyMode::Pretty).is_empty());
         app.output.active_artifact = Some(Artifact::new(b"new".to_vec()));
 
         assert!(matches!(
             app.confirm_unsafe_copy().as_slice(),
-            [Effect::Copy(ClipboardPayload {
-                text,
-                kind: CopyKind::Pretty,
-            })] if text == "old\x1b"
+            [Effect::WriteClipboard {
+                payload: ClipboardPayload {
+                    text,
+                    kind: CopyKind::Pretty,
+                },
+                ..
+            }] if text == "old\x1b"
         ));
     }
     #[test]
@@ -1946,16 +2391,17 @@ mod tests {
             let mut app = App::new(start, true);
             app.output.status = OutputStatus::Ready;
             app.output.active_artifact = Some(Artifact::new(b"secret\x1b".to_vec()));
-            app.request_copy(CopyMode::Pretty);
+            request_prepared_copy(&mut app, CopyMode::Pretty);
 
             assert!(key(&mut app, key_code, KeyModifiers::NONE, start).is_empty());
+            assert_eq!(app.copy_phase, CopyPhase::Idle);
             assert!(app.confirm_unsafe_copy().is_empty());
         }
 
         let mut app = App::new(start, true);
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"secret\x1b".to_vec()));
-        app.request_copy(CopyMode::Pretty);
+        request_prepared_copy(&mut app, CopyMode::Pretty);
         key(&mut app, KeyCode::F(1), KeyModifiers::NONE, start);
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
 
@@ -1969,11 +2415,14 @@ mod tests {
         app.output.active_artifact = Some(Artifact::new(vec![0x00, 0x1b, 0xff]));
 
         assert!(matches!(
-            app.request_copy(CopyMode::Pretty).as_slice(),
-            [Effect::Copy(ClipboardPayload {
-                text,
-                kind: CopyKind::Hex,
-            })] if text == "001bff"
+            request_prepared_copy(&mut app, CopyMode::Pretty).as_slice(),
+            [Effect::WriteClipboard {
+                payload: ClipboardPayload {
+                    text,
+                    kind: CopyKind::Hex,
+                },
+                ..
+            }] if text == "001bff"
         ));
         assert!(app.modal.is_none());
     }
@@ -1999,7 +2448,7 @@ mod tests {
         app.output.active_artifact = Some(Artifact::new(b"safe".to_vec()));
         assert!(matches!(
             app.request_copy(CopyMode::Pretty).as_slice(),
-            [Effect::Copy(_)]
+            [Effect::PrepareCopy(_)]
         ));
     }
     #[test]
@@ -2009,14 +2458,15 @@ mod tests {
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(vec![0x1b]));
 
-        app.request_copy(CopyMode::Pretty);
+        request_prepared_copy(&mut app, CopyMode::Pretty);
         assert!(key(&mut app, KeyCode::Char('ㅜ'), KeyModifiers::NONE, start).is_empty());
         assert!(app.modal.is_none());
+        assert_eq!(app.copy_phase, CopyPhase::Idle);
 
-        app.request_copy(CopyMode::Pretty);
+        request_prepared_copy(&mut app, CopyMode::Pretty);
         assert!(matches!(
             key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start).as_slice(),
-            [Effect::Copy(_)]
+            [Effect::WriteClipboard { .. }]
         ));
 
         app.insert_paste("x", start);
@@ -2032,7 +2482,7 @@ mod tests {
         let mut app = App::new(start, true);
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"secret\x1b".to_vec()));
-        app.request_copy(CopyMode::Pretty);
+        request_prepared_copy(&mut app, CopyMode::Pretty);
         assert!(matches!(app.modal, Some(Modal::UnsafeCopyConfirm { .. })));
 
         for (code, modifiers) in [
@@ -2124,12 +2574,16 @@ mod tests {
         app.focus = Pane::Output;
 
         let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
+        let effects = complete_copy_preparation(&mut app, effects);
         assert!(matches!(
             effects.as_slice(),
-            [Effect::Copy(ClipboardPayload {
-                text,
-                kind: CopyKind::Pretty,
-            })] if text == "result"
+            [Effect::WriteClipboard {
+                payload: ClipboardPayload {
+                    text,
+                    kind: CopyKind::Pretty,
+                },
+                ..
+            }] if text == "result"
         ));
         assert_eq!(app.input_text(), "source");
     }
@@ -2168,15 +2622,24 @@ mod tests {
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"{ \"a\" : 1 }".to_vec()));
 
+        let pretty = key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
+        let pretty = complete_copy_preparation(&mut app, pretty);
         assert!(matches!(
-            key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start).as_slice(),
-            [Effect::Copy(ClipboardPayload { text, kind: CopyKind::Pretty })]
-                if text == "{\n  \"a\": 1\n}"
+            pretty.as_slice(),
+            [Effect::WriteClipboard {
+                payload: ClipboardPayload { text, kind: CopyKind::Pretty },
+                ..
+            }] if text == "{\n  \"a\": 1\n}"
         ));
+        finish_successful_copy(&mut app, &pretty, start);
+        let raw = key(&mut app, KeyCode::Enter, KeyModifiers::SHIFT, start);
+        let raw = complete_copy_preparation(&mut app, raw);
         assert!(matches!(
-            key(&mut app, KeyCode::Enter, KeyModifiers::SHIFT, start).as_slice(),
-            [Effect::Copy(ClipboardPayload { text, kind: CopyKind::Raw })]
-                if text == "{\"a\":1}"
+            raw.as_slice(),
+            [Effect::WriteClipboard {
+                payload: ClipboardPayload { text, kind: CopyKind::Raw },
+                ..
+            }] if text == "{\"a\":1}"
         ));
         for code in [KeyCode::Char('y'), KeyCode::F(3), KeyCode::F(4)] {
             assert!(key(&mut app, code, KeyModifiers::NONE, start).is_empty());
@@ -2192,10 +2655,14 @@ mod tests {
         app.output.final_artifact = Some(Artifact::new(b"{\"final\":true}".to_vec()));
         app.output.active_artifact = Some(Artifact::new(b"{ \"step\" : 1 }".to_vec()));
 
+        let effects = key(&mut app, KeyCode::Enter, KeyModifiers::SHIFT, start);
+        let effects = complete_copy_preparation(&mut app, effects);
         assert!(matches!(
-            key(&mut app, KeyCode::Enter, KeyModifiers::SHIFT, start).as_slice(),
-            [Effect::Copy(ClipboardPayload { text, kind })]
-                if text == "{\"step\":1}" && *kind == CopyKind::Raw
+            effects.as_slice(),
+            [Effect::WriteClipboard {
+                payload: ClipboardPayload { text, kind },
+                ..
+            }] if text == "{\"step\":1}" && *kind == CopyKind::Raw
         ));
     }
     #[test]
@@ -2311,7 +2778,7 @@ mod tests {
             let mut app = App::new(start, true);
             app.output.status = OutputStatus::Ready;
             app.output.active_artifact = Some(Artifact::new(vec![0x1b]));
-            app.request_copy(CopyMode::Pretty);
+            request_prepared_copy(&mut app, CopyMode::Pretty);
             assert!(matches!(
                 key(
                     &mut app,
@@ -2320,14 +2787,14 @@ mod tests {
                     start
                 )
                 .as_slice(),
-                [Effect::Copy(_)]
+                [Effect::WriteClipboard { .. }]
             ));
         }
         for character in ['n', 'ㅜ'] {
             let mut app = App::new(start, true);
             app.output.status = OutputStatus::Ready;
             app.output.active_artifact = Some(Artifact::new(vec![0x1b]));
-            app.request_copy(CopyMode::Pretty);
+            request_prepared_copy(&mut app, CopyMode::Pretty);
             assert!(
                 key(
                     &mut app,
@@ -2599,12 +3066,17 @@ mod tests {
         assert_eq!(app.output.source, OutputSource::Final);
         app.output.view = ViewMode::Smart;
         assert!(key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE, start).is_empty());
+        let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
+        let effects = complete_copy_preparation(&mut app, effects);
         assert!(matches!(
-            key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start).as_slice(),
-            [Effect::Copy(ClipboardPayload {
-                text,
-                kind: CopyKind::Pretty,
-            })] if text == "final"
+            effects.as_slice(),
+            [Effect::WriteClipboard {
+                payload: ClipboardPayload {
+                    text,
+                    kind: CopyKind::Pretty,
+                },
+                ..
+            }] if text == "final"
         ));
 
         key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE, start);
@@ -2642,6 +3114,7 @@ mod tests {
         key(&mut app, KeyCode::Left, KeyModifiers::NONE, start);
         assert_eq!(app.output.byte_offset, 0);
 
+        app.reflow_output_viewport(Rect::new(0, 0, 78, 2));
         app.output.view = ViewMode::Hex;
         key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
         assert_eq!(app.output.row_offset, 2);
@@ -2669,19 +3142,106 @@ mod tests {
     }
 
     #[test]
-    fn widening_hex_preserves_the_visible_byte_and_clamps_the_last_row() {
+    fn hex_resize_preserves_the_visible_byte_and_clamps_to_the_new_full_page() {
         let start = now();
         let mut app = App::new(start, true);
         app.focus = Pane::Output;
         app.output.status = OutputStatus::Ready;
         app.output.view = ViewMode::Hex;
-        app.output.active_artifact = Some(Artifact::new(vec![0; 40]));
-        app.mouse_regions.output_content = Some(Rect::new(0, 0, 59, 10));
-        app.output.row_offset = 4;
+        app.output.active_artifact = Some(Artifact::new(vec![0; 80]));
+        app.reflow_output_viewport(Rect::new(0, 0, 59, 4));
+        app.output.row_offset = 7;
 
-        app.reflow_hex_offset(78);
+        app.reflow_output_viewport(Rect::new(0, 0, 78, 4));
 
         assert_eq!(app.output.row_offset, 2);
+    }
+
+    #[test]
+    fn hidden_output_preserves_its_last_viewport_for_hex_reflow() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.output.status = OutputStatus::Ready;
+        app.output.view = ViewMode::Hex;
+        app.output.active_artifact = Some(Artifact::new(vec![0; 80]));
+        let viewport = Rect::new(0, 0, 59, 4);
+
+        app.reflow_output_viewport(viewport);
+        app.output.row_offset = 4;
+        app.mouse_regions = MouseRegions::default();
+        app.reflow_output_viewport(viewport);
+
+        assert_eq!(app.output.row_offset, 4);
+    }
+
+    #[test]
+    fn hex_and_trace_pages_use_visible_data_rows_and_end_keeps_a_full_page() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.status = OutputStatus::Ready;
+        app.output.view = ViewMode::Hex;
+        app.output.active_artifact = Some(Artifact::new(vec![0; 80]));
+        app.reflow_output_viewport(Rect::new(0, 0, 78, 4));
+
+        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
+        assert_eq!(app.output.row_offset, 2);
+        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
+        assert_eq!(app.output.row_offset, 0);
+        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
+        assert_eq!(app.output.row_offset, 2);
+
+        app.output.view = ViewMode::Trace;
+        app.output.row_offset = 0;
+        app.output.traces = (1..=10)
+            .map(|step| StepTrace {
+                step,
+                transform_id: "base64-decode",
+                input_bytes: Some(4),
+                output_bytes: Some(3),
+                elapsed: None,
+                status: if step == 2 {
+                    StepStatus::Failed
+                } else {
+                    StepStatus::Succeeded
+                },
+                error: (step == 2).then_some(TransformError::InvalidBase64 { position: Some(1) }),
+            })
+            .collect();
+        app.reflow_output_viewport(Rect::new(0, 0, 80, 8));
+
+        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
+        assert_eq!(app.output.row_offset, 4);
+        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
+        assert_eq!(app.output.row_offset, 6);
+        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
+        assert_eq!(app.output.row_offset, 2);
+    }
+
+    #[test]
+    fn trace_end_obeys_the_render_byte_budget() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.status = OutputStatus::Ready;
+        app.output.view = ViewMode::Trace;
+        app.output.traces = (1..=32)
+            .map(|step| StepTrace {
+                step,
+                transform_id: "base64-encode",
+                input_bytes: None,
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            })
+            .collect();
+        let viewport = Rect::new(0, 0, 200, 100);
+        app.reflow_output_viewport(viewport);
+
+        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
+
+        assert_eq!(app.output.row_offset, 12);
     }
     #[test]
     fn trace_view_never_copies_an_underlying_artifact() {
@@ -2705,19 +3265,26 @@ mod tests {
     }
     #[test]
     fn clipboard_failure_preserves_ready_preview() {
-        let mut app = App::new(Instant::now(), true);
+        let start = now();
+        let mut app = App::new(start, true);
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
-        app.handle_event(AppEvent::ClipboardFinished {
+        app.copy_phase = CopyPhase::Writing {
+            request_id: 1,
             kind: CopyKind::Pretty,
-            result: Err("Clipboard unavailable".to_string()),
+        };
+        app.handle_event(AppEvent::ClipboardWriteFinished {
+            request_id: 1,
+            kind: CopyKind::Pretty,
+            result: Err(()),
+            now: start,
         });
         assert!(matches!(app.output.status, OutputStatus::Ready));
         assert_eq!(
             app.output.active_artifact.as_ref().unwrap().bytes(),
             b"result"
         );
-        assert_eq!(app.status.as_deref(), Some("Clipboard unavailable"));
+        assert_eq!(app.status.as_deref(), Some("Copy unavailable"));
     }
     #[test]
     fn clipboard_success_message_preserves_the_copy_kind() {
@@ -2726,11 +3293,18 @@ mod tests {
             (CopyKind::Raw, "Copied Raw"),
             (CopyKind::Hex, "Copied as Hex"),
         ] {
-            let mut app = App::new(now(), true);
+            let start = now();
+            let mut app = App::new(start, true);
+            app.copy_phase = CopyPhase::Writing {
+                request_id: 1,
+                kind,
+            };
 
-            app.handle_event(AppEvent::ClipboardFinished {
+            app.handle_event(AppEvent::ClipboardWriteFinished {
+                request_id: 1,
                 kind,
                 result: Ok(()),
+                now: start,
             });
 
             assert_eq!(app.status.as_deref(), Some(expected));
@@ -2757,13 +3331,19 @@ mod tests {
             status: StepStatus::Succeeded,
             error: None,
         });
-
-        app.handle_event(AppEvent::ClipboardFinished {
+        app.copy_phase = CopyPhase::Writing {
+            request_id: 1,
             kind: CopyKind::Hex,
-            result: Err("clipboard\n\u{1b}[2J".to_string()),
+        };
+
+        app.handle_event(AppEvent::ClipboardWriteFinished {
+            request_id: 1,
+            kind: CopyKind::Hex,
+            result: Err(()),
+            now: start,
         });
 
-        assert_eq!(app.status.as_deref(), Some("clipboard\\x0a\\x1b[2J"));
+        assert_eq!(app.status.as_deref(), Some("Copy unavailable"));
         assert_eq!(app.input_text(), "source");
         assert_eq!(app.steps.len(), 1);
         assert_eq!(app.output.source, OutputSource::Step(0));
@@ -3105,7 +3685,7 @@ mod tests {
             b"active"
         );
         assert_eq!(app.output.traces, [trace]);
-        assert_eq!(app.status.as_deref(), Some("keep"));
+        assert!(app.status.is_none());
     }
 
     #[test]
@@ -3681,26 +4261,28 @@ mod tests {
     }
 
     #[test]
-    fn text_end_and_page_down_stop_at_the_last_visible_start() {
+    fn text_pages_use_the_last_rendered_viewport_and_end_shows_a_full_page() {
         let start = now();
-        for code in [KeyCode::End, KeyCode::PageDown] {
-            let mut app = App::new(start, true);
-            app.focus = Pane::Output;
-            app.output.view = ViewMode::Text;
-            app.output.status = OutputStatus::Ready;
-            app.output.active_artifact = Some(Artifact::new(b"abc".to_vec()));
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.output.view = ViewMode::Text;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"abcdef".to_vec()));
+        app.reflow_output_viewport(Rect::new(0, 0, 2, 2));
 
-            key(&mut app, code, KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, 4);
+        app.take_dirty();
+        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, 4);
+        assert!(!app.take_dirty());
 
-            assert_eq!(app.output.byte_offset, 2);
-            let window = crate::tui::views::render_text_window(
-                app.output.active_artifact.as_ref().unwrap(),
-                app.output.byte_offset,
-                1,
-                80,
-            );
-            assert_eq!(window.text, "c");
-        }
+        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, 0);
+        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, 2);
+        key(&mut app, KeyCode::Home, KeyModifiers::NONE, start);
+        assert_eq!(app.output.byte_offset, 0);
     }
 
     #[test]
@@ -3733,19 +4315,26 @@ mod tests {
         assert_eq!(app.output.byte_offset, maximum);
 
         app.output.byte_offset = 0;
+        let expected_page = crate::tui::views::render_text_window(
+            app.output.active_artifact.as_ref().unwrap(),
+            0,
+            app.output_rows(),
+            app.output_columns(),
+        )
+        .next_offset;
         key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
-        assert_eq!(app.output.byte_offset, maximum);
+        assert_eq!(app.output.byte_offset, expected_page);
         assert!(text.is_char_boundary(app.output.byte_offset));
         let page = crate::tui::views::render_text_window(
             app.output.active_artifact.as_ref().unwrap(),
             app.output.byte_offset,
-            1,
-            80,
+            app.output_rows(),
+            app.output_columns(),
         );
-        assert_eq!(page.text, "b");
+        assert!(!page.text.is_empty());
 
         key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
-        assert!(app.output.byte_offset < maximum);
+        assert_eq!(app.output.byte_offset, 0);
         assert!(text.is_char_boundary(app.output.byte_offset));
     }
 
