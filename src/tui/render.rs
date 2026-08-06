@@ -322,19 +322,29 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
     let columns = area.width as usize;
     let wide = columns >= 70;
+    let traces = &app.output.traces[..app.output.traces.len().min(32)];
+    let fixed_columns = if wide { 47 } else { 29 };
+    let maximum_operation = columns.saturating_sub(fixed_columns).max(1);
+    let operation_width = traces
+        .iter()
+        .map(|trace| operation_name(trace.transform_id, maximum_operation).width())
+        .chain(std::iter::once("OPERATION".width()))
+        .max()
+        .unwrap_or(1)
+        .min(maximum_operation)
+        .max(1);
     let (headers, widths) = if wide {
         (
             vec!["STEP", "OPERATION", "INPUT", "OUTPUT", "TIME", "STATUS"],
-            vec![5, columns.saturating_sub(47).max(1), 9, 9, 10, 9],
+            vec![5, operation_width, 9, 9, 10, 9],
         )
     } else {
         (
             vec!["STEP", "OPERATION", "SIZE", "STATUS"],
-            vec![5, columns.saturating_sub(29).max(1), 12, 9],
+            vec![5, operation_width, 12, 9],
         )
     };
     let header_cost = headers.iter().map(|header| header.len()).sum::<usize>();
-    let traces = &app.output.traces[..app.output.traces.len().min(32)];
     let failure_index = traces
         .iter()
         .position(|trace| trace.status == StepStatus::Failed);
@@ -607,18 +617,26 @@ fn render_pipeline(
                 StepStatus::NotExecuted => ("· ", Color::Reset),
                 StepStatus::Cancelled => ("− ", YELLOW),
             };
-            let sizes = if show_sizes {
-                trace
-                    .and_then(|trace| Some((trace.input_bytes?, trace.output_bytes?)))
-                    .map(|(input, output)| format!(" {input}B→{output}B"))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            let text = format!(
-                "{prefix} [{enabled}]  {mark}{}{sizes}",
+            let left = format!(
+                "{prefix} [{enabled}]  {mark}{}",
                 step.definition.display_name
             );
+            let text = trace
+                .and_then(|trace| Some((trace.input_bytes?, trace.output_bytes?)))
+                .filter(|_| show_sizes)
+                .map(|(input, output)| format!("{input}B→{output}B"))
+                .map_or_else(
+                    || left.clone(),
+                    |sizes| {
+                        let needed = left.width().saturating_add(1).saturating_add(sizes.width());
+                        if needed > inner.width as usize {
+                            left.clone()
+                        } else {
+                            let padding = inner.width as usize - left.width() - sizes.width();
+                            format!("{left}{}{sizes}", " ".repeat(padding))
+                        }
+                    },
+                );
             ListItem::new(Span::styled(
                 text,
                 if selected {
@@ -2616,6 +2634,39 @@ mod tests {
     }
 
     #[test]
+    fn trace_operation_width_follows_the_longest_registered_name() {
+        let mut app = App::new(now(), true);
+        app.focus = Pane::Output;
+        app.output.view = ViewMode::Trace;
+        app.output.status = OutputStatus::Ready;
+        app.output.traces = ["url-encode", "base64-decode"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, transform_id)| StepTrace {
+                step: index + 1,
+                transform_id,
+                input_bytes: Some(3),
+                output_bytes: Some(4),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            })
+            .collect();
+
+        let screen = rendered_app(120, 20, &mut app);
+        let header = screen
+            .lines()
+            .find(|line| line.contains("OPERATION"))
+            .unwrap();
+        let operation = header.find("OPERATION").unwrap();
+        let input = header.find("INPUT").unwrap();
+        assert_eq!(
+            header[operation..input].width(),
+            "Base64 Decode".width() + 1
+        );
+    }
+
+    #[test]
     fn trace_status_cells_keep_color_and_no_color_meaning() {
         let statuses = [
             (StepStatus::Succeeded, "OK", Some(GREEN)),
@@ -3290,6 +3341,13 @@ mod tests {
         let wide = rendered_app(120, 20, &mut app);
         let medium = rendered_app(119, 20, &mut app);
         assert!(wide.contains("3B→4B"));
+        let size = "3B→4B";
+        let row = wide.lines().find(|line| line.contains(size)).unwrap();
+        let start = row.find(size).unwrap();
+        assert_eq!(
+            row[..start].width(),
+            pipeline_width(120, WidthMode::Wide) as usize - 1 - size.width()
+        );
         assert!(!medium.contains("3B→4B"));
     }
 
