@@ -9,6 +9,9 @@
 
 ---
 
+> 2026-08-07 승인된 `2026-08-07-toc-terminal-native-tui-design.md`가 이 문서의
+> 고정 RGB와 Output 위치 카운터 계약을 대체한다.
+
 > 2026-08-02 `2026-08-01-toc-tui-shortcuts-output-design.md`의 후속 구현으로
 > 대용량 복사는 별도 단일 작업자에서 준비·기록한다. 일반 Footer 상태는 2초 또는
 > 다음 사용자 조작에 해제되고, Output 페이지 이동·위치 제목은 실제 Viewport를

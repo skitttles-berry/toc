@@ -28,15 +28,10 @@ mod state;
 mod views;
 mod worker;
 
-pub(super) const BACKGROUND: Color = Color::Rgb(0x11, 0x11, 0x1b);
-pub(super) const SURFACE_HIGH: Color = Color::Rgb(0x24, 0x24, 0x38);
-pub(super) const BORDER: Color = Color::Rgb(0x36, 0x3a, 0x4f);
-pub(super) const TEXT: Color = Color::Rgb(0xcd, 0xd6, 0xf4);
-pub(super) const MUTED: Color = Color::Rgb(0x6c, 0x70, 0x86);
-pub(super) const CYAN: Color = Color::Rgb(0x89, 0xdc, 0xeb);
-pub(super) const GREEN: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
-pub(super) const YELLOW: Color = Color::Rgb(0xf9, 0xe2, 0xaf);
-pub(super) const RED: Color = Color::Rgb(0xf3, 0x8b, 0xa8);
+pub(super) const CYAN: Color = Color::Cyan;
+pub(super) const GREEN: Color = Color::Green;
+pub(super) const YELLOW: Color = Color::Yellow;
+pub(super) const RED: Color = Color::Red;
 
 use clipboard::{ClipboardResult, ClipboardWorker};
 use render::draw_if_dirty;

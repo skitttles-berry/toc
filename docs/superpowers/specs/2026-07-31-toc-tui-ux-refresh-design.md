@@ -9,6 +9,9 @@
 
 ---
 
+> 2026-08-07 승인된 `2026-08-07-toc-terminal-native-tui-design.md`가 이 문서의
+> 고정 RGB와 Output 위치 카운터 계약을 대체한다.
+
 > 2026-08-02 승인된 `2026-08-01-toc-tui-shortcuts-output-design.md`가 이 문서의
 > 화면·도움말 계약을 대체한다. 아래 `FOCUS`, `FINAL`, `F3`/`F4`, `j`/`k`,
 > `J`/`K`, `v`/`V`, `Enter`/`y` 설명은 당시 구현 기록으로 보존한다. 현재 App Bar는

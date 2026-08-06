@@ -15,7 +15,6 @@ use crate::{
 };
 
 use super::{
-    BACKGROUND, CYAN, YELLOW,
     clipboard::{ClipboardPayload, CopyJob, CopyKind, CopyMode, PreparedCopy},
     views::{
         Artifact, EffectiveView, ViewMode, effective_view, hex_bytes_per_row,
@@ -229,18 +228,9 @@ impl App {
         textarea.set_max_histories(TUI_UNDO_HISTORY_LIMIT);
         textarea.set_wrap_mode(WrapMode::WordOrGlyph);
         textarea.set_cursor_line_style(Style::default());
-        if no_color {
-            textarea.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
-            textarea.set_selection_style(Style::default().add_modifier(Modifier::REVERSED));
-        } else {
-            textarea.set_cursor_style(
-                Style::default()
-                    .fg(BACKGROUND)
-                    .bg(CYAN)
-                    .add_modifier(Modifier::BOLD),
-            );
-            textarea.set_selection_style(Style::default().fg(BACKGROUND).bg(YELLOW));
-        }
+        textarea
+            .set_cursor_style(Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD));
+        textarea.set_selection_style(Style::default().add_modifier(Modifier::REVERSED));
         Self {
             textarea,
             focus: Pane::Input,

@@ -19,7 +19,7 @@ use crate::{
 };
 
 use super::{
-    BACKGROUND, BORDER, CYAN, GREEN, MUTED, RED, SURFACE_HIGH, TEXT, YELLOW,
+    CYAN, GREEN, RED, YELLOW,
     state::{App, CopyPhase, Modal, MouseRegions, OutputSource, OutputStatus, Pane},
     views::{
         EffectiveView, TEXT_VIEW_UNAVAILABLE_MESSAGE, VISIBLE_TEXT_BYTE_BUDGET, ViewMode,
@@ -59,24 +59,24 @@ fn pipeline_width(width: u16, mode: WidthMode) -> u16 {
 }
 
 fn pane_style(app: &App, focused: bool) -> Style {
-    if app.no_color {
-        Style::default()
-    } else if focused {
-        Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+    let style = if focused {
+        Style::default().add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(MUTED).add_modifier(Modifier::BOLD)
+        muted_style()
+    };
+    if focused && !app.no_color {
+        style.fg(CYAN)
+    } else {
+        style
     }
 }
 
-fn selection_style(app: &App) -> Style {
-    if app.no_color {
-        Style::default()
-    } else {
-        Style::default()
-            .fg(CYAN)
-            .bg(SURFACE_HIGH)
-            .add_modifier(Modifier::BOLD)
-    }
+fn selection_style(_app: &App) -> Style {
+    Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+}
+
+fn muted_style() -> Style {
+    Style::default().add_modifier(Modifier::DIM)
 }
 
 fn pane_block<'a>(app: &App, title: &'a str, focused: bool) -> Block<'a> {
@@ -96,7 +96,7 @@ fn stacked_pane_heights(height: u16) -> [u16; 3] {
     [pipeline, input, output]
 }
 
-fn output_title(app: &App, available_width: u16, output_columns: usize) -> String {
+fn output_title(app: &App, available_width: u16) -> String {
     let view = match app.output.view {
         ViewMode::Smart => "SMART",
         ViewMode::Text => "TEXT",
@@ -104,39 +104,11 @@ fn output_title(app: &App, available_width: u16, output_columns: usize) -> Strin
         ViewMode::Trace => "TRACE",
     };
     let base = match app.output.source {
-        OutputSource::Final => format!("» OUTPUT / {view}"),
-        OutputSource::Step(index) => format!("» OUTPUT / STEP {:02} / {view}", index + 1),
+        OutputSource::Final => format!("» OUTPUT [{view}]"),
+        OutputSource::Step(index) => format!("» OUTPUT / STEP {:02} [{view}]", index + 1),
     };
     if !matches!(app.output.status, OutputStatus::Ready) {
         return base;
-    }
-    let counter = if app.output.view == ViewMode::Trace {
-        let total = app.output.traces.len();
-        (total > 0).then(|| {
-            let current = app.output.row_offset.min(total - 1) + 1;
-            format!("ROW {current}/{total}")
-        })
-    } else {
-        app.output.active_artifact.as_ref().map(|artifact| {
-            let total = artifact.bytes().len();
-            let current = match effective_view(app.output.view, Some(artifact), false) {
-                EffectiveView::Hex => app
-                    .output
-                    .row_offset
-                    .saturating_mul(super::views::hex_bytes_per_row(output_columns)),
-                EffectiveView::Text | EffectiveView::Unavailable | EffectiveView::Trace => {
-                    app.output.byte_offset
-                }
-            }
-            .min(total);
-            format!("BYTE {current}/{total}")
-        })
-    };
-    if let Some(counter) = counter {
-        let with_counter = format!("{base} · {counter}");
-        if with_counter.width().saturating_add(2) <= available_width as usize {
-            return with_counter;
-        }
     }
     let Some(artifact) = app.output.active_artifact.as_ref() else {
         return base;
@@ -181,13 +153,13 @@ fn hex_bytes_cell(app: &App, bytes: &[u8], start: usize) -> Cell<'static> {
                 hex_style(
                     app,
                     if (0x20..=0x7e).contains(byte) {
-                        TEXT
+                        Color::Reset
                     } else {
                         YELLOW
                     },
                 ),
             )),
-            None => spans.push(Span::styled("  ", hex_style(app, MUTED))),
+            None => spans.push(Span::styled("  ", muted_style())),
         }
     }
     Cell::from(Line::from(spans))
@@ -201,8 +173,8 @@ fn hex_ascii_cell(app: &App, bytes: &[u8]) -> Cell<'static> {
                 char::from(*byte).to_string(),
                 hex_style(app, GREEN),
             )),
-            Some(_) => spans.push(Span::styled(".", hex_style(app, MUTED))),
-            None => spans.push(Span::styled(" ", hex_style(app, MUTED))),
+            Some(_) => spans.push(Span::styled(".", muted_style())),
+            None => spans.push(Span::styled(" ", muted_style())),
         }
     }
     Cell::from(Line::from(spans))
@@ -222,7 +194,7 @@ fn render_hex_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 columns,
             )
         });
-    let header_style = hex_style(app, MUTED);
+    let header_style = muted_style();
     let offset = |row: &super::views::HexRow<'_>| {
         Cell::from(format!("{:08X}", row.offset)).style(hex_style(app, CYAN))
     };
@@ -285,22 +257,24 @@ fn render_hex_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn trace_status_style(app: &App, status: StepStatus) -> Style {
-    if app.no_color {
-        return Style::default();
-    }
-    Style::default().fg(match status {
+    let color = match status {
         StepStatus::Succeeded => GREEN,
         StepStatus::Failed => RED,
         StepStatus::Cancelled => YELLOW,
-        StepStatus::Disabled | StepStatus::NotExecuted => MUTED,
-    })
+        StepStatus::Disabled | StepStatus::NotExecuted => return muted_style(),
+    };
+    if app.no_color {
+        Style::default()
+    } else {
+        Style::default().fg(color)
+    }
 }
 
 fn failure_style(app: &App) -> Style {
     if app.no_color {
         Style::default()
     } else {
-        Style::default().fg(RED).bg(SURFACE_HIGH)
+        Style::default().fg(RED)
     }
 }
 
@@ -468,7 +442,7 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
             }
         })
         .collect::<Vec<_>>();
-    let header_style = hex_style(app, MUTED);
+    let header_style = muted_style();
     let header = Row::new(
         headers
             .into_iter()
@@ -509,7 +483,7 @@ fn render_output(
 ) {
     let inner = pane_block(app, "", app.focus == Pane::Output).inner(area);
     app.reflow_output_viewport(inner);
-    let title = output_title(app, area.width, inner.width as usize);
+    let title = output_title(app, area.width);
     let block = pane_block(app, &title, app.focus == Pane::Output);
     mouse_regions.output = Some(area);
     mouse_regions.output_content = Some(inner);
@@ -628,9 +602,9 @@ fn render_pipeline(
             };
             let (mark, color) = match status {
                 StepStatus::Succeeded => ("✓ ", GREEN),
-                StepStatus::Disabled => (" ", MUTED),
+                StepStatus::Disabled => (" ", Color::Reset),
                 StepStatus::Failed => ("× ", RED),
-                StepStatus::NotExecuted => ("· ", MUTED),
+                StepStatus::NotExecuted => ("· ", Color::Reset),
                 StepStatus::Cancelled => ("− ", YELLOW),
             };
             let sizes = if show_sizes {
@@ -649,6 +623,8 @@ fn render_pipeline(
                 text,
                 if selected {
                     selection_style(app)
+                } else if matches!(status, StepStatus::Disabled | StepStatus::NotExecuted) {
+                    muted_style()
                 } else if app.no_color {
                     Style::default()
                 } else {
@@ -672,12 +648,8 @@ fn render_pipeline(
     frame.render_widget(List::new(items).style(Style::default()), inner);
 }
 
-fn render_app_bar(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let title_style = if app.no_color {
-        Style::default()
-    } else {
-        Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
-    };
+fn render_app_bar(frame: &mut Frame<'_>, _app: &App, area: Rect) {
+    let title_style = Style::default().add_modifier(Modifier::BOLD);
     let line = Line::from(Span::styled(">_ TOC", title_style));
     frame.render_widget(Paragraph::new(line), area);
 }
@@ -809,14 +781,9 @@ fn dock_line(
     } else {
         Style::default()
             .fg(CYAN)
-            .bg(SURFACE_HIGH)
-            .add_modifier(Modifier::BOLD)
+            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
     };
-    let separator_style = if app.no_color {
-        Style::default()
-    } else {
-        Style::default().fg(BORDER)
-    };
+    let separator_style = muted_style();
     let mut line = Line::from(Span::styled(scope, scope_style));
 
     for (shown, command) in commands.iter().enumerate() {
@@ -942,11 +909,7 @@ fn modal_block<'a>(app: &App, title: &'a str) -> Block<'a> {
     } else {
         Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
     };
-    let shadow = if app.no_color {
-        Shadow::overlay().style(Style::default().add_modifier(Modifier::DIM))
-    } else {
-        Shadow::overlay().style(Style::default().bg(SURFACE_HIGH))
-    };
+    let shadow = Shadow::overlay().style(muted_style());
     Block::bordered()
         .title(title)
         .style(Style::default())
@@ -1082,18 +1045,18 @@ fn render_picker(
     frame.render_widget(List::new(items).style(Style::default()), list_area);
     if !compact {
         frame.render_widget(
-            Paragraph::new(separator(detail_separator.width)).style(Style::default()),
+            Paragraph::new(separator(detail_separator.width)).style(muted_style()),
             detail_separator,
         );
         frame.render_widget(
             Paragraph::new(detail)
-                .style(Style::default())
+                .style(muted_style())
                 .wrap(Wrap { trim: false }),
             detail_area,
         );
     }
     frame.render_widget(
-        Paragraph::new(separator(hint_separator.width)).style(Style::default()),
+        Paragraph::new(separator(hint_separator.width)).style(muted_style()),
         hint_separator,
     );
     let hint = if compact {
@@ -1101,7 +1064,7 @@ fn render_picker(
     } else {
         "↑/↓ Select · [Enter Add] · Backspace Search · [Esc Cancel]"
     };
-    frame.render_widget(Paragraph::new(hint).style(Style::default()), hint_area);
+    frame.render_widget(Paragraph::new(hint).style(muted_style()), hint_area);
     mouse_regions.add_action = Some(action_rect(hint_area, hint, "[Enter Add]", false));
     mouse_regions.cancel_action = Some(action_rect(hint_area, hint, "[Esc Cancel]", false));
 }
@@ -1287,11 +1250,6 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
     let area = frame.area();
     let mode = width_mode(area);
     let mut mouse_regions = MouseRegions::default();
-    if !app.no_color {
-        frame
-            .buffer_mut()
-            .set_style(area, Style::default().fg(TEXT).bg(BACKGROUND));
-    }
     if mode == WidthMode::Tiny {
         frame.render_widget(
             Paragraph::new("Increase terminal size to at least 40×10").alignment(Alignment::Center),
@@ -1440,16 +1398,15 @@ mod tests {
 
         assert!(buffer[(0, 0)].modifier.contains(Modifier::DIM));
         let shadow = &buffer[(modal_area.right(), modal_area.y + 1)];
+        assert!(shadow.modifier.contains(Modifier::DIM));
+        assert_eq!(shadow.bg, Color::Reset);
         if app.no_color {
-            assert!(shadow.modifier.contains(Modifier::DIM));
             assert!(
                 buffer
                     .content()
                     .iter()
                     .all(|cell| { cell.fg == Color::Reset && cell.bg == Color::Reset })
             );
-        } else {
-            assert_eq!(shadow.bg, SURFACE_HIGH);
         }
         assert!(
             !buffer[(modal_area.x + 1, modal_area.y + 1)]
@@ -2057,13 +2014,13 @@ mod tests {
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(b"valid text".to_vec()));
         let text = rendered_app(89, 20, &mut app);
-        assert!(text.contains("» OUTPUT / SMART"));
+        assert!(text.contains("» OUTPUT [SMART]"));
         assert!(text.contains("valid text"));
 
         app.output.source = OutputSource::Step(1);
         app.output.active_artifact = Some(Artifact::new(vec![0, 0xff]));
         let hex = rendered_app(89, 20, &mut app);
-        assert!(hex.contains("» OUTPUT / STEP 02 / SMART"));
+        assert!(hex.contains("» OUTPUT / STEP 02 [SMART]"));
         assert!(hex.contains("OFFSET"));
         assert!(hex.contains("ASCII"));
 
@@ -2078,7 +2035,7 @@ mod tests {
             error: None,
         }];
         let trace = rendered_app(89, 20, &mut app);
-        assert!(trace.contains("» OUTPUT / STEP 02 / TRACE"));
+        assert!(trace.contains("» OUTPUT / STEP 02 [TRACE]"));
         for expected in [
             "STEP",
             "OPERATION",
@@ -2104,69 +2061,50 @@ mod tests {
         let final_screen = rendered_app(120, 20, &mut app);
         assert!(final_screen.lines().next().unwrap().starts_with(">_ TOC"));
         assert!(!final_screen.contains("FOCUS:"));
-        assert!(final_screen.contains("» OUTPUT / SMART · BYTE 0/10"));
+        assert!(final_screen.contains("» OUTPUT [SMART] · 10 B"));
         assert!(!final_screen.contains("/ FINAL"));
 
         app.output.source = OutputSource::Step(1);
         let step_screen = rendered_app(120, 20, &mut app);
-        assert!(step_screen.contains("» OUTPUT / STEP 02 / SMART · BYTE 0/10"));
+        assert!(step_screen.contains("» OUTPUT / STEP 02 [SMART] · 10 B"));
 
         app.output.status = OutputStatus::Debouncing { deadline: now() };
         let pending = rendered_app(120, 20, &mut app);
-        assert!(pending.contains("» OUTPUT / STEP 02 / SMART"));
+        assert!(pending.contains("» OUTPUT / STEP 02 [SMART]"));
         assert!(!pending.contains("BYTE"));
         assert!(!pending.contains("SMART · 10 B"));
     }
 
     #[test]
-    fn output_title_uses_byte_or_row_position_then_size_then_base_fallbacks() {
+    fn output_title_brackets_the_view_and_keeps_only_total_size() {
         let mut app = App::new(now(), true);
         app.output.status = OutputStatus::Ready;
         app.output.active_artifact = Some(Artifact::new(vec![b'x'; 100]));
 
         app.output.view = ViewMode::Text;
         app.output.byte_offset = 12;
-        assert_eq!(output_title(&app, 120, 78), "» OUTPUT / TEXT · BYTE 12/100");
+        assert_eq!(output_title(&app, 120), "» OUTPUT [TEXT] · 100 B");
 
         app.output.view = ViewMode::Hex;
         app.output.row_offset = 2;
-        app.mouse_regions.output_content = Some(Rect::new(0, 0, 78, 4));
-        assert_eq!(output_title(&app, 120, 78), "» OUTPUT / HEX · BYTE 32/100");
-
-        app.output.view = ViewMode::Smart;
-        app.output.active_artifact = Some(Artifact::new(vec![0xff; 100]));
-        assert_eq!(
-            output_title(&app, 120, 78),
-            "» OUTPUT / SMART · BYTE 32/100"
-        );
+        assert_eq!(output_title(&app, 120), "» OUTPUT [HEX] · 100 B");
 
         app.output.view = ViewMode::Trace;
-        app.output.active_artifact = None;
-        app.output.row_offset = 3;
-        app.output.traces = (1..=10)
-            .map(|step| StepTrace {
-                step,
-                transform_id: "base64-encode",
-                input_bytes: None,
-                output_bytes: None,
-                elapsed: None,
-                status: StepStatus::Succeeded,
-                error: None,
-            })
-            .collect();
-        assert_eq!(output_title(&app, 120, 78), "» OUTPUT / TRACE · ROW 4/10");
+        app.output.source = OutputSource::Step(1);
+        assert_eq!(
+            output_title(&app, 120),
+            "» OUTPUT / STEP 02 [TRACE] · 100 B"
+        );
 
-        app.output.view = ViewMode::Text;
-        app.output.active_artifact = Some(Artifact::new(vec![b'x'; 100]));
-        assert_eq!(output_title(&app, 25, 78), "» OUTPUT / TEXT · 100 B");
-        assert_eq!(output_title(&app, 17, 78), "» OUTPUT / TEXT");
+        app.output.source = OutputSource::Final;
+        assert_eq!(output_title(&app, 20), "» OUTPUT [TRACE]");
 
         app.output.status = OutputStatus::running(now(), ExecutionTarget::Final);
-        assert_eq!(output_title(&app, 120, 78), "» OUTPUT / TEXT");
+        assert_eq!(output_title(&app, 120), "» OUTPUT [TRACE]");
     }
 
     #[test]
-    fn resized_hex_title_uses_the_new_row_width() {
+    fn resized_hex_title_keeps_corrected_row_offset_without_a_counter() {
         let mut app = App::new(now(), true);
         app.output.status = OutputStatus::Ready;
         app.output.view = ViewMode::Hex;
@@ -2177,7 +2115,7 @@ mod tests {
         app.reflow_output_viewport(Rect::new(0, 0, 78, 4));
 
         assert_eq!(app.output.row_offset, 2);
-        assert_eq!(output_title(&app, 120, 78), "» OUTPUT / HEX · BYTE 32/80");
+        assert_eq!(output_title(&app, 120), "» OUTPUT [HEX] · 80 B");
     }
 
     #[test]
@@ -2477,7 +2415,7 @@ mod tests {
         app.output.active_artifact = Some(Artifact::new(b"stale secret".to_vec()));
 
         let smart = rendered_app(89, 20, &mut app);
-        assert!(smart.contains("» OUTPUT / SMART"));
+        assert!(smart.contains("» OUTPUT [SMART]"));
         for header in ["STEP", "OPERATION", "INPUT", "OUTPUT", "TIME", "STATUS"] {
             assert!(smart.contains(header), "missing {header}: {smart}");
         }
@@ -2569,7 +2507,7 @@ mod tests {
 
         let screen = rendered_app(120, 20, &mut app);
 
-        assert!(screen.contains("» OUTPUT / TEXT"));
+        assert!(screen.contains("» OUTPUT [TEXT]"));
         assert!(screen.contains("Switch to Hex view"));
         assert!(!screen.contains("sec"));
         assert_eq!(app.output.view, ViewMode::Text);
@@ -2652,11 +2590,11 @@ mod tests {
     #[test]
     fn trace_status_cells_keep_color_and_no_color_meaning() {
         let statuses = [
-            (StepStatus::Succeeded, "OK", GREEN),
-            (StepStatus::Disabled, "OFF", MUTED),
-            (StepStatus::Failed, "ERROR", RED),
-            (StepStatus::NotExecuted, "NOT RUN", MUTED),
-            (StepStatus::Cancelled, "CANCELLED", YELLOW),
+            (StepStatus::Succeeded, "OK", Some(GREEN)),
+            (StepStatus::Disabled, "OFF", None),
+            (StepStatus::Failed, "ERROR", Some(RED)),
+            (StepStatus::NotExecuted, "NOT RUN", None),
+            (StepStatus::Cancelled, "CANCELLED", Some(YELLOW)),
         ];
         let traces = statuses
             .iter()
@@ -2699,16 +2637,15 @@ mod tests {
                     })
                 })
                 .unwrap();
-            assert_eq!(cell.fg, color, "wrong color for {label}");
             assert_eq!(
-                cell.bg,
-                if status == StepStatus::Failed {
-                    SURFACE_HIGH
-                } else {
-                    Color::Reset
-                },
-                "wrong background for {label}"
+                cell.fg,
+                color.unwrap_or(Color::Reset),
+                "wrong color for {label}"
             );
+            assert_eq!(cell.bg, Color::Reset, "wrong background for {label}");
+            if color.is_none() {
+                assert!(cell.modifier.contains(Modifier::DIM));
+            }
         }
 
         let mut no_color = App::new(now(), true);
@@ -2981,14 +2918,22 @@ mod tests {
             .find_map(|(column, cell)| (cell.symbol() == ".").then_some(column as u16))
             .unwrap();
 
-        assert_eq!(buffer[(header, header_row)].fg, MUTED);
+        assert_eq!(buffer[(header, header_row)].fg, Color::Reset);
+        assert!(
+            buffer[(header, header_row)]
+                .modifier
+                .contains(Modifier::DIM)
+        );
         assert_eq!(buffer[(offset, row)].fg, CYAN);
         assert_eq!(buffer[(hex, row)].fg, YELLOW);
-        assert_eq!(buffer[(hex + 3, row)].fg, TEXT);
-        assert_eq!(buffer[(hex + 6, row)].fg, MUTED);
-        assert_eq!(buffer[(ascii, row)].fg, MUTED);
+        assert_eq!(buffer[(hex + 3, row)].fg, Color::Reset);
+        assert_eq!(buffer[(hex + 6, row)].fg, Color::Reset);
+        assert!(buffer[(hex + 6, row)].modifier.contains(Modifier::DIM));
+        assert_eq!(buffer[(ascii, row)].fg, Color::Reset);
+        assert!(buffer[(ascii, row)].modifier.contains(Modifier::DIM));
         assert_eq!(buffer[(ascii + 1, row)].fg, GREEN);
-        assert_eq!(buffer[(ascii + 2, row)].fg, MUTED);
+        assert_eq!(buffer[(ascii + 2, row)].fg, Color::Reset);
+        assert!(buffer[(ascii + 2, row)].modifier.contains(Modifier::DIM));
 
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -3280,7 +3225,7 @@ mod tests {
             b"final"
         );
         assert_eq!(app.output.traces, final_traces);
-        assert!(screen.contains("» OUTPUT / TRACE"));
+        assert!(screen.contains("» OUTPUT [TRACE]"));
         for expected in ["STEP", "OPERATION", "INPUT", "OUTPUT", "TIME", "STATUS"] {
             assert!(screen.contains(expected), "missing {expected}: {screen}");
         }
@@ -3523,7 +3468,7 @@ mod tests {
         let mut app = App::new(now(), true);
         assert_eq!(
             app.textarea.cursor_style(),
-            Style::default().add_modifier(Modifier::REVERSED)
+            Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
         );
         assert_eq!(
             app.textarea.selection_style(),
@@ -3543,6 +3488,8 @@ mod tests {
         assert!(screen.contains("[ON]  › URL Encode"));
         assert!(screen.contains(">_ TOC"));
         assert!(screen.contains("GLOBAL │"));
+        assert!(pane_style(&app, true).add_modifier.contains(Modifier::BOLD));
+        assert!(pane_style(&app, false).add_modifier.contains(Modifier::DIM));
         assert!(
             buffer
                 .content()
@@ -3551,7 +3498,7 @@ mod tests {
         );
     }
     #[test]
-    fn colored_render_uses_only_the_quiet_prism_palette_and_no_ansi() {
+    fn colored_render_uses_terminal_defaults_and_ansi_role_colors() {
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(now(), false);
@@ -3562,27 +3509,18 @@ mod tests {
         app.focus = Pane::Pipeline;
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
-        let approved = [
-            Color::Reset,
-            BACKGROUND,
-            SURFACE_HIGH,
-            BORDER,
-            TEXT,
-            MUTED,
-            CYAN,
-            GREEN,
-            YELLOW,
-            RED,
-        ];
+        let approved = [Color::Reset, CYAN, GREEN, YELLOW, RED];
         for cell in terminal.backend().buffer().content() {
             assert!(approved.contains(&cell.fg), "unexpected fg: {:?}", cell.fg);
-            assert!(approved.contains(&cell.bg), "unexpected bg: {:?}", cell.bg);
-            assert!(!cell.symbol().contains('\u{1b}'));
+            assert_eq!(cell.bg, Color::Reset);
+            assert!(!matches!(cell.fg, Color::Rgb(..) | Color::Indexed(..)));
         }
-        assert_eq!(pane_style(&app, true).fg, Some(CYAN));
-        assert_eq!(pane_style(&app, false).fg, Some(MUTED));
-        assert_eq!(selection_style(&app).fg, Some(CYAN));
-        assert_eq!(selection_style(&app).bg, Some(SURFACE_HIGH));
+        assert!(pane_style(&app, true).add_modifier.contains(Modifier::BOLD));
+        assert!(
+            selection_style(&app)
+                .add_modifier
+                .contains(Modifier::REVERSED)
+        );
     }
 
     #[test]
@@ -3614,7 +3552,7 @@ mod tests {
     }
 
     #[test]
-    fn colored_keycap_uses_surface_high_while_no_color_uses_brackets() {
+    fn colored_keycap_uses_reverse_while_no_color_uses_brackets() {
         let backend = TestBackend::new(120, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut colored = App::new(now(), false);
@@ -3628,8 +3566,9 @@ mod tests {
         let enter_x = footer.find("Enter").unwrap() as u16;
         let enter = &buffer[(enter_x, 18)];
         assert_eq!(enter.fg, CYAN);
-        assert_eq!(enter.bg, SURFACE_HIGH);
+        assert_eq!(enter.bg, Color::Reset);
         assert!(enter.modifier.contains(Modifier::BOLD));
+        assert!(enter.modifier.contains(Modifier::REVERSED));
 
         let mut no_color = App::new(now(), true);
         no_color.focus = Pane::Output;

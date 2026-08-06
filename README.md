@@ -57,10 +57,10 @@ Input·Output 분할을 사용하고, 40~89열에서는 Pipeline 30%, Input 30%,
 그보다 작으면 터미널 크기 안내를 표시합니다. 최하단 두 줄은 Grouped Command
 Dock이며, 상태 메시지는 첫째 줄만 대체합니다. 너비가 부족하면 우선순위가 낮은
 완전한 명령 그룹만 생략합니다. App Bar는 `>_ TOC`만 표시하며 Output 제목은 최종
-결과에서 `» OUTPUT / <VIEW>`, 단계 결과에서 `» OUTPUT / STEP NN / <VIEW>`를
-표시합니다. Ready 상태에서는 Text·Smart·Hex의 0부터 시작하는 현재 바이트를
-`BYTE 현재/전체`, Trace의 1부터 시작하는 현재 행을 `ROW 현재/전체`로 덧붙입니다.
-공간이 부족하면 기존 바이트 크기, 기본 제목 순서로 축약합니다.
+결과에서 `» OUTPUT [VIEW]`, 단계 결과에서 `» OUTPUT / STEP NN [VIEW]`를
+표시합니다. Ready 상태에서는 `· N B` 전체 크기만 덧붙이며, 공간이 부족하면
+기본 제목으로 축약합니다. 기본 전경·배경은 터미널 설정을 그대로 사용하고,
+포커스와 상태에는 터미널 ANSI Cyan·Green·Yellow·Red 역할 색상을 사용합니다.
 
 Output은 `Smart`, `Text`, `Hex`, `Trace` 보기를 제공합니다. `p`는 선택
 단계까지 다시 계산하고 `f`는 보관된 최종 결과로 돌아갑니다. `v`는 다음 보기를,

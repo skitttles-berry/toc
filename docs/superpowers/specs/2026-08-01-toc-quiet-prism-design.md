@@ -9,6 +9,9 @@
 
 ---
 
+> 2026-08-07 승인된 `2026-08-07-toc-terminal-native-tui-design.md`가 이 문서의
+> 고정 RGB와 Output 위치 카운터 계약을 대체한다.
+
 > 2026-08-02 승인된 `2026-08-01-toc-tui-shortcuts-output-design.md`가 이 문서의
 > App Bar·Output 제목·Dock·Help 계약을 대체한다. 아래의 `FOCUS`, `FINAL`과 이전
 > 키 표기는 Quiet Prism 구현 당시의 기록으로 남긴다. 현재 App Bar는 `>_ TOC`만,
