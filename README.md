@@ -62,9 +62,9 @@ Dock이며, 상태 메시지는 첫째 줄만 대체합니다. 너비가 부족�
 기본 제목으로 축약합니다. 기본 전경·배경은 터미널 설정을 그대로 사용하고,
 포커스와 상태에는 터미널 ANSI Cyan·Green·Yellow·Red 역할 색상을 사용합니다.
 
-Output은 `Smart`, `Text`, `Hex`, `Trace` 보기를 제공합니다. `p`는 선택
-단계까지 다시 계산하고 `f`는 보관된 최종 결과로 돌아갑니다. `v`는 다음 보기를,
-`z`는 Output 확대를 전환합니다. 유효한 JSON 결과는
+Output은 `Smart`, `Text`, `Hex`, `Trace` 보기를 제공합니다. 선택 단계 실행은
+Pipeline의 `s`로 수행합니다. Output의 `v`는 다음 보기를, `f`는 보관된 최종 결과로
+돌아가며, `z`는 Output 확대를 전환합니다. 유효한 JSON 결과는
 Pretty Copy에서 두 칸 들여쓰고 Raw Copy에서 구조 공백을 제거합니다. 그 밖의
 UTF-8은 원문, 비 UTF-8은 공백 없는 소문자 Hex로 복사합니다. 복사는 표시 View가
 아니라 현재 Output의 FINAL 또는 STEP 원본을 사용하며 Trace에서는 비활성입니다.
