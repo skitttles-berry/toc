@@ -958,8 +958,12 @@ fn render_picker(
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
     let compact = inner.height < 14;
-    let detail_rows = if compact { 0 } else { 4 };
-    let detail_separator_rows = if compact { 0 } else { 1 };
+    let detail_rows = if compact {
+        inner.height.saturating_sub(4).clamp(1, 2)
+    } else {
+        6
+    };
+    let separator_rows = u16::from(!compact);
     let [
         query_area,
         list_area,
@@ -970,9 +974,9 @@ fn render_picker(
     ] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(2),
-        Constraint::Length(detail_separator_rows),
+        Constraint::Length(separator_rows),
         Constraint::Length(detail_rows),
-        Constraint::Length(1),
+        Constraint::Length(separator_rows),
         Constraint::Length(1),
     ])
     .areas(inner);
@@ -989,14 +993,20 @@ fn render_picker(
     let detail = filtered.get(selected).map_or_else(
         || "No matching transforms".to_string(),
         |transform| {
-            format!(
-                "INPUT     {}\nBEHAVIOR  {}\nTUI       Result remains bytes; Smart selects Text or Hex",
-                input_condition(transform.accepts_binary),
-                transform.behavior,
-            )
+            if compact {
+                transform.description.to_string()
+            } else {
+                format!(
+                    "ID        {}\nABOUT     {}\nINPUT     {}\nBEHAVIOR  {}\nTUI       Result remains bytes; Smart selects Text or Hex",
+                    transform.id,
+                    transform.description,
+                    input_condition(transform.accepts_binary),
+                    transform.behavior,
+                )
+            }
         },
     );
-    let available = (list_area.height as usize / 2).max(1);
+    let available = (list_area.height as usize).max(1);
     let start = if selected >= available {
         selected + 1 - available
     } else {
@@ -1008,17 +1018,14 @@ fn render_picker(
         .skip(start)
         .take(available)
         .map(|(index, transform)| {
-            let is_selected = index == selected;
-            let prefix = if is_selected { "> " } else { "  " };
-            let text = format!(
-                "{prefix}{}  [{}]\n  {}",
-                transform.display_name, transform.id, transform.description,
-            );
-            ListItem::new(text).style(if is_selected {
-                selection_style(app)
-            } else {
-                Style::default()
-            })
+            let prefix = if index == selected { "> " } else { "  " };
+            ListItem::new(format!("{prefix}{}", transform.display_name)).style(
+                if index == selected {
+                    selection_style(app)
+                } else {
+                    Style::default()
+                },
+            )
         })
         .collect();
     mouse_regions.picker_content = Some(list_area);
@@ -1028,39 +1035,35 @@ fn render_picker(
             (start..start + items.len())
                 .enumerate()
                 .map(|(row, index)| {
-                    let y = list_area.y + row as u16 * 2;
                     (
-                        Rect::new(
-                            list_area.x,
-                            y,
-                            list_area.width,
-                            list_area.bottom().saturating_sub(y).min(2),
-                        ),
+                        Rect::new(list_area.x, list_area.y + row as u16, list_area.width, 1),
                         index,
                     )
                 }),
         );
     frame.render_widget(List::new(items).style(Style::default()), list_area);
-    if !compact {
+    if separator_rows > 0 {
         frame.render_widget(
             Paragraph::new(separator(detail_separator.width)).style(muted_style()),
             detail_separator,
         );
-        frame.render_widget(
-            Paragraph::new(detail)
-                .style(muted_style())
-                .wrap(Wrap { trim: false }),
-            detail_area,
-        );
     }
     frame.render_widget(
-        Paragraph::new(separator(hint_separator.width)).style(muted_style()),
-        hint_separator,
+        Paragraph::new(detail)
+            .style(muted_style())
+            .wrap(Wrap { trim: false }),
+        detail_area,
     );
+    if separator_rows > 0 {
+        frame.render_widget(
+            Paragraph::new(separator(hint_separator.width)).style(muted_style()),
+            hint_separator,
+        );
+    }
     let hint = if compact {
         "[Enter Add] · [Esc Cancel]"
     } else {
-        "↑/↓ Select · [Enter Add] · Backspace Search · [Esc Cancel]"
+        "↑/↓ Select · [Enter Add] · [Esc Cancel]"
     };
     frame.render_widget(Paragraph::new(hint).style(muted_style()), hint_area);
     mouse_regions.add_action = Some(action_rect(hint_area, hint, "[Enter Add]", false));
@@ -1634,12 +1637,23 @@ mod tests {
         let screen = rendered_app(120, 24, &mut app);
         assert!(screen.contains("[Enter Add]"));
         assert!(screen.contains("[Esc Cancel]"));
+        assert!(
+            app.mouse_regions
+                .picker_rows
+                .iter()
+                .all(|(area, _)| area.height == 1)
+        );
+        for rows in app.mouse_regions.picker_rows.windows(2) {
+            assert_eq!(rows[1].0.y, rows[0].0.y + 1);
+        }
         let second = app.mouse_regions.picker_rows[1].0;
         assert!(click(&mut app, second, start).is_empty());
         assert!(matches!(
             app.modal,
             Some(Modal::TransformPicker { selected: 1, .. })
         ));
+        let selected_screen = rendered_app(120, 24, &mut app);
+        assert!(selected_screen.contains("Decode canonical padded Base64 into UTF-8 text"));
         let add = app.mouse_regions.add_action.unwrap();
         assert!(matches!(
             click(&mut app, add, start).as_slice(),
@@ -1659,13 +1673,13 @@ mod tests {
             *selected = 7;
         }
         rendered_app(120, 24, &mut app);
-        assert_eq!(app.mouse_regions.picker_rows.first().unwrap().1, 4);
+        assert_eq!(app.mouse_regions.picker_rows.first().unwrap().1, 2);
         assert_eq!(app.mouse_regions.picker_rows.last().unwrap().1, 7);
         let first_visible = app.mouse_regions.picker_rows.first().unwrap().0;
         assert!(click(&mut app, first_visible, start).is_empty());
         assert!(matches!(
             app.modal,
-            Some(Modal::TransformPicker { selected: 4, .. })
+            Some(Modal::TransformPicker { selected: 2, .. })
         ));
     }
 
@@ -2139,27 +2153,27 @@ mod tests {
     }
 
     #[test]
-    fn add_transform_separates_item_description_detail_and_key_help() {
+    fn add_transform_uses_one_line_names_and_exact_detail_metadata() {
         let mut app = App::new(now(), true);
         app.open_picker();
 
         let screen = rendered_app(80, 20, &mut app);
-        assert!(screen.contains("> Base64 Encode  [base64-encode]"));
-        assert!(screen.contains("  Encode bytes using padded RFC 4648 Base64"));
-        assert!(screen.contains("INPUT"));
-        assert!(screen.contains("BEHAVIOR"));
-        assert!(screen.contains("TUI"));
-        assert!(
-            screen
-                .lines()
-                .filter(|line| line.contains("────────"))
-                .count()
-                >= 2
-        );
-        assert!(screen.contains("Enter Add"));
-        assert!(screen.contains("Esc Cancel"));
-        assert!(!screen.contains("CLI description"));
-        assert!(!screen.contains("CLI behavior"));
+        let selected = screen
+            .lines()
+            .find(|line| line.contains("> Base64 Encode"))
+            .unwrap();
+        assert!(!selected.contains("[base64-encode]"));
+        assert!(!selected.contains("Encode bytes"));
+        for expected in [
+            "ID        base64-encode",
+            "ABOUT     Encode bytes using padded RFC 4648 Base64",
+            "INPUT     Bytes accepted",
+            "BEHAVIOR",
+            "TUI       Result remains bytes; Smart selects Text or Hex",
+        ] {
+            assert!(screen.contains(expected), "missing {expected}: {screen}");
+        }
+        assert!(!screen.contains("Backspace Search"));
     }
 
     #[test]
@@ -2290,17 +2304,18 @@ mod tests {
     }
 
     #[test]
-    fn compact_add_transform_keeps_selected_description_and_close_keys() {
+    fn compact_add_transform_keeps_a_separate_selected_description() {
         let mut app = App::new(now(), true);
         app.open_picker();
 
         let screen = rendered_app(40, 10, &mut app);
 
         assert!(screen.contains("Search:"));
-        assert!(screen.contains("Base64 Encode"));
+        assert!(screen.contains("> Base64 Encode"));
         assert!(screen.contains("Encode bytes"));
         assert!(screen.contains("Enter Add"));
         assert!(screen.contains("Esc Cancel"));
+        assert!(!screen.contains("Backspace Search"));
     }
 
     #[test]

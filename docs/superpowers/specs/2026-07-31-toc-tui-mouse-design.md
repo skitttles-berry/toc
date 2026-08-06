@@ -111,7 +111,7 @@ flush가 부분 실패하더라도 활성 상태를 먼저 기록해 `Drop`이 �
 * Pipeline·Input·Output 외곽 영역
 * Pipeline의 내용 영역, 첫 표시 단계와 표시 행 수
 * Output 내용 영역
-* Add Transform의 보이는 각 2행 항목 영역
+* Add Transform의 보이는 각 1행 항목 영역
 * Add·Confirm·Cancel·Close 동작 영역
 
 숨겨진 패널, 빈 목록 행, 생략된 Modal 상세와 Tiny 화면에서 렌더하지 않은
@@ -158,7 +158,10 @@ Zoom에서는 화면에 표시된 한 패널만 영역을 가진다. 높이 10~1
 Modal이 열려 있으면 Modal 영역만 처리한다. 뒤쪽 패널과 Footer는 클릭하거나
 스크롤할 수 없다. Modal 바깥 클릭은 닫기나 상태 변경을 일으키지 않는다.
 
-Add Transform의 보이는 항목은 각각 2행 전체가 하나의 선택 영역이다. 항목
+> 2026-08-07 대체: 두 줄 항목, 목록 안의 설명, 두 행 클릭 영역과 `Backspace Search`
+> 도움말은 이 설계로 대체한다. Search의 Backspace 편집은 유지한다.
+
+Add Transform의 보이는 항목은 각각 1행 전체가 하나의 선택 영역이다. 항목
 클릭은 선택만 변경하고 변환을 즉시 추가하지 않는다.
 
 명시적인 동작 영역은 다음 문자열로 표시한다.
@@ -270,7 +273,7 @@ Shell Smoke를 확장한다.
 * Tiny 화면과 확인 Modal
 * 각 패널 테두리·내용·빈 행
 * Pipeline의 첫·중간·마지막 보이는 단계
-* 일반·축약 Add Transform의 2행 항목
+* 일반·축약 Add Transform의 1행 항목
 * Add·Confirm·Cancel·Close와 Modal 바깥
 
 ## 10.3 휠과 경계

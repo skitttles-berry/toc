@@ -187,34 +187,35 @@ F1 Context Help Modal은 유지한다. 여기서 "최하단에만"은 상시 노
 Add Transform은 검색, 목록, 선택 항목 상세와 키 도움말의 네 영역을
 유지하되 정보 구조를 바꾼다.
 
-각 변환 항목은 두 줄이다.
+> 2026-08-07 대체: 두 줄 항목, 목록 안의 설명, 두 행 클릭 영역과 `Backspace Search`
+> 도움말은 이 설계로 대체한다. Search의 Backspace 편집은 유지한다.
+
+각 변환 항목은 표시 이름만 한 줄로 표시한다.
 
 ```text
-> JSON Prettify  [format-json]
-  Indent strict JSON while preserving keys and value tokens
+> JSON Prettify
 ```
 
-첫째 줄에는 표시 이름과 공개 식별자를 표시한다. 둘째 줄에는 등록 목록의
-한 줄 설명을 표시한다. 선택 강조는 두 줄 전체에 적용한다. 목록의 설명과
-선택 상세에서 같은 설명을 반복하지 않는다.
+선택 강조는 해당 한 줄에만 적용한다. 목록과 선택 상세에서 설명을 중복하지 않는다.
 
-목록과 선택 상세 사이에는 구분선을 둔다. 선택 상세는 입력 조건,
-`behavior`와 TUI 결과 규칙을 별도 줄에 표시한다. 상세와 최하단 키
-도움말 사이에도 구분선을 둔다.
+일반 화면은 목록과 선택 상세, 상세와 최하단 키 도움말 사이에 구분선을 둔다.
+선택 상세는 공개 식별자, 설명, 입력 조건, `behavior`와 TUI 결과 규칙을 별도 줄에
+표시한다.
 
 ```text
 ───────────────────────────────────────────────────────────
+ID        format-json
+ABOUT     Indent strict JSON while preserving keys and value tokens
 INPUT     Valid UTF-8 text
 BEHAVIOR  Two-space indentation; token spelling and order
           are preserved
 TUI       Result remains bytes; Smart selects Text or Hex
 ───────────────────────────────────────────────────────────
-↑/↓ Select · Enter Add · Backspace Search · Esc Cancel
+↑/↓ Select · [Enter Add] · [Esc Cancel]
 ```
 
-두 줄 항목 때문에 한 화면에 보이는 변환 수가 줄어들 수 있다. 목록은 기존
-선택 추적 스크롤을 사용한다. 작은 Modal은 검색, 선택 항목, 핵심 설명과
-닫기 키를 우선하며 바깥 프레임을 넘지 않는다.
+목록은 기존 선택 추적 스크롤을 사용한다. 작은 Modal은 구분선 없이 검색, 선택 항목,
+핵심 설명과 `[Enter Add] · [Esc Cancel]`을 우선하며 바깥 프레임을 넘지 않는다.
 
 # 7. Pretty Copy와 Raw Copy
 
