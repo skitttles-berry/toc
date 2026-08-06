@@ -7,6 +7,10 @@
 > 2026-08-07 승인된 `2026-08-07-toc-terminal-native-tui-design.md`가 이 문서의
 > 고정 RGB와 Output 위치 카운터 계약을 대체한다.
 
+> 2026-08-07 단축키 후속 변경은 아래의 과거 `Delete`/`d`/`ㅇ`, `a`/`ㅁ`, Output `p`/`ㅔ`
+> 계약을 대체한다. Picker의 `Backspace`는 계속 Search를 편집하고 전역 `Ctrl+p`/`Ctrl+ㅔ`
+> Add는 유지한다.
+
 ## 1. 목적
 
 현재 TUI의 중복 단축키와 상단 정보를 줄이고, 한글 입력 상태에서도 주요
@@ -85,9 +89,9 @@ CLI 지연은 `cargo run`의 기본 Debug 빌드가 원인이었다. Release 실
 | `↑`, `↓` | 동일 | 선택 이동 |
 | `Shift+↑`, `Shift+↓` | 동일 | 선택 단계 재정렬 |
 | `Space` | 동일 | 선택 단계 활성화 전환 |
-| `Delete`, `d` | `Delete`, `d`, `ㅇ` | 선택 단계 삭제 |
+| `Backspace` | 동일 | 선택 단계 삭제 |
 | `Enter` | 동일 | 읽기 전용 Inspector |
-| `a` | `a`, `ㅁ` | Operation Palette |
+| `s` | `s`, `ㄴ` | 선택 Pipeline 단계 결과 요청 |
 | `z` | `z`, `ㅋ` | Pipeline Zoom |
 
 `j`, `k`, `J`, `K`는 아무 동작도 하지 않는다.
@@ -99,7 +103,6 @@ CLI 지연은 `cargo run`의 기본 Debug 빌드가 원인이었다. Release 실
 | `Enter` | `Enter` | Pretty Copy |
 | `Shift+Enter` | 동일 | Raw Copy |
 | `v` | `v`, `ㅍ` | 다음 View |
-| `p` | `p`, `ㅔ` | 선택 Pipeline 단계 결과 요청 |
 | `f` | `f`, `ㄹ` | 보관된 최종 결과 복귀 |
 | `z` | `z`, `ㅋ` | Output Zoom |
 | 방향키, `PageUp`, `PageDown`, `Home`, `End` | 동일 | 현재 View 스크롤 |
@@ -164,7 +167,7 @@ Artifact에 카운터를 붙이지 않는다. 너비가 부족하면 기존 `· 
 Output Footer 첫째 줄은 복사 가능할 때 다음 키를 우선 표시한다.
 
 ```text
-OUTPUT │ Enter Pretty  Shift+Enter Raw  v View │ p Step  f Final │ z Zoom
+OUTPUT │ Enter Pretty  Shift+Enter Raw  v View  f Final │ z Zoom
 ```
 
 전역 Footer와 F1 Help에서 `F3/F4`, `j/k`, `J/K`, `v/V`와
@@ -309,7 +312,7 @@ Header와 실패 상세를 뺀 실제 데이터 행 수를 렌더링과 페이�
 - 위험 문자 확인 전 시스템 쓰기 금지
 - 준비·쓰기 실패와 채널 종료의 비치명적 복구
 - 일반 상태의 2초 만료와 사용자 조작 시 즉시 해제
-- `Delete/d/ㅇ`가 같은 단계를 삭제하고 선택 위치를 보정함
+- `Backspace`가 선택 단계를 삭제하고 선택 위치를 보정함
 - 빈 Pipeline 삭제가 진정한 무동작임
 - 삭제가 기존 최종 결과 재계산을 예약함
 - 대문자 별칭이 다시 활성화되지 않음

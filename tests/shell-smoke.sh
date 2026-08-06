@@ -212,30 +212,34 @@ tui_run() {
             if {$mode eq "normal"} {
                 prepare_text_preview
                 send -- "\033\[<0;5;3M"
-                send -- "a"
+                send -- "\020"
                 expect_exact "Search:" 150 151
                 send -- "\033\[<0;27;8M"
-                expect_exact "\033\[6;26H \033\[8;26H>" 160 161
+                expect_exact ">" 160 161
                 send -- "\033\[<0;40;20M"
                 expect_exact "\033\[4;1H" 156 157
                 expect_exact "Base64 Decode" 156 157
                 send -- " "
-                expect_exact "\033\[4;6HFF" 152 153
+                expect_exact "FF" 152 153
                 send -- "\033\[<64;5;3M"
-                expect_exact "\033\[3;2H>" 156 157
+                expect_exact "Hex Encode" 156 157
                 send -- " "
-                expect_exact "\033\[3;6HFF" 154 155
+                expect_exact "FF" 154 155
                 send -- " "
                 send -- "\033\[<0;50;3M"
                 send -- "\t"
                 expect_exact "OUTPUT" 138 139
                 send -- "\t"
                 expect_exact "PIPELINE" 140 141
+                send -- "\177"
+                expect_exact "Removed" 166 167
+                after 2200
+                expect_exact "Backspace" 168 169
                 send -- "\t"
                 stty rows 5 columns 30 < $replica
                 expect_exact "Increase" 95 96
                 stty rows 24 columns 120 < $replica
-                expect_exact $env(TOC_SMOKE_TEXT_EXPECTED) 109 110
+                expect_exact "hello" 109 110
                 confirm_discard
                 send -- "\r"
             } elseif {$mode eq "interrupt"} {

@@ -17,6 +17,10 @@
 > 다음 사용자 조작에 해제되고, Output 페이지 이동·위치 제목은 실제 Viewport를
 > 사용한다. 공개 CLI·변환·키 바인딩과 의존성은 바뀌지 않는다.
 
+> 2026-08-07 현재 단축키 계약은 Pipeline의 `Backspace` 삭제와 `s` 선택 단계 실행,
+> Output의 `v` 보기와 `f` 최종 결과 복귀다. 아래 역사 본문의 Output `p` 표기는
+> 대체되었고, Picker의 `Backspace` 검색어 편집과 전역 `Ctrl+p` Add는 유지된다.
+
 # 1. 목적과 범위
 
 이 설계는 현재 v0.2의 비파괴 TUI를 바이트 Pipeline 작업판으로 고도화한다. 사용자가 입력한 원문은 계속 Input에 남기고, Pipeline 결과와 단계별 상태는 Output에서 확인한다.

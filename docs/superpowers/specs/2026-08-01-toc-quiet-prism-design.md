@@ -17,9 +17,11 @@
 > 키 표기는 Quiet Prism 구현 당시의 기록으로 남긴다. 현재 App Bar는 `>_ TOC`만,
 > FINAL을 생략한 Ready Output 제목은 `BYTE 현재/전체` 또는 `ROW 현재/전체`를
 > 공간에 맞춰 표시한다. Dock과 Help는 영문 소문자, `↑`/`↓`,
-> `Shift+↑`/`Shift+↓`, `Enter` Pretty·`Shift+Enter` Raw Copy, `Delete`/`d`를
-> 표시한다. 복사는 전용 작업자에서 준비·기록하며 일반 상태는 2초 또는 다음
-> 사용자 조작에 해제된다. Output 페이지 이동은 실제 Viewport 크기를 사용한다.
+> `Shift+↑`/`Shift+↓`, `Enter` Pretty·`Shift+Enter` Raw Copy, `Backspace` 삭제와
+> `s` 선택 단계 실행을 표시한다. Output의 `p` Step은 제거하고 `v` View와 `f` Final만
+> 표시한다. Picker의 `Backspace` 검색어 편집과 전역 `Ctrl+p` Add는 유지된다. 복사는
+> 전용 작업자에서 준비·기록하며 일반 상태는 2초 또는 다음 사용자 조작에 해제된다.
+> Output 페이지 이동은 실제 Viewport 크기를 사용한다.
 
 # 1. 목적과 범위
 

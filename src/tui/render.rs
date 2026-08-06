@@ -690,7 +690,7 @@ const PIPELINE_COMMANDS: &[DockCommand] = &[
         divider_before: true,
     },
     DockCommand {
-        key: Some("Delete/d"),
+        key: Some("Backspace"),
         label: "Delete",
         divider_before: true,
     },
@@ -700,9 +700,9 @@ const PIPELINE_COMMANDS: &[DockCommand] = &[
         divider_before: false,
     },
     DockCommand {
-        key: Some("a"),
-        label: "Add",
-        divider_before: true,
+        key: Some("s"),
+        label: "Step",
+        divider_before: false,
     },
     DockCommand {
         key: Some("z"),
@@ -727,14 +727,9 @@ const OUTPUT_COMMANDS: &[DockCommand] = &[
         divider_before: false,
     },
     DockCommand {
-        key: Some("p"),
-        label: "Step",
-        divider_before: true,
-    },
-    DockCommand {
         key: Some("f"),
         label: "Final",
-        divider_before: false,
+        divider_before: true,
     },
     DockCommand {
         key: Some("z"),
@@ -816,37 +811,40 @@ fn dock_line(
     line
 }
 
-fn footer_status(app: &App, width: usize) -> Option<String> {
+fn footer_status_line(app: &App, width: usize) -> Option<Line<'static>> {
     match &app.output.status {
-        OutputStatus::Failed(error) => Some(crate::error::escape_external(
+        OutputStatus::Failed(error) => Some(Line::raw(crate::error::escape_external(
             &render_pipeline_error_summary(error),
             width,
-        )),
-        OutputStatus::Cancelled => Some("Cancelled".to_string()),
-        status if status.long_running_notice() => Some(
+        ))),
+        OutputStatus::Cancelled => Some(Line::raw("Cancelled")),
+        status if status.long_running_notice() => Some(Line::raw(
             if app.output.active_artifact.is_some() || !app.output.traces.is_empty() {
                 "Still processing · Previous result shown · Esc Cancel"
             } else {
                 "Still processing · Esc Cancel"
-            }
-            .to_string(),
-        ),
+            },
+        )),
         _ if matches!(app.copy_phase, CopyPhase::Preparing { .. }) => {
-            Some("Preparing copy…".to_string())
+            Some(Line::raw("Preparing copy…"))
         }
         _ if matches!(app.copy_phase, CopyPhase::Writing { .. }) => {
-            Some("Writing clipboard…".to_string())
+            Some(Line::raw("Writing clipboard…"))
         }
-        _ => app
-            .status
-            .as_ref()
-            .map(|status| crate::error::escape_external(status, width)),
+        _ => app.status.as_ref().map(|status| {
+            let style = if status.starts_with("Removed ") {
+                Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            Line::styled(crate::error::escape_external(status, width), style)
+        }),
     }
 }
 
 fn footer_first_line(app: &App, width: u16) -> Line<'static> {
-    if let Some(status) = footer_status(app, width as usize) {
-        return Line::raw(status);
+    if let Some(status) = footer_status_line(app, width as usize) {
+        return status;
     }
     match app.focus {
         Pane::Input => dock_line(app, "INPUT", INPUT_COMMANDS, width),
@@ -1148,12 +1146,12 @@ fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegion
         ),
         Pane::Pipeline => (
             "Pipeline Help",
-            "↑/↓  Select step\nShift+↑/↓  Reorder\nSpace  Toggle step\nDelete/d  Delete step\nEnter  Inspect step\na  Add transform\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+p  Add transform\nCtrl+q  Quit\nCtrl+c  Force quit · Esc  Close zoom or cancel request\nMouse Click  Focus/select · Wheel  Move selection".to_string(),
+            "↑/↓  Select step\nShift+↑/↓  Reorder\nSpace  Toggle step\nBackspace  Delete step\nEnter  Inspect step\ns  Show selected step\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+p  Add transform\nCtrl+q  Quit\nCtrl+c  Force quit · Esc  Close zoom or cancel request\nMouse Click  Focus/select · Wheel  Move selection".to_string(),
         ),
         Pane::Output => (
             "Output Help",
             format!(
-                "v  Next view\np  Show selected step\nf  Restore final\n{}\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+p  Add transform\n? / F1  Context help\nCtrl+q  Quit\nCtrl+c  Force quit · Esc  Close zoom or cancel request\nMouse Click  Focus only · Wheel  Scroll",
+                "v  Next view\nf  Restore final\n{}\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+p  Add transform\n? / F1  Context help\nCtrl+q  Quit\nCtrl+c  Force quit · Esc  Close zoom or cancel request\nMouse Click  Focus only · Wheel  Scroll",
                 if app.can_copy() {
                     "Enter  Pretty copy\nShift+Enter  Raw copy"
                 } else {
@@ -1167,9 +1165,9 @@ fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegion
     let body = if compact {
         match app.focus {
             Pane::Input => "Text edit · Tab focus\nCtrl+p Add · F1 Help\nCtrl+q Quit · Ctrl+c Force\n[Esc Close]".to_string(),
-            Pane::Pipeline => "↑/↓ Select · Shift+↑/↓ Move\nSpace Toggle · Delete/d Delete\nEnter Inspect · a Add · z Zoom\n[Esc Close]".to_string(),
+            Pane::Pipeline => "↑/↓ Select · Shift+↑/↓ Move\nSpace Toggle · Backspace Delete\nEnter Inspect · s Step · z Zoom\n[Esc Close]".to_string(),
             Pane::Output => format!(
-                "v View · p Step · f Final\n{}\nArrows/Page Scroll · z Zoom\n[Esc Close]",
+                "v View · f Final\n{}\nArrows/Page Scroll · z Zoom\n[Esc Close]",
                 if app.can_copy() {
                     "Enter Pretty · Shift+Enter Raw"
                 } else {
@@ -2120,20 +2118,23 @@ mod tests {
 
     #[test]
     fn dock_and_help_show_lowercase_current_keys_without_hangul_aliases() {
-        let mut app = App::new(now(), true);
-        app.focus = Pane::Output;
-        app.output.status = OutputStatus::Ready;
-        app.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+        let mut pipeline_app = App::new(now(), true);
+        pipeline_app.focus = Pane::Pipeline;
+        let pipeline = rendered_app(120, 20, &mut pipeline_app);
+        assert!(pipeline.contains("[ Backspace ] Delete"));
+        assert!(pipeline.contains("[ s ] Step"));
+        assert!(!pipeline.contains("Delete/d"));
+        assert!(!pipeline.contains("[ a ] Add"));
 
-        let screen = rendered_app(120, 20, &mut app);
-        let lines = screen.lines().collect::<Vec<_>>();
-        assert!(lines[18].contains("[ Enter ] Pretty"));
-        assert!(lines[18].contains("[ Shift+Enter ] Raw"));
-        assert!(lines[18].contains("[ v ] View"));
-        assert!(lines[19].contains("[ Ctrl+p ] Add"));
-        assert!(lines[19].contains("[ Ctrl+q ] Quit"));
+        let mut output_app = App::new(now(), true);
+        output_app.focus = Pane::Output;
+        output_app.output.status = OutputStatus::Ready;
+        output_app.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+        let output = rendered_app(120, 20, &mut output_app);
+        assert!(!output.contains("[ p ] Step"));
+        assert!(output.contains("[ f ] Final"));
         for removed in ["F3", "F4", "v/V", "Enter/y", "ㅔ", "ㅂ"] {
-            assert!(!screen.contains(removed), "unexpected {removed}: {screen}");
+            assert!(!output.contains(removed), "unexpected {removed}: {output}");
         }
     }
 
@@ -2233,9 +2234,9 @@ mod tests {
                     "Pipeline Help",
                     "↑/↓",
                     "Shift+↑/↓",
-                    "Delete/d",
+                    "Backspace",
                     "Enter",
-                    "a",
+                    "s",
                     "z",
                     "? / F1",
                     "Ctrl+p",
@@ -2248,7 +2249,6 @@ mod tests {
                 &[
                     "Output Help",
                     "v",
-                    "p",
                     "f",
                     "Enter",
                     "Shift+Enter",
@@ -2277,6 +2277,15 @@ mod tests {
             );
             assert!(screen.contains("F1"));
             assert!(screen.contains("[Esc Close]"));
+            for removed in [
+                "Delete/d",
+                "a  Add transform",
+                "p  Show selected step",
+                "ㅔ",
+                "ㄴ",
+            ] {
+                assert!(!screen.contains(removed), "unexpected {removed}: {screen}");
+            }
         }
     }
 
@@ -3187,8 +3196,9 @@ mod tests {
                 traces: final_traces.clone(),
             },
         }));
+        app.focus = Pane::Pipeline;
+        key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE, start);
         app.focus = Pane::Output;
-        key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
         app.handle_event(AppEvent::PreviewFinished(PreviewResult {
             report: ExecutionReport {
                 request_id: 1,
@@ -3533,7 +3543,7 @@ mod tests {
         let wide = rendered_app(120, 20, &mut app);
         let wide_lines = wide.lines().collect::<Vec<_>>();
         assert!(wide_lines[18].contains(
-            "OUTPUT │ [ Enter ] Pretty  [ Shift+Enter ] Raw  [ v ] View │ [ p ] Step  [ f ] Final │ [ z ] Zoom"
+            "OUTPUT │ [ Enter ] Pretty  [ Shift+Enter ] Raw  [ v ] View │ [ f ] Final │ [ z ] Zoom"
         ));
         assert!(
             wide_lines[19]
@@ -3577,6 +3587,32 @@ mod tests {
         let screen = rendered_app(120, 20, &mut no_color);
         assert!(screen.lines().nth(18).unwrap().contains("[ Enter ] Pretty"));
     }
+
+    #[test]
+    fn removed_status_is_reversed_and_bold_without_changing_footer_priority() {
+        for no_color in [false, true] {
+            let backend = TestBackend::new(120, 20);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut app = App::new(now(), no_color);
+            app.focus = Pane::Pipeline;
+            app.status = Some("Removed URL Encode".to_string());
+
+            terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+            let buffer = terminal.backend().buffer();
+            let row = 18_u16;
+            let line = buffer.content()[row as usize * 120..(row as usize + 1) * 120]
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            let start = line.find("Removed URL Encode").unwrap() as u16;
+            for x in start..start + "Removed URL Encode".len() as u16 {
+                assert!(buffer[(x, row)].modifier.contains(Modifier::REVERSED));
+                assert!(buffer[(x, row)].modifier.contains(Modifier::BOLD));
+            }
+        }
+    }
+
     #[test]
     fn external_status_and_error_text_cannot_reach_the_render_buffer_as_controls() {
         let backend = TestBackend::new(80, 20);

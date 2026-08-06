@@ -907,7 +907,7 @@ impl App {
                 } else {
                     KeyCode::Down
                 };
-                self.handle_pipeline_key(KeyEvent::new(code, KeyModifiers::NONE), now);
+                let _ = self.handle_pipeline_key(KeyEvent::new(code, KeyModifiers::NONE), now);
                 Vec::new()
             }
             _ => Vec::new(),
@@ -1290,7 +1290,6 @@ impl App {
         match (key.code, key.modifiers) {
             (KeyCode::Enter, KeyModifiers::NONE) => self.request_copy(CopyMode::Pretty),
             (KeyCode::Enter, KeyModifiers::SHIFT) => self.request_copy(CopyMode::Raw),
-            (KeyCode::Char('p' | 'ㅔ'), KeyModifiers::NONE) => self.request_selected_step(now),
             (KeyCode::Char('f' | 'ㄹ'), KeyModifiers::NONE) => self.restore_final(now),
             (KeyCode::Char('v' | 'ㅍ'), KeyModifiers::NONE) => {
                 self.cycle_view();
@@ -1328,7 +1327,7 @@ impl App {
         }
     }
 
-    fn handle_pipeline_key(&mut self, key: KeyEvent, now: Instant) {
+    fn handle_pipeline_key(&mut self, key: KeyEvent, now: Instant) -> Vec<Effect> {
         match (key.code, key.modifiers) {
             (KeyCode::Up, modifiers) if modifiers == KeyModifiers::SHIFT => {
                 self.move_selected(-1, now);
@@ -1354,14 +1353,15 @@ impl App {
                 }
             }
             (KeyCode::Char(' '), KeyModifiers::NONE) => self.toggle_selected(now),
-            (KeyCode::Delete | KeyCode::Char('d' | 'ㅇ'), KeyModifiers::NONE) => {
-                self.delete_selected(now);
-            }
+            (KeyCode::Backspace, KeyModifiers::NONE) => self.delete_selected(now),
             (KeyCode::Enter, KeyModifiers::NONE) => self.open_inspector(),
-            (KeyCode::Char('a' | 'ㅁ'), KeyModifiers::NONE) => self.open_picker(),
             (KeyCode::Char('z' | 'ㅋ'), KeyModifiers::NONE) => self.toggle_zoom(Pane::Pipeline),
+            (KeyCode::Char('s' | 'ㄴ'), KeyModifiers::NONE) => {
+                return self.request_selected_step(now);
+            }
             _ => {}
         }
+        Vec::new()
     }
 
     fn handle_key(&mut self, key: KeyEvent, now: Instant) -> Vec<Effect> {
@@ -1413,10 +1413,7 @@ impl App {
                 Vec::new()
             }
             Pane::Output => self.handle_output_key(key, now),
-            Pane::Pipeline => {
-                self.handle_pipeline_key(key, now);
-                Vec::new()
-            }
+            Pane::Pipeline => self.handle_pipeline_key(key, now),
         }
     }
 
@@ -1893,7 +1890,7 @@ mod tests {
         let start = now();
         let mut app = App::new(start, true);
 
-        for character in "1234?zadjkpfvy".chars() {
+        for character in "1234?zadjkpsfvy".chars() {
             key(
                 &mut app,
                 KeyCode::Char(character),
@@ -1902,7 +1899,9 @@ mod tests {
             );
         }
 
-        assert_eq!(app.input_text(), "1234?zadjkpfvy");
+        assert_eq!(app.input_text(), "1234?zadjkpsfvy");
+        key(&mut app, KeyCode::Backspace, KeyModifiers::NONE, start);
+        assert_eq!(app.input_text(), "1234?zadjkpsfv");
         assert_eq!(app.focus, Pane::Input);
         assert!(app.modal.is_none());
         assert!(app.zoom.is_none());
@@ -2704,9 +2703,9 @@ mod tests {
             );
             assert_eq!(app.output.view, ViewMode::Text);
         }
-        for character in ['p', 'ㅔ'] {
+        for character in ['s', 'ㄴ'] {
             let mut app = App::new(start, true);
-            app.focus = Pane::Output;
+            app.focus = Pane::Pipeline;
             app.add_transform("base64-encode", start);
             assert!(matches!(
                 key(
@@ -2748,17 +2747,6 @@ mod tests {
                 start,
             );
             assert_eq!(app.zoom, Some(Pane::Output));
-        }
-        for character in ['a', 'ㅁ'] {
-            let mut app = App::new(start, true);
-            app.focus = Pane::Pipeline;
-            key(
-                &mut app,
-                KeyCode::Char(character),
-                KeyModifiers::NONE,
-                start,
-            );
-            assert!(matches!(app.modal, Some(Modal::TransformPicker { .. })));
         }
     }
     #[test]
@@ -2811,25 +2799,23 @@ mod tests {
         }
     }
     #[test]
-    fn empty_pipeline_delete_aliases_leave_state_unchanged() {
+    fn empty_pipeline_backspace_leaves_state_unchanged() {
         let start = now();
-        for code in [KeyCode::Delete, KeyCode::Char('d'), KeyCode::Char('ㅇ')] {
-            let mut app = App::new(start, true);
-            app.focus = Pane::Pipeline;
-            app.selected_step = 3;
-            app.request_id = 7;
-            app.output.status = OutputStatus::Ready;
-            app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
+        let mut app = App::new(start, true);
+        app.focus = Pane::Pipeline;
+        app.selected_step = 3;
+        app.request_id = 7;
+        app.output.status = OutputStatus::Ready;
+        app.output.active_artifact = Some(Artifact::new(b"result".to_vec()));
 
-            assert!(key(&mut app, code, KeyModifiers::NONE, start).is_empty());
-            assert_eq!(app.selected_step, 3);
-            assert_eq!(app.request_id, 7);
-            assert!(matches!(app.output.status, OutputStatus::Ready));
-            assert_eq!(
-                app.output.active_artifact.as_ref().unwrap().bytes(),
-                b"result"
-            );
-        }
+        assert!(key(&mut app, KeyCode::Backspace, KeyModifiers::NONE, start).is_empty());
+        assert_eq!(app.selected_step, 3);
+        assert_eq!(app.request_id, 7);
+        assert!(matches!(app.output.status, OutputStatus::Ready));
+        assert_eq!(
+            app.output.active_artifact.as_ref().unwrap().bytes(),
+            b"result"
+        );
     }
     #[test]
     fn removed_navigation_and_uppercase_view_keys_are_no_ops() {
@@ -2911,26 +2897,79 @@ mod tests {
         key(&mut app, KeyCode::Up, KeyModifiers::SHIFT, start);
         assert_eq!(app.selected_step, 0);
         assert_eq!(app.steps[0].definition.id, "url-encode");
-        key(&mut app, KeyCode::Delete, KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Backspace, KeyModifiers::NONE, start);
         assert_eq!(app.steps.len(), 2);
         assert_eq!(app.steps[0].definition.id, "base64-encode");
     }
     #[test]
-    fn pipeline_delete_aliases_share_one_path_and_report_the_removed_transform() {
+    fn pipeline_backspace_is_the_only_delete_key() {
         let start = now();
-        for code in [KeyCode::Delete, KeyCode::Char('d'), KeyCode::Char('ㅇ')] {
+        let mut app = App::new(start, true);
+        app.add_transform("base64-encode", start);
+        app.add_transform("format-json", start);
+        app.focus = Pane::Pipeline;
+        app.selected_step = 1;
+
+        for code in [
+            KeyCode::Delete,
+            KeyCode::Char('d'),
+            KeyCode::Char('ㅇ'),
+            KeyCode::Char('a'),
+            KeyCode::Char('ㅁ'),
+        ] {
+            assert!(key(&mut app, code, KeyModifiers::NONE, start).is_empty());
+            assert_eq!(app.steps.len(), 2);
+            assert!(app.modal.is_none());
+        }
+
+        key(&mut app, KeyCode::Backspace, KeyModifiers::NONE, start);
+        assert_eq!(app.steps.len(), 1);
+        assert_eq!(app.status.as_deref(), Some("Removed JSON Prettify"));
+    }
+
+    #[test]
+    fn pipeline_s_and_hangul_alias_request_the_selected_step() {
+        for code in [KeyCode::Char('s'), KeyCode::Char('ㄴ')] {
+            let start = now();
             let mut app = App::new(start, true);
-            app.add_transform("base64-encode", start);
-            app.add_transform("format-json", start);
             app.focus = Pane::Pipeline;
-            app.selected_step = 1;
+            app.steps.push(TransformStep {
+                definition: transform_by_id("base64-encode").unwrap(),
+                enabled: true,
+            });
 
-            key(&mut app, code, KeyModifiers::NONE, start);
+            let effects = key(&mut app, code, KeyModifiers::NONE, start);
 
-            assert_eq!(app.steps.len(), 1);
-            assert_eq!(app.selected_step, 0);
-            assert_eq!(app.status.as_deref(), Some("Removed JSON Prettify"));
-            assert!(matches!(app.output.status, OutputStatus::Debouncing { .. }));
+            assert_eq!(
+                app.output.status.running_target(),
+                Some(ExecutionTarget::Step(0))
+            );
+            assert!(matches!(
+                effects.as_slice(),
+                [
+                    Effect::Cancel(1),
+                    Effect::Submit(PreviewJob {
+                        target: ExecutionTarget::Step(0),
+                        ..
+                    })
+                ]
+            ));
+        }
+    }
+
+    #[test]
+    fn output_p_and_hangul_alias_are_no_ops() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.focus = Pane::Output;
+        app.steps.push(TransformStep {
+            definition: transform_by_id("base64-encode").unwrap(),
+            enabled: true,
+        });
+
+        for code in [KeyCode::Char('p'), KeyCode::Char('ㅔ')] {
+            assert!(key(&mut app, code, KeyModifiers::NONE, start).is_empty());
+            assert_eq!(app.request_id, 0);
         }
     }
     #[test]
@@ -2957,13 +2996,13 @@ mod tests {
 
         key(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, start);
         assert!(!app.steps[1].enabled);
-        key(&mut app, KeyCode::Char('ㅇ'), KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Backspace, KeyModifiers::NONE, start);
         assert_eq!(app.steps.len(), 2);
 
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
         assert!(app.modal.is_some());
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
-        key(&mut app, KeyCode::Char('ㅁ'), KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL, start);
         assert!(app.modal.is_some());
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
 
@@ -3044,10 +3083,12 @@ mod tests {
         key(&mut app, KeyCode::Char('V'), KeyModifiers::SHIFT, start);
         assert_eq!(app.output.view, ViewMode::Smart);
 
+        app.focus = Pane::Pipeline;
         assert!(matches!(
-            key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start).as_slice(),
+            key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE, start).as_slice(),
             [Effect::Cancel(_), Effect::Submit(_)]
         ));
+        app.focus = Pane::Output;
         assert!(
             key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start)
                 .iter()
@@ -3846,9 +3887,9 @@ mod tests {
         });
         app.output.active_artifact = app.output.final_artifact.clone();
         app.output.status = OutputStatus::Ready;
-        app.focus = Pane::Output;
+        app.focus = Pane::Pipeline;
 
-        let effects = key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
+        let effects = key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE, start);
 
         assert_eq!(app.request_id, 1);
         assert_eq!(app.output.source, OutputSource::Final);
@@ -3882,9 +3923,9 @@ mod tests {
     fn selected_stage_without_pipeline_is_a_true_no_op() {
         let start = now();
         let mut app = App::new(start, true);
-        app.focus = Pane::Output;
+        app.focus = Pane::Pipeline;
 
-        let effects = key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
+        let effects = key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE, start);
 
         assert!(effects.is_empty());
         assert_eq!(app.request_id, 0);
@@ -3961,7 +4002,9 @@ mod tests {
         assert_eq!(app.output.status, OutputStatus::Ready);
         assert_eq!(app.output.traces, final_traces);
 
-        key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
+        app.focus = Pane::Pipeline;
+        key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE, start);
+        app.focus = Pane::Output;
         app.handle_event(AppEvent::PreviewFinished(PreviewResult {
             report: ExecutionReport {
                 request_id: 2,
@@ -4024,8 +4067,9 @@ mod tests {
                 traces: vec![final_trace.clone()],
             },
         }));
+        app.focus = Pane::Pipeline;
+        key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE, start);
         app.focus = Pane::Output;
-        key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE, start);
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
         app.handle_event(AppEvent::PreviewFinished(PreviewResult {
             report: ExecutionReport {

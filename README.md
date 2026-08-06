@@ -101,10 +101,13 @@ Hex·Trace는 Header와 실패 상세를 제외한 실제 데이터 행 수를 �
 - 전역: `Tab`/`Shift+Tab` 패널 이동, `Ctrl+p`/`Ctrl+ㅔ` 변환 추가, `F1` 도움말,
   `Ctrl+q`/`Ctrl+ㅂ` 정상 종료, `Ctrl+c` 강제 종료
 - Pipeline: `↑`/`↓` 선택, `Shift+↑`/`Shift+↓` 이동, `Space` 전환,
-  `Delete`/`d`/`ㅇ` 삭제, `Enter` 검사, `a`/`ㅁ` 추가, `z`/`ㅋ` 확대
+  `Backspace` 삭제, `Enter` 검사, `s`/`ㄴ` 선택 단계 실행, `z`/`ㅋ` 확대
 - Output: `Enter` Pretty Copy, `Shift+Enter` Raw Copy, `v`/`ㅍ` 보기,
-  `p`/`ㅔ` 단계, `f`/`ㄹ` 최종, `z`/`ㅋ` 확대
+  `f`/`ㄹ` 최종, `z`/`ㅋ` 확대
 - `Esc`: 창·확대 닫기 또는 실행 취소
+
+Picker가 열려 있을 때 `Backspace`는 Search 검색어만 편집합니다. 전역 `Ctrl+p`/`Ctrl+ㅔ`
+변환 추가는 모든 패널에서 유지됩니다.
 
 Dock과 도움말은 영문 소문자 키를 기준으로 표시하며 한글 별칭과 `F3`, `F4`,
 `j`, `k`, `J`, `K`, `v/V`, `Enter/y`를 표시하지 않습니다. 확인 창에서는
