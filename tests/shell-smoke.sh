@@ -214,8 +214,9 @@ tui_run() {
                 send -- "\033\[<0;5;3M"
                 send -- "\020"
                 expect_exact "Search:" 150 151
+                expect_exact "> Base64 Encode" 160 161
                 send -- "\033\[<0;27;8M"
-                expect_exact ">" 160 161
+                expect_exact "> Base64 Decode" 160 161
                 send -- "\033\[<0;40;20M"
                 expect_exact "\033\[4;1H" 156 157
                 expect_exact "Base64 Decode" 156 157
