@@ -2311,7 +2311,11 @@ mod tests {
         let screen = rendered_app(40, 10, &mut app);
 
         assert!(screen.contains("Search:"));
-        assert!(screen.contains("> Base64 Encode"));
+        let mut lines = screen.lines();
+        let selected = lines.find(|line| line.contains("> Base64 Encode")).unwrap();
+        assert!(!selected.contains("[base64-encode]"));
+        assert!(!selected.contains("Encode bytes"));
+        assert!(!lines.next().unwrap().contains("Encode bytes"));
         assert!(screen.contains("Encode bytes"));
         assert!(screen.contains("Enter Add"));
         assert!(screen.contains("Esc Cancel"));
