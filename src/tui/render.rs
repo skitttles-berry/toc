@@ -789,12 +789,11 @@ fn dock_line(
     } else {
         Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
     };
+    let key_style = Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD);
     let key_style = if app.no_color {
-        Style::default()
+        key_style
     } else {
-        Style::default()
-            .fg(CYAN)
-            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        key_style.fg(CYAN)
     };
     let separator_style = muted_style();
     let mut line = Line::from(Span::styled(scope, scope_style));
@@ -3639,7 +3638,7 @@ mod tests {
     }
 
     #[test]
-    fn colored_keycap_uses_reverse_while_no_color_uses_brackets() {
+    fn keycaps_keep_reverse_and_bold_without_color() {
         let backend = TestBackend::new(120, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut colored = App::new(now(), false);
@@ -3661,8 +3660,18 @@ mod tests {
         no_color.focus = Pane::Output;
         no_color.output.status = OutputStatus::Ready;
         no_color.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
-        let screen = rendered_app(120, 20, &mut no_color);
-        assert!(screen.lines().nth(18).unwrap().contains("[ Enter ] Pretty"));
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &mut no_color)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let footer: String = (0..120).map(|x| buffer[(x, 18)].symbol()).collect();
+        let enter_x = footer.find("Enter").unwrap() as u16;
+        let enter = &buffer[(enter_x, 18)];
+        assert_eq!(enter.fg, Color::Reset);
+        assert_eq!(enter.bg, Color::Reset);
+        assert!(enter.modifier.contains(Modifier::BOLD));
+        assert!(enter.modifier.contains(Modifier::REVERSED));
     }
 
     #[test]
