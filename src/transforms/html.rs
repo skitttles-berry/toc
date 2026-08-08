@@ -1,5 +1,3 @@
-use std::io::{self, Write};
-
 use crate::error::TransformError;
 
 struct LimitedOutput {
@@ -16,21 +14,17 @@ impl LimitedOutput {
     }
 }
 
-impl Write for LimitedOutput {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+impl LimitedOutput {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), TransformError> {
         let new_len = self
             .bytes
             .len()
             .checked_add(bytes.len())
-            .ok_or_else(|| io::Error::from(io::ErrorKind::WriteZero))?;
+            .ok_or(TransformError::OutputTooLarge { limit: self.limit })?;
         if new_len > self.limit {
-            return Err(io::Error::from(io::ErrorKind::WriteZero));
+            return Err(TransformError::OutputTooLarge { limit: self.limit });
         }
         self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }
@@ -58,11 +52,23 @@ pub(super) fn encode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, Trans
 pub(super) fn decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
     let text = std::str::from_utf8(input).map_err(|_| TransformError::InvalidUtf8Input)?;
     let mut output = LimitedOutput::new(output_limit);
-    html_escape::decode_html_entities_to_writer(text, &mut output).map_err(|_| {
-        TransformError::OutputTooLarge {
-            limit: output_limit,
+    let mut index = 0;
+    while index < text.len() {
+        if text.as_bytes()[index] == b'&'
+            && let Some(end) = text[index..].find(';')
+        {
+            let end = index + end + 1;
+            let candidate = &text[index..end];
+            let decoded = html_escape::decode_html_entities(candidate);
+            if decoded != candidate {
+                output.write(decoded.as_bytes())?;
+                index = end;
+                continue;
+            }
         }
-    })?;
+        output.write(&text.as_bytes()[index..index + 1])?;
+        index += 1;
+    }
     Ok(output.bytes)
 }
 
