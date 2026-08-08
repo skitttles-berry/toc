@@ -1419,6 +1419,13 @@ impl App {
 
     pub(super) fn handle_event(&mut self, event: AppEvent) -> Vec<Effect> {
         let clears_status = match &event {
+            AppEvent::Key(key, _)
+                if self.focus == Pane::Output
+                    && key.modifiers == KeyModifiers::NONE
+                    && matches!(key.code, KeyCode::Char('f' | 'ㄹ')) =>
+            {
+                false
+            }
             AppEvent::Key(_, _) => true,
             AppEvent::Paste(_, _) => self.modal.is_none() && self.focus == Pane::Input,
             AppEvent::Mouse(mouse, _) => matches!(
@@ -4107,6 +4114,8 @@ mod tests {
             app.output.status = OutputStatus::Ready;
             app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
             app.output.active_artifact = Some(Artifact::new(b"step".to_vec()));
+            app.status = Some("keep".to_string());
+            app.status_deadline = Some(start + TRANSIENT_STATUS_FOR);
 
             let effects = key(
                 &mut app,
@@ -4122,7 +4131,8 @@ mod tests {
                 app.output.active_artifact.as_ref().unwrap().bytes(),
                 b"step"
             );
-            assert!(app.status.is_none());
+            assert_eq!(app.status.as_deref(), Some("keep"));
+            assert_eq!(app.status_deadline, Some(start + TRANSIENT_STATUS_FOR));
         }
     }
 
