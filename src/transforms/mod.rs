@@ -10,6 +10,8 @@ mod html;
 mod ioc;
 mod json;
 #[allow(dead_code)] // Registered by Task 5.
+mod jwt;
+#[allow(dead_code)] // Registered by Task 5.
 mod rot13;
 mod url;
 

@@ -25,6 +25,7 @@ pub enum TransformError {
         column: usize,
         kind: JsonErrorKind,
     },
+    InvalidJwtPart,
     OutputTooLarge {
         limit: usize,
     },
@@ -189,6 +190,7 @@ fn render_transform_error(error: &TransformError) -> String {
             };
             format!("{reason} at line {line}, column {column}")
         }
+        TransformError::InvalidJwtPart => "invalid JWT part".to_string(),
         TransformError::OutputTooLarge { limit } => {
             format!("transform output exceeds {limit} bytes")
         }
@@ -384,6 +386,18 @@ mod tests {
                 source: TransformError::InvalidBase32 { position: None },
             }),
             "step 1 (base32-decode) failed: invalid Base32 padding"
+        );
+    }
+
+    #[test]
+    fn renders_jwt_part_errors_without_token_content() {
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 1,
+                transform_id: "jwt-decode",
+                source: TransformError::InvalidJwtPart,
+            }),
+            "step 1 (jwt-decode) failed: invalid JWT part"
         );
     }
 

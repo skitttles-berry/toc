@@ -436,6 +436,7 @@ pub(super) fn render_transform_error_summary(error: &crate::error::TransformErro
             };
             format!("{reason} at line {line}, column {column}")
         }
+        TransformError::InvalidJwtPart => "invalid JWT part".to_string(),
         TransformError::OutputTooLarge { limit } => format!("output exceeds {limit} bytes"),
     }
 }

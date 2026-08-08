@@ -216,8 +216,26 @@ fn begin_token(
     Ok(())
 }
 
-fn transform(input: &[u8], output_limit: usize, mode: Mode) -> Result<Vec<u8>, TransformError> {
+fn transform(
+    input: &[u8],
+    output_limit: usize,
+    mode: Mode,
+    object_required: bool,
+) -> Result<Vec<u8>, TransformError> {
     validate(input)?;
+    if object_required
+        && input
+            .iter()
+            .copied()
+            .find(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+            != Some(b'{')
+    {
+        return Err(TransformError::InvalidJson {
+            line: 1,
+            column: 1,
+            kind: JsonErrorKind::Syntax,
+        });
+    }
 
     let mut output = LimitedOutput::new(output_limit);
     let mut containers: Vec<bool> = Vec::new();
@@ -296,11 +314,16 @@ fn transform(input: &[u8], output_limit: usize, mode: Mode) -> Result<Vec<u8>, T
 }
 
 pub fn format(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
-    transform(input, output_limit, Mode::Pretty)
+    transform(input, output_limit, Mode::Pretty, false)
+}
+
+#[allow(dead_code)] // Used by Task 3's internal JWT decoder.
+pub(super) fn format_object(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
+    transform(input, output_limit, Mode::Pretty, true)
 }
 
 pub fn minify(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
-    transform(input, output_limit, Mode::Minify)
+    transform(input, output_limit, Mode::Minify, false)
 }
 
 #[cfg(test)]
