@@ -254,44 +254,51 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_the_exact_public_ids_once_in_display_order() {
-        let ids: Vec<_> = transforms().iter().map(|transform| transform.id).collect();
-        let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
+    fn registry_has_the_exact_public_contract_once_in_display_order() {
+        let metadata: Vec<_> = transforms()
+            .iter()
+            .map(|transform| {
+                (
+                    transform.id,
+                    transform.display_name,
+                    transform.accepts_binary,
+                )
+            })
+            .collect();
+        let unique: std::collections::HashSet<_> = metadata.iter().map(|(id, _, _)| *id).collect();
         assert_eq!(
-            ids,
+            metadata,
             [
-                "base64-encode",
-                "base64-decode",
-                "url-encode",
-                "url-decode",
-                "format-json",
-                "minify-json",
-                "hex-encode",
-                "hex-decode",
-                "base64url-encode",
-                "base64url-decode",
-                "base32-encode",
-                "base32-decode",
-                "html-encode",
-                "html-decode",
-                "rot13",
-                "url-defang",
-                "url-refang",
-                "jwt-decode",
-                "sha256",
-                "sha512",
-                "gzip-compress",
-                "gzip-decompress",
-                "sort-lines",
-                "remove-duplicate-lines",
+                ("base64-encode", "Base64 Encode", true),
+                ("base64-decode", "Base64 Decode", false),
+                ("url-encode", "URL Encode", false),
+                ("url-decode", "URL Decode", false),
+                ("format-json", "JSON Prettify", false),
+                ("minify-json", "JSON Minify", false),
+                ("hex-encode", "Hex Encode", true),
+                ("hex-decode", "Hex Decode", false),
+                ("base64url-encode", "Base64URL Encode", true),
+                ("base64url-decode", "Base64URL Decode", false),
+                ("base32-encode", "Base32 Encode", true),
+                ("base32-decode", "Base32 Decode", false),
+                ("html-encode", "HTML Encode", false),
+                ("html-decode", "HTML Decode", false),
+                ("rot13", "ROT13", false),
+                ("url-defang", "URL Defang", false),
+                ("url-refang", "URL Refang", false),
+                ("jwt-decode", "JWT Decode", false),
+                ("sha256", "SHA-256", true),
+                ("sha512", "SHA-512", true),
+                ("gzip-compress", "Gzip Compress", true),
+                ("gzip-decompress", "Gzip Decompress", true),
+                ("sort-lines", "Sort Lines", false),
+                ("remove-duplicate-lines", "Remove Duplicate Lines", false,),
             ]
         );
-        assert_eq!(unique.len(), ids.len());
-        assert!(!ids.contains(&"tui"));
+        assert_eq!(unique.len(), metadata.len());
+        assert!(!unique.contains("tui"));
         assert!(transforms().iter().all(|transform| {
             !transform.display_name.is_empty() && !transform.description.is_empty()
         }));
-        assert!(transform_by_id("hex-encode").unwrap().accepts_binary);
-        assert!(!transform_by_id("hex-decode").unwrap().accepts_binary);
     }
 }
