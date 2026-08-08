@@ -1286,7 +1286,7 @@ impl App {
         }
     }
 
-    fn handle_output_key(&mut self, key: KeyEvent, now: Instant) -> Vec<Effect> {
+    fn handle_output_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match (key.code, key.modifiers) {
             (KeyCode::Enter, KeyModifiers::NONE) => self.request_copy(CopyMode::Pretty),
             (KeyCode::Enter, KeyModifiers::SHIFT) => self.request_copy(CopyMode::Raw),
@@ -1412,7 +1412,7 @@ impl App {
                 self.handle_input_key(key, now);
                 Vec::new()
             }
-            Pane::Output => self.handle_output_key(key, now),
+            Pane::Output => self.handle_output_key(key),
             Pane::Pipeline => self.handle_pipeline_key(key, now),
         }
     }
