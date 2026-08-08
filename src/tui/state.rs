@@ -1421,6 +1421,7 @@ impl App {
         let clears_status = match &event {
             AppEvent::Key(key, _)
                 if self.focus == Pane::Output
+                    && self.modal.is_none()
                     && key.modifiers == KeyModifiers::NONE
                     && matches!(key.code, KeyCode::Char('f' | 'ㄹ')) =>
             {
@@ -4098,6 +4099,33 @@ mod tests {
         assert_eq!(app.output.status, OutputStatus::Ready);
         assert_eq!(app.output.active_artifact.as_ref().unwrap().bytes(), b"61");
         assert_eq!(app.output.traces, [final_trace]);
+    }
+
+    #[test]
+    fn picker_final_aliases_clear_status_and_enter_search_from_output_focus() {
+        let start = now();
+        for final_key in ['f', 'ㄹ'] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Output;
+            app.open_picker();
+            app.status = Some("clear".to_string());
+            app.status_deadline = Some(start + TRANSIENT_STATUS_FOR);
+
+            let effects = key(
+                &mut app,
+                KeyCode::Char(final_key),
+                KeyModifiers::NONE,
+                start,
+            );
+
+            assert!(effects.is_empty());
+            assert!(matches!(
+                app.modal,
+                Some(Modal::TransformPicker { ref query, selected: 0 }) if query == &final_key.to_string()
+            ));
+            assert!(app.status.is_none());
+            assert!(app.status_deadline.is_none());
+        }
     }
 
     #[test]
