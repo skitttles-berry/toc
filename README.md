@@ -183,10 +183,10 @@ Input caret 이동, 드래그 선택, Output 마우스 복사와 Pipeline 직접
 ## 로컬 검증
 
 ```bash
-cargo fmt --check
+cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features --locked
-RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features
+RUSTDOCFLAGS='-D warnings' cargo doc --locked --no-deps --all-features
 cargo test --release dirty_redraw_release_measurement -- --ignored --nocapture
 cargo test --release max_input_edit_release_measurement -- --ignored --nocapture
 cargo test --release utf8_validation_release_measurement -- --ignored --nocapture
@@ -205,12 +205,29 @@ test "$(pbpaste)" = ff
 
 ### 최신 로컬 검증 요약
 
-2026-08-08 `codex/toc-0.2.1-transform-expansion`에서 형식, 경고 금지 잠금 Clippy,
-전체 잠금 시험, rustdoc와 diff 검사를 실행했다. 전체 시험은 라이브러리 335개 통과·
-3개 무시, 실행 파일 0개, CLI 통합 17개 통과로 합계 352개 통과·3개 무시였고 실패는
-없었다. CLI 통합 시험은 파이프의 비 UTF-8·제어 바이트 직접 출력과 이진 중간 단계,
-정확한 24개 목록·도움말·`toc 0.2.1`을 확인했다. 실제 터미널 PTY 거부 검증은 후속
-Task 6 범위다.
+2026-08-08 `codex/toc-0.2.1-transform-expansion`에서 위 명령의
+`cargo fmt --all -- --check`, 경고 금지 잠금 전체 Clippy,
+`cargo test --all-targets --all-features --locked`, 잠금 rustdoc와 diff 검사를 실행해
+모두 통과했다. 전체 시험은 라이브러리 335개 통과·3개 무시, 실행 파일 0개, CLI 통합
+17개 통과로 합계 352개 통과·3개 무시, 실패 0개였다. CLI 통합 시험은 16개 신규 명령의
+대표 입력 실행, 신규 변환 사이 `--then`, 파이프의 정확한 비 UTF-8·제어 바이트와 이진
+중간 단계, 정확한 24개 목록·도움말·`toc 0.2.1`을 확인했다.
+
+세 ignored release 측정을 각각 `cargo test --release <시험명> -- --ignored --nocapture`로
+실행했다. 무조건 다시 그리기 최솟값·중앙값·최댓값은
+`64.450958ms`·`64.6275ms`·`64.990042ms`, 변경 시 다시 그리기는
+`122.333µs`·`131.042µs`·`155.166µs`였고 실제 다시 그리기는 1회였다. 최대 입력 편집은
+`2.732541ms`·`2.75175ms`·`2.808084ms`, 64 MiB UTF-8 판정은
+`2.156917ms`·`2.171291ms`·`2.26825ms`였다. 시간값은 성공 기준이 아니다.
+
+`cargo package --locked`는 67개 파일의 패키징·검증을 완료했다.
+임시 `mktemp -d` 루트의 `cargo install --locked --offline --path . --root ...`와 설치본
+`toc --version`은 `toc 0.2.1`을 출력했다. Cargo는 문서·홈페이지·저장소 패키지
+메타데이터 부재 경고를 냈지만 패키징은 성공했다. Bash·Zsh 기본 PTY는 실제 터미널의
+위험 출력 원자적 거부와 리디렉션 바이트 보존을 포함해 통과했다. 두 셸의
+`TOC_SMOKE_CLIPBOARD_MODE=macos` 경로와 별도 `pbpaste` 비교는 모두 알려진 소문자
+`ff`를 확인했으며, 이전 클립보드는 내용을 출력하지 않고 복원했다. 검증 환경은
+Darwin이고 실행 가능한 X11·Wayland 세션이 없어 두 경로는 미검증이다.
 
 2026-08-07 `codex/tui-terminal-native`에서 형식, 경고 금지 잠금 Clippy,
 rustdoc, 작업 트리 잠금 패키징과 임시 경로 오프라인 잠금 설치를 실행했다.
