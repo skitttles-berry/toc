@@ -238,7 +238,7 @@ test "$(pbpaste)" = ff
 `2.732541ms`·`2.75175ms`·`2.808084ms`, 64 MiB UTF-8 판정은
 `2.156917ms`·`2.171291ms`·`2.26825ms`였다. 시간값은 성공 기준이 아니다.
 
-`cargo package --locked`는 67개 파일의 패키징·검증을 완료했다.
+`cargo package --locked`는 66개 파일의 패키징·검증을 완료했다.
 임시 `mktemp -d` 루트의 `cargo install --locked --offline --path . --root ...`와 설치본
 `toc --version`은 `toc 0.2.1`을 출력했다. Cargo는 문서·홈페이지·저장소 패키지
 메타데이터 부재 경고를 냈지만 패키징은 성공했다. Bash·Zsh 기본 PTY는 실제 터미널의
