@@ -134,9 +134,19 @@ mod tests {
     use crate::error::TransformError;
 
     #[test]
-    fn encodes_uppercase_rfc4648_base32_with_canonical_padding() {
-        assert_eq!(encode(b"f", 8).unwrap(), b"MY======");
-        assert_eq!(encode(b"foo", 8).unwrap(), b"MZXW6===");
+    fn matches_uppercase_rfc4648_base32_vectors_with_canonical_padding() {
+        for (plain, encoded) in [
+            (b"".as_slice(), b"".as_slice()),
+            (b"f", b"MY======"),
+            (b"fo", b"MZXQ===="),
+            (b"foo", b"MZXW6==="),
+            (b"foob", b"MZXW6YQ="),
+            (b"fooba", b"MZXW6YTB"),
+            (b"foobar", b"MZXW6YTBOI======"),
+        ] {
+            assert_eq!(encode(plain, encoded.len()).unwrap(), encoded);
+            assert_eq!(decode(encoded, plain.len()).unwrap(), plain);
+        }
         assert_eq!(
             encode(b"f", 7).unwrap_err(),
             TransformError::OutputTooLarge { limit: 7 }

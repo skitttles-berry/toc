@@ -491,7 +491,7 @@ mod tests {
     fn transform_help_describes_input_and_fixed_behavior() {
         for (id, expected) in [
             ("base64-encode", "padded RFC 4648 Base64"),
-            ("base64-decode", "ASCII whitespace"),
+            ("base64-decode", "ASCII space, tab, CR, and LF"),
             ("url-encode", "uppercase %HH"),
             ("url-decode", "leaves plus signs unchanged"),
             ("format-json", "two-space indentation"),

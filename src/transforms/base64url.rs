@@ -112,9 +112,20 @@ mod tests {
     use crate::error::TransformError;
 
     #[test]
-    fn encodes_rfc4648_url_safe_base64_without_padding() {
+    fn matches_rfc4648_base64_vectors_without_padding() {
+        for (plain, encoded) in [
+            (b"".as_slice(), b"".as_slice()),
+            (b"f", b"Zg"),
+            (b"fo", b"Zm8"),
+            (b"foo", b"Zm9v"),
+            (b"foob", b"Zm9vYg"),
+            (b"fooba", b"Zm9vYmE"),
+            (b"foobar", b"Zm9vYmFy"),
+        ] {
+            assert_eq!(encode(plain, encoded.len()).unwrap(), encoded);
+            assert_eq!(decode(encoded, plain.len()).unwrap(), plain);
+        }
         assert_eq!(encode(&[0xfb, 0xff], 3).unwrap(), b"-_8");
-        assert_eq!(encode(b"f", 2).unwrap(), b"Zg");
         assert_eq!(
             encode(b"foo", 3).unwrap_err(),
             TransformError::OutputTooLarge { limit: 3 }

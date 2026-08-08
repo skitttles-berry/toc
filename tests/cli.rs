@@ -61,10 +61,70 @@ fn chains_in_written_order() {
 }
 
 #[test]
-fn newly_registered_transforms_run_directly_and_in_then_chains() {
-    let output = run(&["rot13", "--then", "html-encode"], b"<N>");
+fn all_new_transform_commands_execute_and_new_steps_chain_in_written_order() {
+    const JWT: &[u8] = br#"{
+  "header": {},
+  "payload": {},
+  "signature": "",
+  "warning": "Signature not verified"
+}"#;
+    const GZIP_HELLO: &[u8] = &[
+        0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xcb, 0x48, 0xcd, 0xc9, 0xc9,
+        0x07, 0x00, 0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00,
+    ];
+    let cases: &[(&str, &[u8], &[u8])] = &[
+        ("base64url-encode", &[0xfb, 0xff], b"-_8"),
+        ("base64url-decode", b"-_8", &[0xfb, 0xff]),
+        ("base32-encode", b"foo", b"MZXW6==="),
+        ("base32-decode", b"MZXW6===", b"foo"),
+        ("html-encode", b"<&>", b"&lt;&amp;&gt;"),
+        ("html-decode", b"&lt;&amp;&gt;", b"<&>"),
+        ("rot13", b"Hello", b"Uryyb"),
+        ("url-defang", b"https://a.b", b"hxxps[://]a[.]b"),
+        ("url-refang", b"hxxps[://]a[.]b", b"https://a.b"),
+        ("jwt-decode", b"e30.e30.", JWT),
+        (
+            "sha256",
+            b"abc",
+            b"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+        (
+            "sha512",
+            b"abc",
+            concat!(
+                "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a",
+                "2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+            )
+            .as_bytes(),
+        ),
+        ("gzip-compress", b"hello", GZIP_HELLO),
+        ("gzip-decompress", GZIP_HELLO, b"hello"),
+        ("sort-lines", b"b\r\na\n", b"a\nb\n"),
+        ("remove-duplicate-lines", b"b\r\nb\na\n", b"b\na\n"),
+    ];
+
+    for (id, input, expected) in cases {
+        let output = run(&[id], input);
+        assert_eq!(output.status.code(), Some(0), "{id}");
+        assert_eq!(output.stdout, *expected, "{id}");
+        assert!(output.stderr.is_empty(), "{id}");
+    }
+
+    let output = run(
+        &[
+            "base64url-encode",
+            "--then",
+            "base64url-decode",
+            "--then",
+            "sha256",
+        ],
+        b"abc",
+    );
     assert_eq!(output.status.code(), Some(0));
-    assert_eq!(output.stdout, b"&lt;A&gt;");
+    assert_eq!(
+        output.stdout,
+        b"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
     assert!(output.stderr.is_empty());
 }
 

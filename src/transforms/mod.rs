@@ -39,7 +39,7 @@ static TRANSFORMS: &[TransformDefinition] = &[
         id: "base64-decode",
         display_name: "Base64 Decode",
         description: "Decode canonical padded Base64 into bytes",
-        behavior: "ignores ASCII whitespace and requires canonical padding and trailing bits",
+        behavior: "ignores ASCII space, tab, CR, and LF and requires canonical padding and trailing bits",
         accepts_binary: false,
         apply: base64::decode,
     },
@@ -234,11 +234,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn base64_encode_is_registered_with_metadata() {
-        let transform = transform_by_id("base64-encode").unwrap();
-        assert_eq!(transform.display_name, "Base64 Encode");
-        assert!(transform.accepts_binary);
-        assert!(!transform.description.is_empty());
+    fn base64_metadata_matches_the_four_whitespace_byte_contract() {
+        let encode = transform_by_id("base64-encode").unwrap();
+        assert_eq!(encode.display_name, "Base64 Encode");
+        assert!(encode.accepts_binary);
+        assert!(!encode.description.is_empty());
+
+        let decode = transform_by_id("base64-decode").unwrap();
+        assert_eq!(
+            decode.behavior,
+            "ignores ASCII space, tab, CR, and LF and requires canonical padding and trailing bits"
+        );
+        for input in [b"Zm9v\x0b".as_slice(), b"Zm9v\x0c"] {
+            assert!(matches!(
+                (decode.apply)(input, 16),
+                Err(TransformError::InvalidBase64 { .. })
+            ));
+        }
     }
 
     #[test]
