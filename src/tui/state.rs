@@ -1290,7 +1290,6 @@ impl App {
         match (key.code, key.modifiers) {
             (KeyCode::Enter, KeyModifiers::NONE) => self.request_copy(CopyMode::Pretty),
             (KeyCode::Enter, KeyModifiers::SHIFT) => self.request_copy(CopyMode::Raw),
-            (KeyCode::Char('f' | 'ㄹ'), KeyModifiers::NONE) => self.restore_final(now),
             (KeyCode::Char('v' | 'ㅍ'), KeyModifiers::NONE) => {
                 self.cycle_view();
                 Vec::new()
@@ -1359,6 +1358,7 @@ impl App {
             (KeyCode::Char('s' | 'ㄴ'), KeyModifiers::NONE) => {
                 return self.request_selected_step(now);
             }
+            (KeyCode::Char('f' | 'ㄹ'), KeyModifiers::NONE) => return self.restore_final(now),
             _ => {}
         }
         Vec::new()
@@ -2726,7 +2726,7 @@ mod tests {
         }
         for character in ['f', 'ㄹ'] {
             let mut app = App::new(start, true);
-            app.focus = Pane::Output;
+            app.focus = Pane::Pipeline;
             app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
             key(
                 &mut app,
@@ -3088,13 +3088,14 @@ mod tests {
             key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE, start).as_slice(),
             [Effect::Cancel(_), Effect::Submit(_)]
         ));
-        app.focus = Pane::Output;
+        app.focus = Pane::Pipeline;
         assert!(
             key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start)
                 .iter()
                 .all(|effect| !matches!(effect, Effect::Submit(_)))
         );
         assert_eq!(app.output.source, OutputSource::Final);
+        app.focus = Pane::Output;
         app.output.view = ViewMode::Smart;
         assert!(key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE, start).is_empty());
         let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
@@ -3934,25 +3935,32 @@ mod tests {
     }
 
     #[test]
-    fn final_key_cancels_selected_stage_and_restores_cached_artifact() {
+    fn pipeline_final_aliases_cancel_selected_stage_and_restore_cached_artifact() {
         let start = now();
-        let mut app = App::new(start, true);
-        app.request_id = 4;
-        app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::running(start, ExecutionTarget::Step(0));
-        app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
-        app.focus = Pane::Output;
+        for final_key in ['f', 'ㄹ'] {
+            let mut app = App::new(start, true);
+            app.request_id = 4;
+            app.output.source = OutputSource::Step(0);
+            app.output.status = OutputStatus::running(start, ExecutionTarget::Step(0));
+            app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+            app.focus = Pane::Pipeline;
 
-        let effects = key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
+            let effects = key(
+                &mut app,
+                KeyCode::Char(final_key),
+                KeyModifiers::NONE,
+                start,
+            );
 
-        assert_eq!(app.request_id, 5);
-        assert!(matches!(effects.as_slice(), [Effect::Cancel(5)]));
-        assert_eq!(app.output.source, OutputSource::Final);
-        assert!(matches!(app.output.status, OutputStatus::Ready));
-        assert_eq!(
-            app.output.active_artifact.as_ref().unwrap().bytes(),
-            b"final"
-        );
+            assert_eq!(app.request_id, 5);
+            assert!(matches!(effects.as_slice(), [Effect::Cancel(5)]));
+            assert_eq!(app.output.source, OutputSource::Final);
+            assert!(matches!(app.output.status, OutputStatus::Ready));
+            assert_eq!(
+                app.output.active_artifact.as_ref().unwrap().bytes(),
+                b"final"
+            );
+        }
     }
 
     #[test]
@@ -3994,7 +4002,7 @@ mod tests {
                 traces: final_traces.clone(),
             },
         }));
-        app.focus = Pane::Output;
+        app.focus = Pane::Pipeline;
 
         let effects = key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
         assert!(matches!(effects.as_slice(), [Effect::Cancel(1)]));
@@ -4004,7 +4012,7 @@ mod tests {
 
         app.focus = Pane::Pipeline;
         key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE, start);
-        app.focus = Pane::Output;
+        app.focus = Pane::Pipeline;
         app.handle_event(AppEvent::PreviewFinished(PreviewResult {
             report: ExecutionReport {
                 request_id: 2,
@@ -4069,7 +4077,7 @@ mod tests {
         }));
         app.focus = Pane::Pipeline;
         key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE, start);
-        app.focus = Pane::Output;
+        app.focus = Pane::Pipeline;
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
         app.handle_event(AppEvent::PreviewFinished(PreviewResult {
             report: ExecutionReport {
@@ -4089,16 +4097,33 @@ mod tests {
     }
 
     #[test]
-    fn final_key_without_cached_artifact_submits_nothing() {
+    fn output_final_aliases_are_no_ops() {
         let start = now();
-        let mut app = App::new(start, true);
-        app.focus = Pane::Output;
+        for final_key in ['f', 'ㄹ'] {
+            let mut app = App::new(start, true);
+            app.focus = Pane::Output;
+            app.request_id = 4;
+            app.output.source = OutputSource::Step(0);
+            app.output.status = OutputStatus::Ready;
+            app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+            app.output.active_artifact = Some(Artifact::new(b"step".to_vec()));
 
-        let effects = key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
+            let effects = key(
+                &mut app,
+                KeyCode::Char(final_key),
+                KeyModifiers::NONE,
+                start,
+            );
 
-        assert!(effects.is_empty());
-        assert_eq!(app.request_id, 0);
-        assert_eq!(app.status.as_deref(), Some("Final output unavailable"));
+            assert!(effects.is_empty());
+            assert_eq!(app.request_id, 4);
+            assert_eq!(app.output.source, OutputSource::Step(0));
+            assert_eq!(
+                app.output.active_artifact.as_ref().unwrap().bytes(),
+                b"step"
+            );
+            assert!(app.status.is_none());
+        }
     }
 
     #[test]

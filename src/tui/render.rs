@@ -113,7 +113,7 @@ fn output_title(app: &App, available_width: u16) -> String {
     let Some(artifact) = app.output.active_artifact.as_ref() else {
         return base;
     };
-    let with_size = format!("{base} · {} B", artifact.bytes().len());
+    let with_size = format!("{base} [{} B]", artifact.bytes().len());
     if with_size.width().saturating_add(2) <= available_width as usize {
         with_size
     } else {
@@ -723,6 +723,11 @@ const PIPELINE_COMMANDS: &[DockCommand] = &[
         divider_before: false,
     },
     DockCommand {
+        key: Some("f"),
+        label: "Final",
+        divider_before: true,
+    },
+    DockCommand {
         key: Some("z"),
         label: "Zoom",
         divider_before: false,
@@ -743,11 +748,6 @@ const OUTPUT_COMMANDS: &[DockCommand] = &[
         key: Some("v"),
         label: "View",
         divider_before: false,
-    },
-    DockCommand {
-        key: Some("f"),
-        label: "Final",
-        divider_before: true,
     },
     DockCommand {
         key: Some("z"),
@@ -1166,12 +1166,12 @@ fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegion
         ),
         Pane::Pipeline => (
             "Pipeline Help",
-            "↑/↓  Select step\nShift+↑/↓  Reorder\nSpace  Toggle step\nBackspace  Delete step\nEnter  Inspect step\ns  Show selected step\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+p  Add transform\nCtrl+q  Quit\nCtrl+c  Force quit · Esc  Close zoom or cancel request\nMouse Click  Focus/select · Wheel  Move selection".to_string(),
+            "↑/↓  Select step\nShift+↑/↓  Reorder\nSpace  Toggle step\nBackspace  Delete step\nEnter  Inspect step\ns  Show selected step\nf  Final\nz  Toggle zoom\nTab / Shift+Tab  Change pane\n? / F1  Context help\nCtrl+p  Add transform\nCtrl+q  Quit\nCtrl+c  Force quit · Esc  Close zoom or cancel request\nMouse Click  Focus/select · Wheel  Move selection".to_string(),
         ),
         Pane::Output => (
             "Output Help",
             format!(
-                "v  Next view\nf  Restore final\n{}\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+p  Add transform\n? / F1  Context help\nCtrl+q  Quit\nCtrl+c  Force quit · Esc  Close zoom or cancel request\nMouse Click  Focus only · Wheel  Scroll",
+                "v  Next view\n{}\nArrows / PageUp / PageDown / Home / End  Scroll\nz  Toggle zoom\nTab / Shift+Tab  Change pane\nCtrl+p  Add transform\n? / F1  Context help\nCtrl+q  Quit\nCtrl+c  Force quit · Esc  Close zoom or cancel request\nMouse Click  Focus only · Wheel  Scroll",
                 if app.can_copy() {
                     "Enter  Pretty copy\nShift+Enter  Raw copy"
                 } else {
@@ -1180,14 +1180,14 @@ fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegion
             ),
         ),
     };
-    let area = centered(frame.area(), 68, 17);
-    let compact = area.height < 17;
+    let area = centered(frame.area(), 68, 18);
+    let compact = area.height < 18;
     let body = if compact {
         match app.focus {
             Pane::Input => "Text edit · Tab focus\nCtrl+p Add · F1 Help\nCtrl+q Quit · Ctrl+c Force\n[Esc Close]".to_string(),
-            Pane::Pipeline => "↑/↓ Select · Shift+↑/↓ Move\nSpace Toggle · Backspace Delete\nEnter Inspect · s Step · z Zoom\n[Esc Close]".to_string(),
+            Pane::Pipeline => "↑/↓ Select · Shift+↑/↓ Move\nSpace Toggle · Backspace Delete\nEnter Inspect · s Step · f Final · z Zoom\n[Esc Close]".to_string(),
             Pane::Output => format!(
-                "v View · f Final\n{}\nArrows/Page Scroll · z Zoom\n[Esc Close]",
+                "v View\n{}\nArrows/Page Scroll · z Zoom\n[Esc Close]",
                 if app.can_copy() {
                     "Enter Pretty · Shift+Enter Raw"
                 } else {
@@ -1452,7 +1452,7 @@ mod tests {
 
         let mut help = App::new(start, false);
         help.modal = Some(Modal::Help);
-        assert_modal_depth(&mut help, frame_area, centered(frame_area, 68, 17));
+        assert_modal_depth(&mut help, frame_area, centered(frame_area, 68, 18));
 
         let mut confirm = App::new(start, false);
         confirm.modal = Some(Modal::QuitConfirm);
@@ -1474,7 +1474,7 @@ mod tests {
         let mut app = App::new(now(), true);
         app.modal = Some(Modal::Help);
 
-        assert_modal_depth(&mut app, frame_area, centered(frame_area, 68, 17));
+        assert_modal_depth(&mut app, frame_area, centered(frame_area, 68, 18));
     }
 
     #[test]
@@ -2090,18 +2090,18 @@ mod tests {
         let final_screen = rendered_app(120, 20, &mut app);
         assert!(final_screen.lines().next().unwrap().starts_with(">_ TOC"));
         assert!(!final_screen.contains("FOCUS:"));
-        assert!(final_screen.contains("» OUTPUT [SMART] · 10 B"));
+        assert!(final_screen.contains("» OUTPUT [SMART] [10 B]"));
         assert!(!final_screen.contains("/ FINAL"));
 
         app.output.source = OutputSource::Step(1);
         let step_screen = rendered_app(120, 20, &mut app);
-        assert!(step_screen.contains("» OUTPUT / STEP 02 [SMART] · 10 B"));
+        assert!(step_screen.contains("» OUTPUT / STEP 02 [SMART] [10 B]"));
 
         app.output.status = OutputStatus::Debouncing { deadline: now() };
         let pending = rendered_app(120, 20, &mut app);
         assert!(pending.contains("» OUTPUT / STEP 02 [SMART]"));
         assert!(!pending.contains("BYTE"));
-        assert!(!pending.contains("SMART · 10 B"));
+        assert!(!pending.contains("SMART] [10 B]"));
     }
 
     #[test]
@@ -2112,17 +2112,17 @@ mod tests {
 
         app.output.view = ViewMode::Text;
         app.output.byte_offset = 12;
-        assert_eq!(output_title(&app, 120), "» OUTPUT [TEXT] · 100 B");
+        assert_eq!(output_title(&app, 120), "» OUTPUT [TEXT] [100 B]");
 
         app.output.view = ViewMode::Hex;
         app.output.row_offset = 2;
-        assert_eq!(output_title(&app, 120), "» OUTPUT [HEX] · 100 B");
+        assert_eq!(output_title(&app, 120), "» OUTPUT [HEX] [100 B]");
 
         app.output.view = ViewMode::Trace;
         app.output.source = OutputSource::Step(1);
         assert_eq!(
             output_title(&app, 120),
-            "» OUTPUT / STEP 02 [TRACE] · 100 B"
+            "» OUTPUT / STEP 02 [TRACE] [100 B]"
         );
 
         app.output.source = OutputSource::Final;
@@ -2144,16 +2144,17 @@ mod tests {
         app.reflow_output_viewport(Rect::new(0, 0, 78, 4));
 
         assert_eq!(app.output.row_offset, 2);
-        assert_eq!(output_title(&app, 120), "» OUTPUT [HEX] · 80 B");
+        assert_eq!(output_title(&app, 120), "» OUTPUT [HEX] [80 B]");
     }
 
     #[test]
-    fn dock_and_help_show_lowercase_current_keys_without_hangul_aliases() {
+    fn dock_and_help_place_final_in_pipeline_without_hangul_aliases() {
         let mut pipeline_app = App::new(now(), true);
         pipeline_app.focus = Pane::Pipeline;
-        let pipeline = rendered_app(120, 20, &mut pipeline_app);
+        let pipeline = rendered_app(160, 20, &mut pipeline_app);
         assert!(pipeline.contains("[ Backspace ] Delete"));
         assert!(pipeline.contains("[ s ] Step"));
+        assert!(pipeline.contains("[ f ] Final"));
         assert!(!pipeline.contains("Delete/d"));
         assert!(!pipeline.contains("[ a ] Add"));
 
@@ -2163,7 +2164,7 @@ mod tests {
         output_app.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
         let output = rendered_app(120, 20, &mut output_app);
         assert!(!output.contains("[ p ] Step"));
-        assert!(output.contains("[ f ] Final"));
+        assert!(!output.contains("[ f ] Final"));
         for removed in ["F3", "F4", "v/V", "Enter/y", "ㅔ", "ㅂ"] {
             assert!(!output.contains(removed), "unexpected {removed}: {output}");
         }
@@ -2268,6 +2269,7 @@ mod tests {
                     "Backspace",
                     "Enter",
                     "s",
+                    "f  Final",
                     "z",
                     "? / F1",
                     "Ctrl+p",
@@ -2280,7 +2282,6 @@ mod tests {
                 &[
                     "Output Help",
                     "v",
-                    "f",
                     "Enter",
                     "Shift+Enter",
                     "z",
@@ -2375,12 +2376,12 @@ mod tests {
     }
 
     #[test]
-    fn forty_by_ten_help_keeps_copy_keys_and_close_visible_for_every_pane() {
+    fn compact_help_keeps_final_in_pipeline_and_copy_keys_in_output() {
         let start = now();
-        for (pane, title) in [
-            (Pane::Input, "Input Help"),
-            (Pane::Pipeline, "Pipeline Help"),
-            (Pane::Output, "Output Help"),
+        for (pane, title, final_key) in [
+            (Pane::Input, "Input Help", false),
+            (Pane::Pipeline, "Pipeline Help", true),
+            (Pane::Output, "Output Help", false),
         ] {
             let mut app = App::new(start, true);
             app.focus = pane;
@@ -2391,6 +2392,7 @@ mod tests {
             for expected in [title, "[Esc Close]"] {
                 assert!(screen.contains(expected), "missing {expected}: {screen}");
             }
+            assert_eq!(screen.contains("f Final"), final_key, "{pane:?}: {screen}");
         }
     }
 
@@ -3287,6 +3289,7 @@ mod tests {
                 ],
             },
         }));
+        app.focus = Pane::Pipeline;
         key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
         app.output.view = ViewMode::Trace;
         app.focus = Pane::Pipeline;
@@ -3618,9 +3621,11 @@ mod tests {
 
         let wide = rendered_app(120, 20, &mut app);
         let wide_lines = wide.lines().collect::<Vec<_>>();
-        assert!(wide_lines[18].contains(
-            "OUTPUT │ [ Enter ] Pretty  [ Shift+Enter ] Raw  [ v ] View │ [ f ] Final │ [ z ] Zoom"
-        ));
+        assert!(
+            wide_lines[18].contains(
+                "OUTPUT │ [ Enter ] Pretty  [ Shift+Enter ] Raw  [ v ] View │ [ z ] Zoom"
+            )
+        );
         assert!(
             wide_lines[19]
                 .contains("GLOBAL │ [ Tab ] Focus │ [ Ctrl+p ] Add  [ F1 ] Help  [ Ctrl+q ] Quit")

@@ -58,13 +58,13 @@ Input·Output 분할을 사용하고, 40~89열에서는 Pipeline 30%, Input 30%,
 Dock이며, 상태 메시지는 첫째 줄만 대체합니다. 너비가 부족하면 우선순위가 낮은
 완전한 명령 그룹만 생략합니다. App Bar는 `>_ TOC`만 표시하며 Output 제목은 최종
 결과에서 `» OUTPUT [VIEW]`, 단계 결과에서 `» OUTPUT / STEP NN [VIEW]`를
-표시합니다. Ready 상태에서는 `· N B` 전체 크기만 덧붙이며, 공간이 부족하면
+표시합니다. Ready 상태에서는 `[N B]` 전체 크기만 덧붙이며, 공간이 부족하면
 기본 제목으로 축약합니다. 기본 전경·배경은 터미널 설정을 그대로 사용하고,
 포커스와 상태에는 터미널 ANSI Cyan·Green·Yellow·Red 역할 색상을 사용합니다.
 
-Output은 `Smart`, `Text`, `Hex`, `Trace` 보기를 제공합니다. 선택 단계 실행은
-Pipeline의 `s`로 수행합니다. Output의 `v`는 다음 보기를, `f`는 보관된 최종 결과로
-돌아가며, `z`는 Output 확대를 전환합니다. 유효한 JSON 결과는
+Output은 `Smart`, `Text`, `Hex`, `Trace` 보기를 제공합니다. 선택 단계 실행과 보관된
+최종 결과 복원은 Pipeline의 `s`와 `f`로 수행합니다. Output의 `v`는 다음 보기를,
+`z`는 Output 확대를 전환합니다. 유효한 JSON 결과는
 Pretty Copy에서 두 칸 들여쓰고 Raw Copy에서 구조 공백을 제거합니다. 그 밖의
 UTF-8은 원문, 비 UTF-8은 공백 없는 소문자 Hex로 복사합니다. 복사는 표시 View가
 아니라 현재 Output의 FINAL 또는 STEP 원본을 사용하며 Trace에서는 비활성입니다.
@@ -103,9 +103,10 @@ Hex·Trace는 Header와 실패 상세를 제외한 실제 데이터 행 수를 �
 - 전역: `Tab`/`Shift+Tab` 패널 이동, `Ctrl+p`/`Ctrl+ㅔ` 변환 추가, `F1` 도움말,
   `Ctrl+q`/`Ctrl+ㅂ` 정상 종료, `Ctrl+c` 강제 종료
 - Pipeline: `↑`/`↓` 선택, `Shift+↑`/`Shift+↓` 이동, `Space` 전환,
-  `Backspace` 삭제, `Enter` 검사, `s`/`ㄴ` 선택 단계 실행, `z`/`ㅋ` 확대
+  `Backspace` 삭제, `Enter` 검사, `s`/`ㄴ` 선택 단계 실행, `f`/`ㄹ` 최종 결과 복원,
+  `z`/`ㅋ` 확대
 - Output: `Enter` Pretty Copy, `Shift+Enter` Raw Copy, `v`/`ㅍ` 보기,
-  `f`/`ㄹ` 최종, `z`/`ㅋ` 확대
+  `z`/`ㅋ` 확대
 - `Esc`: 창·확대 닫기 또는 실행 취소
 
 Picker가 열려 있을 때 `Backspace`는 Search 검색어만 편집합니다. 전역 `Ctrl+p`/`Ctrl+ㅔ`
