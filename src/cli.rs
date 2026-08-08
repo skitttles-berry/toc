@@ -122,7 +122,7 @@ pub fn run_transform(
                 enabled: true,
             }),
     );
-    let result = crate::pipeline::execute(input, &steps, crate::CLI_OUTPUT_LIMIT)
+    let result = crate::pipeline::execute_allow_binary(input, &steps, crate::CLI_OUTPUT_LIMIT)
         .map_err(AppError::Pipeline)?;
     write_result(stdout, stdout_is_terminal, &result)
 }

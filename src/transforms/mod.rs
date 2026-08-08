@@ -1,23 +1,14 @@
-#[allow(dead_code)] // Registered by Task 5.
 mod base32;
 mod base64;
-#[allow(dead_code)] // Registered by Task 5.
 mod base64url;
-#[allow(dead_code)] // Registered by Task 5.
 mod gzip;
-#[allow(dead_code)] // Registered by Task 5.
 mod hash;
 mod hex;
-#[allow(dead_code)] // Registered by Task 5.
 mod html;
-#[allow(dead_code)] // Registered by Task 5.
 mod ioc;
 mod json;
-#[allow(dead_code)] // Registered by Task 5.
 mod jwt;
-#[allow(dead_code)] // Registered by Task 5.
 mod lines;
-#[allow(dead_code)] // Registered by Task 5.
 mod rot13;
 mod url;
 
@@ -47,8 +38,8 @@ static TRANSFORMS: &[TransformDefinition] = &[
     TransformDefinition {
         id: "base64-decode",
         display_name: "Base64 Decode",
-        description: "Decode canonical padded Base64 into UTF-8 text",
-        behavior: "ignores ASCII whitespace, requires canonical padding, and returns only valid UTF-8",
+        description: "Decode canonical padded Base64 into bytes",
+        behavior: "ignores ASCII whitespace and requires canonical padding and trailing bits",
         accepts_binary: false,
         apply: base64::decode,
     },
@@ -63,8 +54,8 @@ static TRANSFORMS: &[TransformDefinition] = &[
     TransformDefinition {
         id: "url-decode",
         display_name: "URL Decode",
-        description: "Decode percent escapes into UTF-8 without changing plus signs",
-        behavior: "decodes %HH to UTF-8 and leaves plus signs unchanged",
+        description: "Decode percent escapes into bytes without changing plus signs",
+        behavior: "decodes %HH to bytes and leaves plus signs unchanged",
         accepts_binary: false,
         apply: url::decode,
     },
@@ -95,10 +86,138 @@ static TRANSFORMS: &[TransformDefinition] = &[
     TransformDefinition {
         id: "hex-decode",
         display_name: "Hex Decode",
-        description: "Decode hexadecimal text into UTF-8",
-        behavior: "ignores ASCII space, tab, CR, and LF; accepts mixed-case digits; returns only valid UTF-8",
+        description: "Decode hexadecimal text into bytes",
+        behavior: "ignores ASCII space, tab, CR, and LF and accepts mixed-case digits",
         accepts_binary: false,
         apply: hex::decode,
+    },
+    TransformDefinition {
+        id: "base64url-encode",
+        display_name: "Base64URL Encode",
+        description: "Encode bytes using unpadded RFC 4648 Base64URL",
+        behavior: "unpadded RFC 4648 URL-safe Base64 with no trailing newline",
+        accepts_binary: true,
+        apply: base64url::encode,
+    },
+    TransformDefinition {
+        id: "base64url-decode",
+        display_name: "Base64URL Decode",
+        description: "Decode canonical unpadded Base64URL into bytes",
+        behavior: "ignores ASCII space, tab, CR, and LF and rejects padding and noncanonical trailing bits",
+        accepts_binary: false,
+        apply: base64url::decode,
+    },
+    TransformDefinition {
+        id: "base32-encode",
+        display_name: "Base32 Encode",
+        description: "Encode bytes using padded RFC 4648 Base32",
+        behavior: "uppercase RFC 4648 Base32 with canonical = padding and no trailing newline",
+        accepts_binary: true,
+        apply: base32::encode,
+    },
+    TransformDefinition {
+        id: "base32-decode",
+        display_name: "Base32 Decode",
+        description: "Decode canonical padded Base32 into bytes",
+        behavior: "ignores ASCII space, tab, CR, and LF, accepts mixed-case letters, and requires canonical padding and trailing bits",
+        accepts_binary: false,
+        apply: base32::decode,
+    },
+    TransformDefinition {
+        id: "html-encode",
+        display_name: "HTML Encode",
+        description: "Escape HTML text-context ampersands and angle brackets",
+        behavior: "escapes only &, <, and > as named entities",
+        accepts_binary: false,
+        apply: html::encode,
+    },
+    TransformDefinition {
+        id: "html-decode",
+        display_name: "HTML Decode",
+        description: "Decode valid semicolon-terminated HTML entities",
+        behavior: "decodes exact named, decimal, and hexadecimal entities and leaves invalid references unchanged",
+        accepts_binary: false,
+        apply: html::decode,
+    },
+    TransformDefinition {
+        id: "rot13",
+        display_name: "ROT13",
+        description: "Rotate ASCII letters by 13 positions",
+        behavior: "changes only ASCII A-Z and a-z and preserves all other UTF-8",
+        accepts_binary: false,
+        apply: rot13::apply,
+    },
+    TransformDefinition {
+        id: "url-defang",
+        display_name: "URL Defang",
+        description: "Defang lowercase URL protocols and dots for IOC text",
+        behavior: "replaces lowercase http:// and https:// with hxxp[://] and hxxps[://], then replaces . with [.]",
+        accepts_binary: false,
+        apply: ioc::defang,
+    },
+    TransformDefinition {
+        id: "url-refang",
+        display_name: "URL Refang",
+        description: "Restore exact defanged URL protocols and dots",
+        behavior: "replaces exact hxxp[://], hxxps[://], and [.] markers with lowercase URL text",
+        accepts_binary: false,
+        apply: ioc::refang,
+    },
+    TransformDefinition {
+        id: "jwt-decode",
+        display_name: "JWT Decode",
+        description: "Decode a compact JWS without verifying its signature",
+        behavior: "requires three canonical Base64URL parts and strict JSON object header and payload, preserves the signature, and warns Signature not verified",
+        accepts_binary: false,
+        apply: jwt::decode,
+    },
+    TransformDefinition {
+        id: "sha256",
+        display_name: "SHA-256",
+        description: "Hash bytes with SHA-256 as lowercase hexadecimal",
+        behavior: "SHA-256 digest as 64 lowercase hexadecimal digits with no trailing newline",
+        accepts_binary: true,
+        apply: hash::sha256,
+    },
+    TransformDefinition {
+        id: "sha512",
+        display_name: "SHA-512",
+        description: "Hash bytes with SHA-512 as lowercase hexadecimal",
+        behavior: "SHA-512 digest as 128 lowercase hexadecimal digits with no trailing newline",
+        accepts_binary: true,
+        apply: hash::sha512,
+    },
+    TransformDefinition {
+        id: "gzip-compress",
+        display_name: "Gzip Compress",
+        description: "Compress bytes as a deterministic Gzip member",
+        behavior: "level 6 with mtime=0, OS=255, one member, and no optional header fields",
+        accepts_binary: true,
+        apply: gzip::compress,
+    },
+    TransformDefinition {
+        id: "gzip-decompress",
+        display_name: "Gzip Decompress",
+        description: "Decompress and validate Gzip members into bytes",
+        behavior: "consumes all concatenated members and validates headers, CRC and size, truncation, and trailing garbage",
+        accepts_binary: true,
+        apply: gzip::decompress,
+    },
+    TransformDefinition {
+        id: "sort-lines",
+        display_name: "Sort Lines",
+        description: "Sort UTF-8 lines by Unicode scalar order",
+        behavior: "recognizes LF and CRLF, normalizes separators to LF, preserves the terminal newline, and limits input to 1000000 logical lines",
+        accepts_binary: false,
+        apply: lines::sort,
+    },
+    TransformDefinition {
+        id: "remove-duplicate-lines",
+        display_name: "Remove Duplicate Lines",
+        description: "Remove duplicate UTF-8 lines while keeping first occurrences",
+        behavior: "matches exact LF-normalized lines in original order, preserves the terminal newline, and limits input to 1000000 logical lines",
+        accepts_binary: false,
+        apply: lines::remove_duplicates,
     },
 ];
 
@@ -123,13 +242,12 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_exact_public_ids_once_without_order_contract() {
+    fn registry_has_the_exact_public_ids_once_in_display_order() {
         let ids: Vec<_> = transforms().iter().map(|transform| transform.id).collect();
         let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
-        assert_eq!(ids.len(), 8);
         assert_eq!(
-            unique,
-            std::collections::HashSet::from([
+            ids,
+            [
                 "base64-encode",
                 "base64-decode",
                 "url-encode",
@@ -138,8 +256,25 @@ mod tests {
                 "minify-json",
                 "hex-encode",
                 "hex-decode",
-            ])
+                "base64url-encode",
+                "base64url-decode",
+                "base32-encode",
+                "base32-decode",
+                "html-encode",
+                "html-decode",
+                "rot13",
+                "url-defang",
+                "url-refang",
+                "jwt-decode",
+                "sha256",
+                "sha512",
+                "gzip-compress",
+                "gzip-decompress",
+                "sort-lines",
+                "remove-duplicate-lines",
+            ]
         );
+        assert_eq!(unique.len(), ids.len());
         assert!(!ids.contains(&"tui"));
         assert!(transforms().iter().all(|transform| {
             !transform.display_name.is_empty() && !transform.description.is_empty()

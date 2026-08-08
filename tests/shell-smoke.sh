@@ -218,7 +218,7 @@ tui_run() {
                 send -- "\033\[<0;27;7M"
                 expect_exact "> Base64 Decode" 160 161
                 stty rows 23 columns 120 < $replica
-                expect_exact "Decode canonical padded Base64 into UTF-8 text" 156 157
+                expect_exact "Decode canonical padded Base64 into bytes" 156 157
                 stty rows 24 columns 120 < $replica
                 expect_exact "Search:" 156 157
                 send -- "\033\[<0;40;20M"

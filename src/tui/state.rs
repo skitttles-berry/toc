@@ -1805,9 +1805,10 @@ mod tests {
                 KeyModifiers::NONE,
             ));
         }
+        let last = transforms().len() - 1;
         assert!(matches!(
             app.modal,
-            Some(Modal::TransformPicker { selected: 7, .. })
+            Some(Modal::TransformPicker { selected, .. }) if selected == last
         ));
 
         for _ in 0..32 {
@@ -1865,11 +1866,12 @@ mod tests {
         assert_eq!(app.steps[0].definition.id, app.steps[1].definition.id);
     }
     #[test]
-    fn picker_exposes_both_hex_transforms_from_the_shared_registry() {
+    fn picker_search_exposes_new_transforms_from_the_shared_registry() {
         let start = now();
         let mut app = App::new(start, true);
         app.open_picker();
-        for character in "hex".chars() {
+        assert_eq!(app.filtered_transforms().len(), 24);
+        for character in "GZIP".chars() {
             app.picker_insert(character);
         }
         let ids: Vec<_> = app
@@ -1878,19 +1880,14 @@ mod tests {
             .map(|transform| transform.id)
             .collect();
         assert_eq!(ids.len(), 2);
-        assert_eq!(
-            ids.iter()
-                .copied()
-                .collect::<std::collections::HashSet<_>>(),
-            std::collections::HashSet::from(["hex-encode", "hex-decode"])
-        );
+        assert_eq!(ids, ["gzip-compress", "gzip-decompress"]);
 
         app.open_picker();
-        for character in "hex-encode".chars() {
+        for character in "Remove Duplicate".chars() {
             app.picker_insert(character);
         }
         app.confirm_picker(start);
-        assert_eq!(app.steps[0].definition.id, "hex-encode");
+        assert_eq!(app.steps[0].definition.id, "remove-duplicate-lines");
     }
     #[test]
     fn input_keeps_all_pane_shortcut_characters_as_editor_input() {
@@ -2024,7 +2021,7 @@ mod tests {
         let start = now();
         let mut app = App::new(start, true);
         app.open_picker();
-        key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE, start);
         key(&mut app, KeyCode::Down, KeyModifiers::NONE, start);
         assert!(app.filtered_transforms().is_empty());
         assert!(matches!(

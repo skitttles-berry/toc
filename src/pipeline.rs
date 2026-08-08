@@ -213,13 +213,30 @@ pub fn execute(
     steps: &[TransformStep],
     output_limit: usize,
 ) -> Result<Vec<u8>, PipelineError> {
+    execute_with_policy(input, steps, output_limit, ExecutionPolicy::StrictText)
+}
+
+pub(crate) fn execute_allow_binary(
+    input: Vec<u8>,
+    steps: &[TransformStep],
+    output_limit: usize,
+) -> Result<Vec<u8>, PipelineError> {
+    execute_with_policy(input, steps, output_limit, ExecutionPolicy::AllowBinary)
+}
+
+fn execute_with_policy(
+    input: Vec<u8>,
+    steps: &[TransformStep],
+    output_limit: usize,
+    policy: ExecutionPolicy,
+) -> Result<Vec<u8>, PipelineError> {
     match execute_report(
         ExecutionRequest {
             request_id: 0,
             input,
             steps,
             output_limit,
-            policy: ExecutionPolicy::StrictText,
+            policy,
             target: ExecutionTarget::Final,
         },
         || false,

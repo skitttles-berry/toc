@@ -12,6 +12,9 @@
 cargo install --locked --path .
 ```
 
+v0.2.1 변환 확장에 직접 사용하는 고정 의존성은 `data-encoding 2.11.1`,
+`html-escape 0.2.15`, `sha2 0.11.0`, 순수 Rust 백엔드의 `flate2 1.1.9`입니다.
+
 ## CLI
 
 ```bash
@@ -20,15 +23,52 @@ toc base64-encode --input input.txt
 printf '%s' '%7B%22a%22%3A1%7D' | toc url-decode --then format-json
 printf '%s' '48 65 6c 6c 6f' | toc hex-decode
 printf 'hello' | toc hex-encode --then hex-decode
+printf '%s' '/wAb' | toc base64-decode > output.bin
+printf '%s' 'ff001b' | toc hex-decode --then base64-encode
 toc --list
 toc --help
 ```
 
-변환 명령은 `base64-encode`, `base64-decode`, `url-encode`,
-`url-decode`, `format-json`, `minify-json`, `hex-encode`,
-`hex-decode`입니다. `run`이나 `transform` 상위 명령 없이 변환 명령을
-직접 실행합니다. 파이프 입력과 `--input PATH` 중 정확히 하나만 사용해야
-합니다. 성공 결과에는 임의의 끝 줄바꿈을 추가하지 않습니다.
+변환 명령은 다음 고정 순서의 24개입니다. 바이트 입력 변환은 임의 바이트를 받고,
+텍스트 입력 변환은 UTF-8만 받습니다.
+
+| ID | 표시 이름 | 입력 | 고정 동작 |
+|---|---|---|---|
+| `base64-encode` | Base64 Encode | 바이트 | RFC 4648 정규 패딩 Base64 |
+| `base64-decode` | Base64 Decode | 텍스트 | 네 ASCII 공백을 무시하고 정규 패딩·후행 비트 검사 |
+| `url-encode` | URL Encode | 텍스트 | RFC 3986 구성 요소, 대문자 `%HH`, 공백은 `%20` |
+| `url-decode` | URL Decode | 텍스트 | `%HH`를 바이트로 복원하고 `+`는 유지 |
+| `format-json` | JSON Prettify | 텍스트 | 엄격 JSON, 두 칸 들여쓰기, 키·토큰 순서와 표기 보존 |
+| `minify-json` | JSON Minify | 텍스트 | 문자열 밖 구조 공백만 제거 |
+| `hex-encode` | Hex Encode | 바이트 | 접두사·구분자 없는 소문자 16진수 |
+| `hex-decode` | Hex Decode | 텍스트 | 네 ASCII 공백과 대소문자 숫자 허용 |
+| `base64url-encode` | Base64URL Encode | 바이트 | RFC 4648 URL 안전 알파벳, 무패딩 |
+| `base64url-decode` | Base64URL Decode | 텍스트 | 네 ASCII 공백만 무시하고 패딩·비정규 후행 비트 거부 |
+| `base32-encode` | Base32 Encode | 바이트 | RFC 4648 대문자 알파벳과 정규 패딩 |
+| `base32-decode` | Base32 Decode | 텍스트 | 대소문자와 네 ASCII 공백 허용, 정규 패딩·후행 비트 검사 |
+| `html-encode` | HTML Encode | 텍스트 | 텍스트 문맥의 `&`, `<`, `>`만 이스케이프 |
+| `html-decode` | HTML Decode | 텍스트 | 세미콜론이 있는 유효 이름·숫자 엔터티만 복원 |
+| `rot13` | ROT13 | 텍스트 | ASCII 영문자만 13자리 회전 |
+| `url-defang` | URL Defang | 텍스트 | 소문자 HTTP(S)와 점을 고정 IOC 표기로 변환 |
+| `url-refang` | URL Refang | 텍스트 | 정확한 고정 IOC 표기를 소문자 URL과 점으로 복원 |
+| `jwt-decode` | JWT Decode | 텍스트 | 세 부분 Compact JWS와 엄격 JSON 객체 검사, 서명 미검증 명시 |
+| `sha256` | SHA-256 | 바이트 | 64자리 소문자 16진수 SHA-256 |
+| `sha512` | SHA-512 | 바이트 | 128자리 소문자 16진수 SHA-512 |
+| `gzip-compress` | Gzip Compress | 바이트 | level 6, `mtime=0`, OS=255의 결정적 단일 멤버 |
+| `gzip-decompress` | Gzip Decompress | 바이트 | 모든 멤버·CRC·크기·절단·후행 쓰레기 검사 |
+| `sort-lines` | Sort Lines | 텍스트 | LF 정규화, 종단 개행 보존, Unicode 코드 포인트 정렬 |
+| `remove-duplicate-lines` | Remove Duplicate Lines | 텍스트 | LF 정규화 뒤 첫 정확 일치 줄 유지 |
+
+`run`이나 `transform` 상위 명령 없이 변환 명령을 직접 실행합니다. 파이프 입력과
+`--input PATH` 중 정확히 하나만 사용해야 하며, 성공 결과에는 임의의 끝 줄바꿈을
+추가하지 않습니다. CLI의 파이프·리디렉션 출력은 비 UTF-8과 제어 문자를 포함한 원시
+바이트를 그대로 기록합니다. 표준 출력이 실제 터미널이면 기존 출력 경계가 비 UTF-8과
+위험 제어 문자를 쓰기 전에 원자적으로 거부하고 리디렉션을 안내합니다. 공개
+`pipeline::execute`는 계속 각 단계의 비 UTF-8 결과를 거부하는 `StrictText` 계약입니다.
+
+Boop과 CyberChef는 변환 후보를 찾기 위한 기능 연구 자료로만 사용했습니다. 코드·명령
+문법·키맵·Recipe 호환 대상이 아닙니다. 변환별 옵션, 카테고리, Recipe, 유형화 Artifact,
+새 View, 설정형 키맵과 플러그인 체계는 v0.2.1 범위에 포함하지 않습니다.
 
 민감한 입력은 셸 인자에 직접 넣지 마십시오. 인자는 셸 기록과 프로세스
 목록에 남을 수 있습니다. 기록에 값이 남지 않는 대화형 파이프를 사용하거나,
@@ -164,6 +204,13 @@ test "$(pbpaste)" = ff
 ```
 
 ### 최신 로컬 검증 요약
+
+2026-08-08 `codex/toc-0.2.1-transform-expansion`에서 형식, 경고 금지 잠금 Clippy,
+전체 잠금 시험, rustdoc와 diff 검사를 실행했다. 전체 시험은 라이브러리 335개 통과·
+3개 무시, 실행 파일 0개, CLI 통합 17개 통과로 합계 352개 통과·3개 무시였고 실패는
+없었다. CLI 통합 시험은 파이프의 비 UTF-8·제어 바이트 직접 출력과 이진 중간 단계,
+정확한 24개 목록·도움말·`toc 0.2.1`을 확인했다. 실제 터미널 PTY 거부 검증은 후속
+Task 6 범위다.
 
 2026-08-07 `codex/tui-terminal-native`에서 형식, 경고 금지 잠금 Clippy,
 rustdoc, 작업 트리 잠금 패키징과 임시 경로 오프라인 잠금 설치를 실행했다.

@@ -317,7 +317,6 @@ pub fn format(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
     transform(input, output_limit, Mode::Pretty, false)
 }
 
-#[allow(dead_code)] // Used by Task 3's internal JWT decoder.
 pub(super) fn format_object(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
     transform(input, output_limit, Mode::Pretty, true)
 }

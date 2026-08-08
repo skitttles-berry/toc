@@ -1670,7 +1670,7 @@ mod tests {
             Some(Modal::TransformPicker { selected: 1, .. })
         ));
         let selected_screen = rendered_app(120, 24, &mut app);
-        assert!(selected_screen.contains("Decode canonical padded Base64 into UTF-8 text"));
+        assert!(selected_screen.contains("Decode canonical padded Base64 into bytes"));
         let add = app.mouse_regions.add_action.unwrap();
         assert!(matches!(
             click(&mut app, add, start).as_slice(),
@@ -1686,17 +1686,22 @@ mod tests {
         assert!(app.modal.is_none());
 
         app.open_picker();
+        let last = crate::transforms::transforms().len() - 1;
         if let Some(Modal::TransformPicker { selected, .. }) = &mut app.modal {
-            *selected = 7;
+            *selected = last;
         }
         rendered_app(120, 24, &mut app);
-        assert_eq!(app.mouse_regions.picker_rows.first().unwrap().1, 2);
-        assert_eq!(app.mouse_regions.picker_rows.last().unwrap().1, 7);
+        assert_eq!(last, 23);
+        assert_eq!(app.mouse_regions.picker_rows.last().unwrap().1, last);
+        assert_eq!(
+            app.mouse_regions.picker_rows.first().unwrap().1,
+            last + 1 - app.mouse_regions.picker_rows.len()
+        );
         let first_visible = app.mouse_regions.picker_rows.first().unwrap().0;
         assert!(click(&mut app, first_visible, start).is_empty());
         assert!(matches!(
             app.modal,
-            Some(Modal::TransformPicker { selected: 2, .. })
+            Some(Modal::TransformPicker { selected, .. }) if selected == last + 1 - app.mouse_regions.picker_rows.len()
         ));
     }
 
@@ -2640,7 +2645,7 @@ mod tests {
         app.focus = Pane::Output;
         app.output.view = ViewMode::Trace;
         app.output.status = OutputStatus::Ready;
-        app.output.traces = ["url-encode", "base64-decode"]
+        app.output.traces = ["url-encode", "remove-duplicate-lines"]
             .into_iter()
             .enumerate()
             .map(|(index, transform_id)| StepTrace {
@@ -2655,6 +2660,7 @@ mod tests {
             .collect();
 
         let screen = rendered_app(120, 20, &mut app);
+        assert!(screen.contains("Remove Duplicate Lines"));
         let header = screen
             .lines()
             .find(|line| line.contains("OPERATION"))
@@ -2663,7 +2669,7 @@ mod tests {
         let input = header.find("INPUT").unwrap();
         assert_eq!(
             header[operation..input].width(),
-            "Base64 Decode".width() + 1
+            "Remove Duplicate Lines".width() + 1
         );
     }
 

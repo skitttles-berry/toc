@@ -6,6 +6,10 @@
 **기준 커밋:** `c4ef3b2`
 **대체 범위:** 기존 TUI 설계의 색상, 현재 키 바인딩, Add Transform, Output 제목 계약
 
+> **2026-08-08 좁은 대체:** `docs/superpowers/specs/2026-08-08-toc-0.2.1-design.md`가
+> Pipeline `f`·`ㄹ`의 최종 결과 복원, Output `f`·`ㄹ` 무동작, Output 크기 접미사
+> `[N B]` 계약만 대체한다. 아래의 `· N B`와 Output `f` 설명은 당시 구현 기록이다.
+
 ## 1. 목적
 
 현재 TUI의 고정 Quiet Prism RGB 팔레트를 제거하고 사용자의 터미널 기본 전경·배경과

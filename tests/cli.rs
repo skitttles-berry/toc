@@ -15,6 +15,33 @@ fn run(args: &[&str], stdin: &[u8]) -> Output {
     child.wait_with_output().unwrap()
 }
 
+const TRANSFORM_IDS: &[&str] = &[
+    "base64-encode",
+    "base64-decode",
+    "url-encode",
+    "url-decode",
+    "format-json",
+    "minify-json",
+    "hex-encode",
+    "hex-decode",
+    "base64url-encode",
+    "base64url-decode",
+    "base32-encode",
+    "base32-decode",
+    "html-encode",
+    "html-decode",
+    "rot13",
+    "url-defang",
+    "url-refang",
+    "jwt-decode",
+    "sha256",
+    "sha512",
+    "gzip-compress",
+    "gzip-decompress",
+    "sort-lines",
+    "remove-duplicate-lines",
+];
+
 #[test]
 fn transforms_piped_input_without_final_newline() {
     let output = run(&["base64-encode"], b"hello");
@@ -34,6 +61,14 @@ fn chains_in_written_order() {
 }
 
 #[test]
+fn newly_registered_transforms_run_directly_and_in_then_chains() {
+    let output = run(&["rot13", "--then", "html-encode"], b"<N>");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, b"&lt;A&gt;");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn transform_error_writes_only_stderr_and_code_four() {
     let output = run(&["base64-decode"], b"!");
     assert_eq!(output.status.code(), Some(4));
@@ -42,45 +77,19 @@ fn transform_error_writes_only_stderr_and_code_four() {
 }
 
 #[test]
-fn decoders_report_the_same_bounded_invalid_utf8_details() {
-    let expected = format!(
-        "decoded bytes are not UTF-8 (hex prefix: {}; bytes omitted; total: 65 bytes)\n",
-        "ff".repeat(64)
-    );
-    let inputs = [
-        ("base64-decode", format!("{}//8=", "/".repeat(84))),
-        ("url-decode", "%FF".repeat(65)),
-        ("hex-decode", "ff".repeat(65)),
-    ];
-
-    for (transform, input) in inputs {
-        let output = run(&[transform], input.as_bytes());
-        assert_eq!(output.status.code(), Some(4), "{transform}");
-        assert!(output.stdout.is_empty(), "{transform}");
-        let stderr = String::from_utf8(output.stderr).unwrap();
-        assert_eq!(
-            stderr.strip_prefix(&format!("step 1 ({transform}) failed: ")),
-            Some(expected.as_str()),
-            "{transform}"
-        );
-    }
+fn piped_stdout_preserves_raw_non_utf8_and_control_bytes() {
+    let output = run(&["base64-decode"], b"/wAb");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, [0xff, 0x00, 0x1b]);
+    assert!(output.stderr.is_empty());
 }
 
 #[test]
-fn decoders_keep_non_utf8_output_as_pipeline_errors() {
-    for (transform, input) in [
-        ("base64-decode", &b"/w=="[..]),
-        ("url-decode", b"%FF"),
-        ("hex-decode", b"ff"),
-    ] {
-        let output = run(&[transform], input);
-        assert_eq!(output.status.code(), Some(4), "{transform}");
-        assert!(output.stdout.is_empty(), "{transform}");
-        assert_eq!(
-            String::from_utf8(output.stderr).unwrap(),
-            format!("step 1 ({transform}) failed: decoded bytes are not UTF-8 (hex prefix: ff)\n"),
-        );
-    }
+fn binary_intermediate_reaches_a_byte_accepting_next_step() {
+    let output = run(&["hex-decode", "--then", "base64-encode"], b"ff001b");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, b"/wAb");
+    assert!(output.stderr.is_empty());
 }
 
 #[test]
@@ -113,10 +122,10 @@ fn help_version_and_list_are_successful_english_output() {
 }
 
 #[test]
-fn version_reports_toc_v0_2_0() {
+fn version_reports_toc_v0_2_1() {
     let output = run(&["--version"], b"");
     assert_eq!(output.status.code(), Some(0));
-    assert_eq!(output.stdout, b"toc 0.2.0\n");
+    assert_eq!(output.stdout, b"toc 0.2.1\n");
     assert!(output.stderr.is_empty());
 }
 
@@ -204,32 +213,30 @@ fn hex_cli_handles_binary_input_whitespace_chains_and_atomic_errors() {
 }
 
 #[test]
-fn list_exposes_the_exact_eight_public_transform_ids() {
+fn list_exposes_the_exact_twenty_four_public_transform_ids_in_order() {
     let output = run(&["--list"], b"");
     assert_eq!(output.status.code(), Some(0));
     let list = std::str::from_utf8(&output.stdout).unwrap();
-    assert_eq!(
-        list.lines().count(),
-        8,
-        "--list must have eight rows even without a trailing newline"
-    );
-    let ids: std::collections::HashSet<_> = list
+    let ids: Vec<_> = list
         .lines()
         .map(|line| line.split('\t').next().unwrap())
         .collect();
-    assert_eq!(
-        ids,
-        std::collections::HashSet::from([
-            "base64-encode",
-            "base64-decode",
-            "url-encode",
-            "url-decode",
-            "format-json",
-            "minify-json",
-            "hex-encode",
-            "hex-decode",
-        ])
-    );
+    assert_eq!(ids, TRANSFORM_IDS);
+}
+
+#[test]
+fn root_help_exposes_each_public_transform_command_once() {
+    let output = run(&["--help"], b"");
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    let help = std::str::from_utf8(&output.stdout).unwrap();
+    let ids: Vec<_> = help
+        .lines()
+        .filter_map(|line| line.strip_prefix("  "))
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|id| TRANSFORM_IDS.contains(id))
+        .collect();
+    assert_eq!(ids, TRANSFORM_IDS);
 }
 
 #[test]
