@@ -3,6 +3,10 @@ mod base32;
 mod base64;
 #[allow(dead_code)] // Registered by Task 5.
 mod base64url;
+#[allow(dead_code)] // Registered by Task 5.
+mod gzip;
+#[allow(dead_code)] // Registered by Task 5.
+mod hash;
 mod hex;
 #[allow(dead_code)] // Registered by Task 5.
 mod html;
@@ -11,6 +15,8 @@ mod ioc;
 mod json;
 #[allow(dead_code)] // Registered by Task 5.
 mod jwt;
+#[allow(dead_code)] // Registered by Task 5.
+mod lines;
 #[allow(dead_code)] // Registered by Task 5.
 mod rot13;
 mod url;

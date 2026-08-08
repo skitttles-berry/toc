@@ -26,6 +26,10 @@ pub enum TransformError {
         kind: JsonErrorKind,
     },
     InvalidJwtPart,
+    InvalidGzip,
+    TooManyLines {
+        limit: usize,
+    },
     OutputTooLarge {
         limit: usize,
     },
@@ -191,6 +195,10 @@ fn render_transform_error(error: &TransformError) -> String {
             format!("{reason} at line {line}, column {column}")
         }
         TransformError::InvalidJwtPart => "invalid JWT part".to_string(),
+        TransformError::InvalidGzip => "invalid Gzip data".to_string(),
+        TransformError::TooManyLines { limit } => {
+            format!("input exceeds {limit} logical lines")
+        }
         TransformError::OutputTooLarge { limit } => {
             format!("transform output exceeds {limit} bytes")
         }
@@ -398,6 +406,30 @@ mod tests {
                 source: TransformError::InvalidJwtPart,
             }),
             "step 1 (jwt-decode) failed: invalid JWT part"
+        );
+    }
+
+    #[test]
+    fn renders_gzip_errors_without_input_content() {
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 1,
+                transform_id: "gzip-decompress",
+                source: TransformError::InvalidGzip,
+            }),
+            "step 1 (gzip-decompress) failed: invalid Gzip data"
+        );
+    }
+
+    #[test]
+    fn renders_line_limit_errors_without_input_content() {
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 1,
+                transform_id: "sort-lines",
+                source: TransformError::TooManyLines { limit: 1_000_000 },
+            }),
+            "step 1 (sort-lines) failed: input exceeds 1000000 logical lines"
         );
     }
 

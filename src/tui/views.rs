@@ -437,6 +437,10 @@ pub(super) fn render_transform_error_summary(error: &crate::error::TransformErro
             format!("{reason} at line {line}, column {column}")
         }
         TransformError::InvalidJwtPart => "invalid JWT part".to_string(),
+        TransformError::InvalidGzip => "invalid Gzip data".to_string(),
+        TransformError::TooManyLines { limit } => {
+            format!("input exceeds {limit} logical lines")
+        }
         TransformError::OutputTooLarge { limit } => format!("output exceeds {limit} bytes"),
     }
 }
@@ -475,6 +479,24 @@ mod tests {
                 position: None,
             }),
             "invalid Base32 padding"
+        );
+    }
+
+    #[test]
+    fn summarizes_gzip_errors_without_input_content() {
+        assert_eq!(
+            render_transform_error_summary(&crate::error::TransformError::InvalidGzip),
+            "invalid Gzip data"
+        );
+    }
+
+    #[test]
+    fn summarizes_line_limit_errors_without_input_content() {
+        assert_eq!(
+            render_transform_error_summary(&crate::error::TransformError::TooManyLines {
+                limit: 1_000_000,
+            }),
+            "input exceeds 1000000 logical lines"
         );
     }
 
