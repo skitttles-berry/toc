@@ -197,10 +197,28 @@ cargo install --locked --offline --path . --root "$install_root"
 "$install_root/bin/toc" --version
 bash tests/shell-smoke.sh
 zsh tests/shell-smoke.sh
+(
+set -eu
+toc_clipboard_root=$(mktemp -d "${TMPDIR:-/tmp}/toc-clipboard.XXXXXX")
+toc_clipboard_backup="$toc_clipboard_root/previous.txt"
+toc_clipboard_saved=false
+restore_toc_clipboard() {
+    toc_restore_status=0
+    if [ "$toc_clipboard_saved" = true ]; then
+        pbcopy <"$toc_clipboard_backup" || toc_restore_status=$?
+    fi
+    rm -f -- "$toc_clipboard_backup" || toc_restore_status=$?
+    rmdir -- "$toc_clipboard_root" || toc_restore_status=$?
+    return "$toc_restore_status"
+}
+trap restore_toc_clipboard EXIT
+pbpaste >"$toc_clipboard_backup"
+toc_clipboard_saved=true
 TOC_SMOKE_CLIPBOARD_MODE=macos bash tests/shell-smoke.sh
 test "$(pbpaste)" = ff
 TOC_SMOKE_CLIPBOARD_MODE=macos zsh tests/shell-smoke.sh
 test "$(pbpaste)" = ff
+)
 ```
 
 ### 최신 로컬 검증 요약
@@ -226,7 +244,7 @@ test "$(pbpaste)" = ff
 메타데이터 부재 경고를 냈지만 패키징은 성공했다. Bash·Zsh 기본 PTY는 실제 터미널의
 위험 출력 원자적 거부와 리디렉션 바이트 보존을 포함해 통과했다. 두 셸의
 `TOC_SMOKE_CLIPBOARD_MODE=macos` 경로와 별도 `pbpaste` 비교는 모두 알려진 소문자
-`ff`를 확인했으며, 이전 클립보드는 내용을 출력하지 않고 복원했다. 검증 환경은
+`ff`를 확인했으며, 이전 텍스트 클립보드는 내용을 출력하지 않고 복원했다. 검증 환경은
 Darwin이고 실행 가능한 X11·Wayland 세션이 없어 두 경로는 미검증이다.
 
 2026-08-07 `codex/tui-terminal-native`에서 형식, 경고 금지 잠금 Clippy,
