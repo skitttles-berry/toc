@@ -1,6 +1,16 @@
+#[allow(dead_code)] // Registered by Task 5.
+mod base32;
 mod base64;
+#[allow(dead_code)] // Registered by Task 5.
+mod base64url;
 mod hex;
+#[allow(dead_code)] // Registered by Task 5.
+mod html;
+#[allow(dead_code)] // Registered by Task 5.
+mod ioc;
 mod json;
+#[allow(dead_code)] // Registered by Task 5.
+mod rot13;
 mod url;
 
 use crate::error::TransformError;

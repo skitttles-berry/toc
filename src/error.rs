@@ -4,6 +4,9 @@ pub enum TransformError {
     InvalidBase64 {
         position: Option<usize>,
     },
+    InvalidBase32 {
+        position: Option<usize>,
+    },
     InvalidUrl {
         position: usize,
     },
@@ -150,6 +153,12 @@ fn render_transform_error(error: &TransformError) -> String {
             format!("invalid Base64 at byte {position}")
         }
         TransformError::InvalidBase64 { position: None } => "invalid Base64 padding".to_string(),
+        TransformError::InvalidBase32 {
+            position: Some(position),
+        } => {
+            format!("invalid Base32 at byte {position}")
+        }
+        TransformError::InvalidBase32 { position: None } => "invalid Base32 padding".to_string(),
         TransformError::InvalidUrl { position } => {
             format!("invalid percent escape at byte {position}")
         }
@@ -355,6 +364,26 @@ mod tests {
                 source: TransformError::OddHexDigitCount { digits: 3 },
             }),
             "step 1 (hex-decode) failed: hex input has an odd number of digits: 3"
+        );
+    }
+
+    #[test]
+    fn renders_base32_errors_without_input_content() {
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 1,
+                transform_id: "base32-decode",
+                source: TransformError::InvalidBase32 { position: Some(7) },
+            }),
+            "step 1 (base32-decode) failed: invalid Base32 at byte 7"
+        );
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 1,
+                transform_id: "base32-decode",
+                source: TransformError::InvalidBase32 { position: None },
+            }),
+            "step 1 (base32-decode) failed: invalid Base32 padding"
         );
     }
 

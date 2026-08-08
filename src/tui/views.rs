@@ -409,6 +409,12 @@ pub(super) fn render_transform_error_summary(error: &crate::error::TransformErro
             format!("invalid Base64 at byte {position}")
         }
         TransformError::InvalidBase64 { position: None } => "invalid Base64 padding".to_string(),
+        TransformError::InvalidBase32 {
+            position: Some(position),
+        } => {
+            format!("invalid Base32 at byte {position}")
+        }
+        TransformError::InvalidBase32 { position: None } => "invalid Base32 padding".to_string(),
         TransformError::InvalidUrl { position } => {
             format!("invalid percent escape at byte {position}")
         }
@@ -454,6 +460,22 @@ pub(super) fn render_pipeline_error_summary(error: &crate::error::PipelineError)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summarizes_base32_errors_without_input_content() {
+        assert_eq!(
+            render_transform_error_summary(&crate::error::TransformError::InvalidBase32 {
+                position: Some(7),
+            }),
+            "invalid Base32 at byte 7"
+        );
+        assert_eq!(
+            render_transform_error_summary(&crate::error::TransformError::InvalidBase32 {
+                position: None,
+            }),
+            "invalid Base32 padding"
+        );
+    }
 
     #[test]
     fn smart_uses_trace_for_failure_text_for_utf8_and_hex_for_binary() {
