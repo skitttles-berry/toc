@@ -63,6 +63,8 @@ TUI는 원본을 덮어쓰지 않습니다. Pipeline에서 선택 단계를 실�
 | Pipeline | `↑`/`↓` 선택, `Shift+↑`/`Shift+↓` 이동, `Space` 전환, `Backspace` 삭제, `Enter` 검사, `s` 선택 단계 실행, `f` 최종 결과 복원, `z` 확대 |
 | Output | `Enter` Pretty Copy, `Shift+Enter` Raw Copy, `v` 보기 전환, `z` 확대 |
 
+`Shift+Enter`를 구분하지 못하는 터미널에서는 Raw Copy가 제한될 수 있습니다.
+
 터미널 테마를 따르고, 창 크기에 맞춰 배치를 조정합니다. 키보드와 마우스로 조작할 수 있습니다.
 
 ## 안전 경계
