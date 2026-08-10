@@ -19,7 +19,7 @@ printf '%s' '%7B%22name%22%3A%22toc%22%7D' | toc url-decode --then format-json
 
 ## 설치
 
-Rust 1.97.1 환경에서 저장소 루트에서 실행합니다.
+Rust 1.97.1 환경의 저장소 루트에서 실행합니다.
 
 ```bash
 cargo install --locked --path .
