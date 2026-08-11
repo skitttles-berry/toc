@@ -45,24 +45,64 @@ CLI에서는 표준 입력 또는 `--input PATH` 중 하나로 입력을 전달�
 
 ## TUI 사용법
 
+TUI는 원본을 덮어쓰지 않습니다. Input에서 시작해 Pipeline으로 변환을 연결하고 Output에서 결과를 확인합니다.
+
+### 화면 구성
+
+다음은 세 패널의 관계를 보여주는 개념 예시입니다.
+
 ```text
-INPUT → PIPELINE → OUTPUT [SMART | TEXT | HEX | TRACE]
+>_ TOC
+
+┌ PIPELINE ────────────────────┐  ┌ INPUT ──────────────────────┐
+│ > 01 Base64 Encode    5→8 B │  │ hello                       │
+│   02 SHA-256         8→64 B │  └─────────────────────────────┘
+└─────────────────────────────┘  ┌ OUTPUT [SMART] [64 B] ──────┐
+                                  │ 333d6b3a3c1f…               │
+                                  └─────────────────────────────┘
 ```
 
-TUI는 원본을 덮어쓰지 않습니다. Input에 원문을 넣고 Pipeline에 변환을 추가한 뒤 Output에서 결과를 확인합니다.
+터미널 크기에 따라 실제 배치는 달라질 수 있습니다.
 
-```text
-1. Input에 원문 입력
-2. Ctrl+p로 변환 추가
-3. Pipeline에서 단계 선택·전환·실행
-4. Output에서 View 전환·확대·복사
-```
+### 4단계로 시작
 
-| 구역 | 핵심 키 |
+| 단계 | 작업 | 방법 |
+|---:|---|---|
+| 1 | 입력 | Input에 원문 작성 |
+| 2 | 추가 | <kbd>Ctrl</kbd> + <kbd>p</kbd>로 변환 선택 |
+| 3 | 실행 | <kbd>s</kbd>로 선택 단계 실행 |
+| 4 | 확인 | Output에서 결과 확인 |
+
+### Output View
+
+| View | 용도 |
 |---|---|
-| 전역 | `Tab`/`Shift+Tab` 패널 이동, `Ctrl+p` 변환 추가, `F1` 도움말, `Ctrl+q` 정상 종료, `Esc` 창·확대 닫기 또는 실행 취소 |
-| Pipeline | `↑`/`↓` 선택, `Shift+↑`/`Shift+↓` 이동, `Space` 전환, `Backspace` 삭제, `Enter` 검사, `s` 선택 단계 실행, `f` 최종 결과 복원, `z` 확대 |
-| Output | `Enter` Pretty Copy, `Shift+Enter` Raw Copy, `v` 보기 전환, `z` 확대 |
+| `SMART` | 결과 형식에 알맞은 View 자동 선택 |
+| `TEXT` | UTF-8 텍스트 확인 |
+| `HEX` | 바이트를 Offset·Hex·ASCII 열로 확인 |
+| `TRACE` | Pipeline 단계별 상태와 안전한 실패 요약 확인 |
+
+### 키 한눈에 보기
+
+| 구역 | 키 | 동작 |
+|---|---|---|
+| 전역 | <kbd>Tab</kbd><br><kbd>Shift</kbd> + <kbd>Tab</kbd> | 패널 이동 |
+|  | <kbd>Ctrl</kbd> + <kbd>p</kbd> | 변환 추가 |
+|  | <kbd>F1</kbd> | 도움말 |
+|  | <kbd>Ctrl</kbd> + <kbd>q</kbd> | 정상 종료 |
+|  | <kbd>Esc</kbd> | 창·확대 닫기 또는 실행 취소 |
+| Pipeline | <kbd>↑</kbd><br><kbd>↓</kbd> | 단계 선택 |
+|  | <kbd>Shift</kbd> + <kbd>↑</kbd><br><kbd>Shift</kbd> + <kbd>↓</kbd> | 단계 이동 |
+|  | <kbd>Space</kbd> | 단계 활성화 전환 |
+|  | <kbd>Backspace</kbd> | 단계 삭제 |
+|  | <kbd>Enter</kbd> | 단계 검사 |
+|  | <kbd>s</kbd> | 선택 단계 실행 |
+|  | <kbd>f</kbd> | 최종 결과 복원 |
+|  | <kbd>z</kbd> | Pipeline 확대 |
+| Output | <kbd>Enter</kbd> | Pretty Copy |
+|  | <kbd>Shift</kbd> + <kbd>Enter</kbd> | Raw Copy |
+|  | <kbd>v</kbd> | View 전환 |
+|  | <kbd>z</kbd> | Output 확대 |
 
 `Shift+Enter`를 구분하지 못하는 터미널에서는 Raw Copy가 제한될 수 있습니다.
 
