@@ -1800,7 +1800,12 @@ mod tests {
             Some(Modal::TransformPicker { selected, .. }) if selected == last
         ));
 
-        app.handle_event(mouse(MouseEventKind::ScrollDown, 11, 11, KeyModifiers::NONE));
+        app.handle_event(mouse(
+            MouseEventKind::ScrollDown,
+            11,
+            11,
+            KeyModifiers::NONE,
+        ));
         assert!(matches!(
             app.modal,
             Some(Modal::TransformPicker { selected: 0, .. })
