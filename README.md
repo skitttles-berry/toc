@@ -18,8 +18,6 @@ toc tui
 
 ## 자주 쓰는 방법
 
-CLI에서는 표준 입력 또는 `--input PATH` 중 하나로 입력을 전달합니다.
-
 ```bash
 # 문자열 Base64 인코딩
 printf '%s' 'hello' | toc base64-encode
@@ -43,7 +41,7 @@ toc gzip-compress --input input.txt > output.gz
 }
 ```
 
-성공한 결과에는 임의의 끝 줄바꿈을 더하지 않습니다. Binary 결과는 실제 터미널에 직접 쓰지 말고 파일로 리디렉션합니다.
+CLI에서는 표준 입력 또는 `--input PATH` 중 하나로 입력을 전달하며, 성공한 결과에는 임의의 끝 줄바꿈을 더하지 않습니다. Binary 결과는 실제 터미널에 직접 쓰지 말고 파일로 리디렉션합니다.
 
 ## TUI 사용법
 
