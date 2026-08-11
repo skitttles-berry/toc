@@ -942,7 +942,11 @@ impl App {
                     (KeyCode::Up, KeyModifiers::NONE) => {
                         let mut changed = false;
                         if let Some(Modal::TransformPicker { selected, .. }) = &mut self.modal {
-                            let next = selected.saturating_sub(1);
+                            let next = match filtered_len {
+                                0 => 0,
+                                _ if *selected == 0 => filtered_len - 1,
+                                _ => *selected - 1,
+                            };
                             changed = *selected != next;
                             *selected = next;
                         }
@@ -953,9 +957,11 @@ impl App {
                     (KeyCode::Down, KeyModifiers::NONE) => {
                         let mut changed = false;
                         if let Some(Modal::TransformPicker { selected, .. }) = &mut self.modal {
-                            let next = selected
-                                .saturating_add(1)
-                                .min(filtered_len.saturating_sub(1));
+                            let next = if filtered_len == 0 {
+                                0
+                            } else {
+                                (*selected).saturating_add(1) % filtered_len
+                            };
                             changed = *selected != next;
                             *selected = next;
                         }
@@ -1782,59 +1788,23 @@ mod tests {
     }
 
     #[test]
-    fn picker_wheel_moves_one_item_and_clamps() {
+    fn picker_wheel_wraps_at_both_ends() {
         let mut app = App::new(now(), true);
         app.open_picker();
         app.mouse_regions.picker_content = Some(Rect::new(10, 10, 20, 8));
-
-        app.handle_event(mouse(
-            MouseEventKind::ScrollDown,
-            11,
-            11,
-            KeyModifiers::NONE,
-        ));
-        assert!(matches!(
-            app.modal,
-            Some(Modal::TransformPicker { selected: 1, .. })
-        ));
-
-        for _ in 0..32 {
-            app.handle_event(mouse(
-                MouseEventKind::ScrollDown,
-                11,
-                11,
-                KeyModifiers::NONE,
-            ));
-        }
         let last = transforms().len() - 1;
+
+        app.handle_event(mouse(MouseEventKind::ScrollUp, 11, 11, KeyModifiers::NONE));
         assert!(matches!(
             app.modal,
             Some(Modal::TransformPicker { selected, .. }) if selected == last
         ));
 
-        for _ in 0..32 {
-            app.handle_event(mouse(MouseEventKind::ScrollUp, 11, 11, KeyModifiers::NONE));
-        }
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 11, 11, KeyModifiers::NONE));
         assert!(matches!(
             app.modal,
             Some(Modal::TransformPicker { selected: 0, .. })
         ));
-
-        if let Some(Modal::TransformPicker { query, .. }) = &mut app.modal {
-            *query = "no-such-transform".to_string();
-        }
-        app.take_dirty();
-        app.handle_event(mouse(
-            MouseEventKind::ScrollDown,
-            11,
-            11,
-            KeyModifiers::NONE,
-        ));
-        assert!(matches!(
-            app.modal,
-            Some(Modal::TransformPicker { selected: 0, .. })
-        ));
-        assert!(!app.take_dirty());
     }
 
     #[test]
@@ -2018,23 +1988,58 @@ mod tests {
         assert!(app.modal.is_none());
     }
     #[test]
-    fn picker_key_selection_clamps_and_backspace_edits_query() {
+    fn picker_key_selection_wraps_and_backspace_edits_query() {
         let start = now();
         let mut app = App::new(start, true);
         app.open_picker();
+        let last = transforms().len() - 1;
+
+        key(&mut app, KeyCode::Up, KeyModifiers::NONE, start);
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker { selected, .. }) if selected == last
+        ));
+        key(&mut app, KeyCode::Down, KeyModifiers::NONE, start);
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker { selected: 0, .. })
+        ));
+
         key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE, start);
+        app.take_dirty();
         key(&mut app, KeyCode::Down, KeyModifiers::NONE, start);
         assert!(app.filtered_transforms().is_empty());
         assert!(matches!(
             app.modal,
             Some(Modal::TransformPicker { selected: 0, .. })
         ));
+        assert!(!app.take_dirty());
 
         key(&mut app, KeyCode::Backspace, KeyModifiers::NONE, start);
-        key(&mut app, KeyCode::Up, KeyModifiers::NONE, start);
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
         assert_eq!(app.steps.len(), 1);
         assert_eq!(app.steps[0].definition.id, "base64-encode");
+    }
+
+    #[test]
+    fn picker_single_match_does_not_redraw_when_moving() {
+        let start = now();
+        let mut app = App::new(start, true);
+        app.open_picker();
+        for character in "sha512".chars() {
+            app.picker_insert(character);
+        }
+        assert_eq!(app.filtered_transforms().len(), 1);
+        app.take_dirty();
+
+        key(&mut app, KeyCode::Up, KeyModifiers::NONE, start);
+        key(&mut app, KeyCode::Down, KeyModifiers::NONE, start);
+
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker { selected: 0, .. })
+        ));
+        assert!(!app.take_dirty());
     }
     #[test]
     fn copy_modes_format_json_without_rewriting_tokens_or_string_spaces() {
