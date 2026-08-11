@@ -1007,11 +1007,12 @@ fn render_picker(
     );
 
     let filtered = app.filtered_transforms();
-    let detail = filtered.get(selected).map_or_else(
+    let selected_transform = filtered.get(selected).copied();
+    let detail = selected_transform.map_or_else(
         || "No matching transforms".to_string(),
         |transform| {
             if compact {
-                transform.description.to_string()
+                format!("{} — {}", transform.display_name, transform.description)
             } else {
                 format!(
                     "ID        {}\nABOUT     {}\nINPUT     {}\nBEHAVIOR  {}\nTUI       Result remains bytes; Smart selects Text or Hex",
@@ -1021,6 +1022,14 @@ fn render_picker(
                     transform.behavior,
                 )
             }
+        },
+    );
+    let detail_separator_text = selected_transform.map_or_else(
+        || separator(detail_separator.width),
+        |transform| {
+            let prefix = format!("──── {} ", transform.display_name);
+            let remaining = detail_separator.width.saturating_sub(prefix.width() as u16);
+            format!("{prefix}{}", separator(remaining))
         },
     );
     let available = (list_area.height as usize).max(1);
@@ -1061,7 +1070,7 @@ fn render_picker(
     frame.render_widget(List::new(items).style(Style::default()), list_area);
     if separator_rows > 0 {
         frame.render_widget(
-            Paragraph::new(separator(detail_separator.width)).style(muted_style()),
+            Paragraph::new(detail_separator_text).style(muted_style()),
             detail_separator,
         );
     }
@@ -2177,26 +2186,32 @@ mod tests {
 
     #[test]
     fn add_transform_uses_one_line_names_and_exact_detail_metadata() {
-        let mut app = App::new(now(), true);
-        app.open_picker();
+        for color_enabled in [true, false] {
+            let mut app = App::new(now(), color_enabled);
+            app.open_picker();
 
-        let screen = rendered_app(80, 20, &mut app);
-        let selected = screen
-            .lines()
-            .find(|line| line.contains("> Base64 Encode"))
-            .unwrap();
-        assert!(!selected.contains("[base64-encode]"));
-        assert!(!selected.contains("Encode bytes"));
-        for expected in [
-            "ID        base64-encode",
-            "ABOUT     Encode bytes using padded RFC 4648 Base64",
-            "INPUT     Bytes accepted",
-            "BEHAVIOR",
-            "TUI       Result remains bytes; Smart selects Text or Hex",
-        ] {
-            assert!(screen.contains(expected), "missing {expected}: {screen}");
+            let screen = rendered_app(80, 20, &mut app);
+            let selected = screen
+                .lines()
+                .find(|line| line.contains("> Base64 Encode"))
+                .unwrap();
+            assert!(!selected.contains("[base64-encode]"));
+            assert!(!selected.contains("Encode bytes"));
+            assert!(
+                screen.contains("──── Base64 Encode ─"),
+                "missing detail title: {screen}"
+            );
+            for expected in [
+                "ID        base64-encode",
+                "ABOUT     Encode bytes using padded RFC 4648 Base64",
+                "INPUT     Bytes accepted",
+                "BEHAVIOR",
+                "TUI       Result remains bytes; Smart selects Text or Hex",
+            ] {
+                assert!(screen.contains(expected), "missing {expected}: {screen}");
+            }
+            assert!(!screen.contains("Backspace Search"));
         }
-        assert!(!screen.contains("Backspace Search"));
     }
 
     #[test]
@@ -2340,6 +2355,10 @@ mod tests {
         assert!(!selected.contains("Encode bytes"));
         assert!(!lines.next().unwrap().contains("Encode bytes"));
         assert!(screen.contains("Encode bytes"));
+        assert!(
+            screen.contains("Base64 Encode — Encode bytes"),
+            "missing compact name and description: {screen}"
+        );
         assert!(screen.contains("Enter Add"));
         assert!(screen.contains("Esc Cancel"));
         assert!(!screen.contains("Backspace Search"));
