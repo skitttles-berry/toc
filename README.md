@@ -16,6 +16,10 @@ printf '%s' '%7B%22name%22%3A%22toc%22%7D' | toc url-decode --then format-json
 toc tui
 ```
 
+## TUI 실행 화면
+
+[![toc TUI 실행 녹화](https://asciinema.org/a/tqmZAslTwfglLSfj.svg)](https://asciinema.org/a/tqmZAslTwfglLSfj)
+
 ## 자주 쓰는 방법
 
 ```bash

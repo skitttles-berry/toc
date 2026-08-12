@@ -66,11 +66,12 @@ rtk bat --plain --color=never --line-range 1:1 docs/asciinema/toc-tui.cast
 rtk rg --color=never -F 'Base64 Encode' docs/asciinema/toc-tui.cast
 rtk rg --color=never -F 'SHA-256' docs/asciinema/toc-tui.cast
 rtk rg --color=never -F 'TRACE' docs/asciinema/toc-tui.cast
-rtk rg --color=never -e '\\u001b\\[(32|36|38;5;(10|14))m' docs/asciinema/toc-tui.cast
+rtk rg --color=never -F '\u001b[38;5;6;49m' docs/asciinema/toc-tui.cast
+rtk rg --color=never -F '\u001b[38;5;2;49m' docs/asciinema/toc-tui.cast
 rtk rg --color=never -F '"o", "exit' docs/asciinema/toc-tui.cast
 ```
 
-Expected: playback, header read, and the first four searches exit 0; the final `exit` search prints
+Expected: playback, header read, and the first five searches exit 0; the final `exit` search prints
 nothing and exits 1. The header reports 120×30 and `xterm-256color`. Search the raw cast because
 asciinema's plain-text converter intentionally omits alternate-screen TUI frames.
 
