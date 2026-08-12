@@ -18,35 +18,25 @@ printf '%s' '%7B%22name%22%3A%22toc%22%7D' | toc url-decode --then format-json
 toc tui
 ```
 
-## TUI 실행 화면
-
-미리보기를 누르면 녹화 당시의 터미널 색상으로 TUI 사용 흐름을 재생합니다.
-
-[![toc TUI 실행 녹화](https://asciinema.org/a/tqmZAslTwfglLSfj.svg)](https://asciinema.org/a/tqmZAslTwfglLSfj)
-
 ## CLI 사용법
 
-```bash
+```console
 # 문자열 Base64 인코딩
-printf '%s' 'hello' | toc base64-encode
+$ printf '%s' 'hello' | toc base64-encode
+aGVsbG8=
 
 # URL Decode 후 JSON 정리
-printf '%s' '%7B%22name%22%3A%22toc%22%7D' \
+$ printf '%s' '%7B%22name%22%3A%22toc%22%7D' \
   | toc url-decode --then format-json
-
-# 파일의 JSON 정리
-toc format-json --input input.json
-
-# Binary Gzip 결과 저장
-toc gzip-compress --input input.txt > output.gz
-```
-
-첫 번째 명령은 `aGVsbG8=`을 출력합니다. 두 번째 명령은 URL Decode와 JSON 정리를 차례로 실행해 다음 결과를 만듭니다.
-
-```json
 {
   "name": "toc"
 }
+
+# 파일의 JSON 정리
+$ toc format-json --input input.json
+
+# Binary Gzip 결과 저장
+$ toc gzip-compress --input input.txt > output.gz
 ```
 
 CLI는 표준 입력이나 `--input PATH`로 입력을 받습니다. 성공 결과 끝에는 줄바꿈을 임의로 붙이지 않습니다. Binary 결과는 터미널에 직접 쓰지 말고 파일로 리디렉션합니다.
@@ -55,22 +45,9 @@ CLI는 표준 입력이나 `--input PATH`로 입력을 받습니다. 성공 결�
 
 TUI는 입력 원문을 유지한 채 변환 단계를 만들고 결과를 확인하는 비파괴 작업판입니다. Input에 원문을 입력하고 Pipeline에 변환을 추가한 뒤 Output에서 결과를 확인합니다.
 
-### 화면 구성
+### 실행 화면
 
-Input, Pipeline, Output은 다음과 같이 연결됩니다.
-
-```text
->_ TOC
-
-┌ PIPELINE ────────────────────┐  ┌ INPUT ──────────────────────┐
-│ > 01 Base64 Encode    5→8 B │  │ hello                       │
-│   02 SHA-256         8→64 B │  └─────────────────────────────┘
-└─────────────────────────────┘  ┌ OUTPUT [SMART] [64 B] ──────┐
-                                  │ 333d6b3a3c1f…               │
-                                  └─────────────────────────────┘
-```
-
-실제 배치는 터미널 크기에 따라 달라질 수 있습니다.
+[![toc TUI 실행 녹화](https://asciinema.org/a/tqmZAslTwfglLSfj.svg)](https://asciinema.org/a/tqmZAslTwfglLSfj)
 
 ### 4단계로 시작
 
