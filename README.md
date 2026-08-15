@@ -1,15 +1,13 @@
 <div align="center">
   <h1>toc</h1>
   <p><strong>TUI Object Converter</strong></p>
-  <p>텍스트와 바이트를 외부로 보내지 않고 변환하는 CLI·TUI 도구입니다.</p>
-  <p><code>CLI</code> · <code>TUI</code> · <code>Local-only</code> · <code>24 transforms</code></p>
+  <p>텍스트와 바이트를 여러가지 포맷으로 변환하는 TUI·CLI 도구입니다.</p>
+  <p><code>TUI</code> · <code>CLI</code> · <code>Local-only</code> · <code>24 transforms</code></p>
 </div>
 
-여러 변환은 Pipeline으로 연결해 한 번에 실행할 수 있습니다.
+## 30초 만에 시작
 
-## 30초 시작
-
-저장소 루트에서 설치한 뒤 CLI 명령을 실행하거나 TUI를 엽니다.
+저장소 루트에서 설치한 뒤 TUI를 열거나 CLI 명령을 실행하세요.
 
 ```bash
 cargo install --locked --path .
@@ -18,32 +16,9 @@ printf '%s' '%7B%22name%22%3A%22toc%22%7D' | toc url-decode --then format-json
 toc tui
 ```
 
-## CLI 사용법
-
-```console
-# 문자열 Base64 인코딩
-$ printf '%s' 'hello' | toc base64-encode
-aGVsbG8=
-
-# URL Decode 후 JSON 정리
-$ printf '%s' '%7B%22name%22%3A%22toc%22%7D' \
-  | toc url-decode --then format-json
-{
-  "name": "toc"
-}
-
-# 파일의 JSON 정리
-$ toc format-json --input input.json
-
-# Binary Gzip 결과 저장
-$ toc gzip-compress --input input.txt > output.gz
-```
-
-CLI는 표준 입력이나 `--input PATH`로 입력을 받습니다. 성공 결과 끝에는 줄바꿈을 임의로 붙이지 않습니다. Binary 결과는 터미널에 직접 쓰지 말고 파일로 리디렉션합니다.
-
 ## TUI 사용법
 
-TUI는 입력 원문을 유지한 채 변환 단계를 만들고 결과를 확인하는 비파괴 작업판입니다. Input에 원문을 입력하고 Pipeline에 변환을 추가한 뒤 Output에서 결과를 확인합니다.
+TUI는 화면 상에서 입력 원문을 유지한 채 변환 단계를 만들고 결과를 확인할 수 있습니다. Input에 원문을 입력하고 Pipeline에 변환을 추가한 뒤 Output에서 결과를 확인하세요.
 
 ### 실행 화면
 
@@ -91,16 +66,42 @@ TUI는 입력 원문을 유지한 채 변환 단계를 만들고 결과를 확�
 
 `Shift+Enter`를 구분하지 못하는 터미널에서는 Raw Copy가 제한될 수 있습니다.
 
+## CLI 사용법
+
+```console
+# 문자열 Base64 인코딩
+$ printf '%s' 'hello' | toc base64-encode
+aGVsbG8=
+
+# URL Decode 후 JSON 정리
+$ printf '%s' '%7B%22name%22%3A%22toc%22%7D' \
+  | toc url-decode --then format-json
+{
+  "name": "toc"
+}
+
+# 파일의 JSON 정리
+$ toc format-json --input input.json
+
+# Binary Gzip 결과 저장
+$ toc gzip-compress --input input.txt > output.gz
+```
+
+- CLI는 표준 입력이나 `--input PATH`로 입력을 받습니다.
+- 성공 결과 끝에는 줄바꿈을 임의로 붙이지 않습니다.
+- Binary 결과는 터미널에 직접 쓰지 말고 파일로 리디렉션합니다.
+
 ## 지원 변환
 
 | 기능군 | 변환 ID |
 |---|---|
-| 인코딩 | `base64-encode`, `base64-decode`, `base64url-encode`, `base64url-decode`, `base32-encode`, `base32-decode`, `url-encode`, `url-decode`, `hex-encode`, `hex-decode`, `html-encode`, `html-decode` |
-| 데이터·텍스트 | `format-json`, `minify-json`, `rot13`, `sort-lines`, `remove-duplicate-lines` |
-| 보안 분석 | `url-defang`, `url-refang`, `jwt-decode` |
-| 해시·압축 | `sha256`, `sha512`, `gzip-compress`, `gzip-decompress` |
+| 인코딩 | `base64-encode`,<br>`base64-decode`,<br>`base64url-encode`,<br>`base64url-decode`,<br>`base32-encode`,<br>`base32-decode`,<br>`url-encode`,<br>`url-decode`,<br>`hex-encode`,<br>`hex-decode`,<br>`html-encode`,<br>`html-decode` |
+| 데이터·텍스트 | `format-json`,<br>`minify-json`,<br>`rot13`,<br>`sort-lines`,<br>`remove-duplicate-lines` |
+| 보안 분석 | `url-defang`,<br>`url-refang`,<br>`jwt-decode` |
+| 해시·압축 | `sha256`,<br>`sha512`,<br>`gzip-compress`,<br>`gzip-decompress` |
 
-Base64URL 인코딩은 패딩을 붙이지 않으며 `url-decode`는 `+`를 그대로 둡니다. `jwt-decode`는 서명을 검증하지 않습니다. Gzip 압축은 같은 입력에 항상 같은 결과를 만듭니다.
+- Base64URL 인코딩은 패딩을 붙이지 않으며 `url-decode`는 `+`를 그대로 둡니다.
+- `jwt-decode`는 서명을 검증하지 않습니다. Gzip 압축은 같은 입력에 항상 같은 결과를 만듭니다.
 
 ## 한도
 
@@ -113,4 +114,4 @@ Base64URL 인코딩은 패딩을 붙이지 않으며 `url-decode`는 `+`를 그�
 
 ## 라이선스
 
-[MIT](LICENSE-MIT)
+[MIT](LICENSE)
