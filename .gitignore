@@ -1,7 +1,87 @@
+# Rust build artifacts
 /target/
-# CocoIndex Code (ccc)
+
+# Operating system, editor, and temporary files
+.DS_Store
+Thumbs.db
+/.idea/
+/.vscode/
+*.bak
+*.log
+*.swp
+*.swo
+*.temp
+*.tmp
+*~
+
+# Local AI and development tool state
+/.aider*
+/.claude/
 /.cocoindex_code/
-# Superpowers visual brainstorming
-/.superpowers/brainstorm/
-# Superpowers isolated worktrees
+/.codex/
+/.continue/
+/.cursor/
+/.gemini/
+/.opencode/
+/.roo/
+/.serena/
+/.superpowers/
+/.windsurf/
 /.worktrees/
+/_workspace/
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/.github/copilot-instructions.md
+/.github/instructions/
+/.github/prompts/
+/docs/prd/
+/docs/superpowers/
+/docs/test-reports/
+
+# Environment variables and local secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+.envrc
+/.direnv/
+
+# Credentials, private keys, and local identity stores
+auth.json
+credentials.json
+credentials.yaml
+credentials.yml
+secrets.json
+secrets.toml
+secrets.yaml
+secrets.yml
+service-account*.json
+*.jks
+*.kdbx
+*.key
+*.keystore
+*.p12
+*.pem
+*.pfx
+id_ed25519
+id_ed25519.*
+id_rsa
+id_rsa.*
+/.aws/
+/.azure/
+/.cargo/credentials
+/.cargo/credentials.toml
+/.config/gcloud/
+/.config/gh/
+/.docker/config.json
+/.git-credentials
+/.kube/
+/.netrc
+/.npmrc
+/.pypirc
+/.ssh/
+/.terraform/
+*.tfstate
+*.tfstate.*
