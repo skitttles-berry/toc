@@ -30,6 +30,7 @@ pub enum TransformError {
     },
     InvalidJwtPart,
     InvalidGzip,
+    InvalidZlib,
     TooManyLines {
         limit: usize,
     },
@@ -204,6 +205,7 @@ fn render_transform_error(error: &TransformError) -> String {
         }
         TransformError::InvalidJwtPart => "invalid JWT part".to_string(),
         TransformError::InvalidGzip => "invalid Gzip data".to_string(),
+        TransformError::InvalidZlib => "invalid zlib data".to_string(),
         TransformError::TooManyLines { limit } => {
             format!("input exceeds {limit} logical lines")
         }
@@ -454,6 +456,18 @@ mod tests {
                 source: TransformError::InvalidGzip,
             }),
             "step 1 (gzip-decompress) failed: invalid Gzip data"
+        );
+    }
+
+    #[test]
+    fn renders_zlib_errors_without_input_content() {
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 3,
+                transform_id: "zlib-decompress",
+                source: TransformError::InvalidZlib,
+            }),
+            "step 3 (zlib-decompress) failed: invalid zlib data"
         );
     }
 

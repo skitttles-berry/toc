@@ -1,7 +1,7 @@
 mod base32;
 mod base64;
 mod base64url;
-mod gzip;
+mod compression;
 mod hash;
 mod hex;
 mod html;
@@ -197,7 +197,7 @@ static TRANSFORMS: &[TransformDefinition] = &[
         description: "Compress bytes as a deterministic Gzip member",
         behavior: "level 6 with mtime=0, OS=255, one member, and no optional header fields",
         accepts_binary: true,
-        apply: gzip::compress,
+        apply: compression::compress,
     },
     TransformDefinition {
         id: "gzip-decompress",
@@ -205,7 +205,7 @@ static TRANSFORMS: &[TransformDefinition] = &[
         description: "Decompress and validate Gzip members into bytes",
         behavior: "consumes all concatenated members and validates headers, CRC and size, truncation, and trailing garbage",
         accepts_binary: true,
-        apply: gzip::decompress,
+        apply: compression::decompress,
     },
     TransformDefinition {
         id: "sort-lines",

@@ -442,6 +442,7 @@ pub(super) fn render_transform_error_summary(error: &crate::error::TransformErro
         }
         TransformError::InvalidJwtPart => "invalid JWT part".to_string(),
         TransformError::InvalidGzip => "invalid Gzip data".to_string(),
+        TransformError::InvalidZlib => "invalid zlib data".to_string(),
         TransformError::TooManyLines { limit } => {
             format!("input exceeds {limit} logical lines")
         }
@@ -501,6 +502,14 @@ mod tests {
         assert_eq!(
             render_transform_error_summary(&crate::error::TransformError::InvalidGzip),
             "invalid Gzip data"
+        );
+    }
+
+    #[test]
+    fn summarizes_zlib_errors_without_input_content() {
+        assert_eq!(
+            render_transform_error_summary(&crate::error::TransformError::InvalidZlib),
+            "invalid zlib data"
         );
     }
 
