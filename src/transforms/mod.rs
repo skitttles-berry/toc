@@ -6,6 +6,8 @@ mod hash;
 mod hex;
 mod html;
 mod ioc;
+#[allow(dead_code)] // Registered by the later transform-expansion task.
+mod ip;
 mod json;
 mod jwt;
 mod lines;

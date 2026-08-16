@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransformError {
     InvalidUtf8Input,
+    InvalidIpAddress,
     InvalidUtf16 {
         position: usize,
     },
@@ -157,6 +158,7 @@ pub(crate) fn invalid_utf8_output(bytes: &[u8]) -> TransformError {
 fn render_transform_error(error: &TransformError) -> String {
     match error {
         TransformError::InvalidUtf8Input => "input is not valid UTF-8".to_string(),
+        TransformError::InvalidIpAddress => "invalid IP address".to_string(),
         TransformError::InvalidUtf16 { position } => {
             format!("invalid UTF-16 at byte {position}")
         }
@@ -376,6 +378,18 @@ mod tests {
                 source: TransformError::InvalidUtf16 { position: 4 },
             }),
             "step 1 (utf16le-decode) failed: invalid UTF-16 at byte 4"
+        );
+    }
+
+    #[test]
+    fn renders_ip_errors_without_input_content() {
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 2,
+                transform_id: "normalize-ip",
+                source: TransformError::InvalidIpAddress,
+            }),
+            "step 2 (normalize-ip) failed: invalid IP address"
         );
     }
 

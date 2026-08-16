@@ -403,6 +403,7 @@ pub(super) fn render_transform_error_summary(error: &crate::error::TransformErro
 
     match error {
         TransformError::InvalidUtf8Input => "input is not valid UTF-8".to_string(),
+        TransformError::InvalidIpAddress => "invalid IP address".to_string(),
         TransformError::InvalidUtf16 { position } => {
             format!("invalid UTF-16 at byte {position}")
         }
@@ -478,6 +479,14 @@ mod tests {
                 position: 4,
             }),
             "invalid UTF-16 at byte 4"
+        );
+    }
+
+    #[test]
+    fn summarizes_ip_errors_without_input_content() {
+        assert_eq!(
+            render_transform_error_summary(&crate::error::TransformError::InvalidIpAddress),
+            "invalid IP address"
         );
     }
 
