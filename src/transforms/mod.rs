@@ -10,6 +10,8 @@ mod json;
 mod jwt;
 mod lines;
 mod rot13;
+#[allow(dead_code)] // Registered by the later transform-expansion task.
+mod text;
 mod url;
 
 use crate::error::TransformError;
