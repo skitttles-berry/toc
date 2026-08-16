@@ -1700,7 +1700,6 @@ mod tests {
             *selected = last;
         }
         rendered_app(120, 24, &mut app);
-        assert_eq!(last, 23);
         assert_eq!(app.mouse_regions.picker_rows.last().unwrap().1, last);
         assert_eq!(
             app.mouse_regions.picker_rows.first().unwrap().1,
@@ -2342,21 +2341,32 @@ mod tests {
     }
 
     #[test]
-    fn compact_add_transform_keeps_a_separate_selected_description() {
-        let mut app = App::new(now(), true);
+    fn compact_add_transform_keeps_a_new_transform_name_and_description() {
+        let start = now();
+        let mut app = App::new(start, true);
         app.open_picker();
+        for character in "json-string-encode".chars() {
+            key(
+                &mut app,
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+                start,
+            );
+        }
 
         let screen = rendered_app(40, 10, &mut app);
 
         assert!(screen.contains("Search:"));
         let mut lines = screen.lines();
-        let selected = lines.find(|line| line.contains("> Base64 Encode")).unwrap();
-        assert!(!selected.contains("[base64-encode]"));
-        assert!(!selected.contains("Encode bytes"));
-        assert!(!lines.next().unwrap().contains("Encode bytes"));
-        assert!(screen.contains("Encode bytes"));
+        let selected = lines
+            .find(|line| line.contains("> JSON String Encode"))
+            .unwrap();
+        assert!(!selected.contains("[json-string-encode]"));
+        assert!(!selected.contains("Encode UTF-8"));
+        assert!(!lines.next().unwrap().contains("Encode UTF-8"));
+        assert!(screen.contains("Encode UTF-8"));
         assert!(
-            screen.contains("Base64 Encode — Encode bytes"),
+            screen.contains("JSON String Encode — Encode UTF-8"),
             "missing compact name and description: {screen}"
         );
         assert!(screen.contains("Enter Add"));

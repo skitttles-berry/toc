@@ -1830,7 +1830,12 @@ mod tests {
                 .iter()
                 .map(|transform| transform.id)
                 .collect::<Vec<_>>(),
-            ["format-json", "minify-json"]
+            [
+                "format-json",
+                "minify-json",
+                "json-string-encode",
+                "json-string-decode",
+            ]
         );
         app.confirm_picker(start);
         app.open_picker();
@@ -1846,8 +1851,8 @@ mod tests {
         let start = now();
         let mut app = App::new(start, true);
         app.open_picker();
-        assert_eq!(app.filtered_transforms().len(), 24);
-        for character in "GZIP".chars() {
+        assert_eq!(app.filtered_transforms().len(), 36);
+        for character in "UTF-16".chars() {
             app.picker_insert(character);
         }
         let ids: Vec<_> = app
@@ -1855,15 +1860,22 @@ mod tests {
             .iter()
             .map(|transform| transform.id)
             .collect();
-        assert_eq!(ids.len(), 2);
-        assert_eq!(ids, ["gzip-compress", "gzip-decompress"]);
+        assert_eq!(
+            ids,
+            [
+                "utf16le-encode",
+                "utf16le-decode",
+                "utf16be-encode",
+                "utf16be-decode",
+            ]
+        );
 
         app.open_picker();
-        for character in "Remove Duplicate".chars() {
+        for character in "Normalize IP".chars() {
             app.picker_insert(character);
         }
         app.confirm_picker(start);
-        assert_eq!(app.steps[0].definition.id, "remove-duplicate-lines");
+        assert_eq!(app.steps[0].definition.id, "normalize-ip");
     }
     #[test]
     fn input_keeps_all_pane_shortcut_characters_as_editor_input() {

@@ -80,7 +80,6 @@ pub(super) fn decompress(input: &[u8], output_limit: usize) -> Result<Vec<u8>, T
     }
 }
 
-#[allow(dead_code)] // Registered by the later transform-expansion task.
 pub(super) fn zlib_compress(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
     let writer = LimitedWriter::new(output_limit);
     let mut encoder = ZlibEncoder::new(writer, Compression::new(6));
@@ -97,7 +96,6 @@ pub(super) fn zlib_compress(input: &[u8], output_limit: usize) -> Result<Vec<u8>
         })
 }
 
-#[allow(dead_code)] // Registered by the later transform-expansion task.
 pub(super) fn zlib_decompress(
     input: &[u8],
     output_limit: usize,

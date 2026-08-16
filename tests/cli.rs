@@ -40,6 +40,18 @@ const TRANSFORM_IDS: &[&str] = &[
     "gzip-decompress",
     "sort-lines",
     "remove-duplicate-lines",
+    "trim",
+    "lowercase",
+    "uppercase",
+    "json-string-encode",
+    "json-string-decode",
+    "utf16le-encode",
+    "utf16le-decode",
+    "utf16be-encode",
+    "utf16be-decode",
+    "zlib-compress",
+    "zlib-decompress",
+    "normalize-ip",
 ];
 
 #[test]
@@ -126,6 +138,72 @@ fn all_new_transform_commands_execute_and_new_steps_chain_in_written_order() {
         b"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn balanced_transform_expansion_commands_and_round_trips_execute() {
+    const UTF16LE_A_GRIN: &[u8] = &[0x41, 0x00, 0x3d, 0xd8, 0x00, 0xde];
+    const UTF16BE_A_GRIN: &[u8] = &[0x00, 0x41, 0xd8, 0x3d, 0xde, 0x00];
+    const ZLIB_HELLO: &[u8] = &[
+        0x78, 0x9c, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x06, 0x2c, 0x02, 0x15,
+    ];
+    let cases: &[(&str, &[u8], &[u8])] = &[
+        ("trim", b" \tHello\n", b"Hello"),
+        ("lowercase", b"TOC", b"toc"),
+        ("uppercase", "Straße".as_bytes(), b"STRASSE"),
+        ("json-string-encode", b"toc\n\"x\"", br#""toc\n\"x\"""#),
+        ("json-string-decode", br#""toc\n\"x\"""#, b"toc\n\"x\""),
+        ("utf16le-encode", "A😀".as_bytes(), UTF16LE_A_GRIN),
+        ("utf16le-decode", UTF16LE_A_GRIN, "A😀".as_bytes()),
+        ("utf16be-encode", "A😀".as_bytes(), UTF16BE_A_GRIN),
+        ("utf16be-decode", UTF16BE_A_GRIN, "A😀".as_bytes()),
+        ("zlib-compress", b"hello", ZLIB_HELLO),
+        ("zlib-decompress", ZLIB_HELLO, b"hello"),
+        (
+            "normalize-ip",
+            b"2001:0DB8:0:0:0:FF00:0042:8329",
+            b"2001:db8::ff00:42:8329",
+        ),
+    ];
+
+    for (id, input, expected) in cases {
+        let output = run(&[id], input);
+        assert_eq!(output.status.code(), Some(0), "{id}");
+        assert_eq!(output.stdout, *expected, "{id}");
+        assert!(output.stderr.is_empty(), "{id}");
+    }
+
+    for &(id, _, _) in cases {
+        let output = run(&[id, "--help"], b"");
+        assert_eq!(output.status.code(), Some(0), "{id} --help");
+        assert!(output.stderr.is_empty(), "{id} --help");
+        let help = std::str::from_utf8(&output.stdout).unwrap();
+        assert!(
+            help.contains(&format!("Usage: toc {id} [OPTIONS]")),
+            "{id} --help: {help}"
+        );
+        assert!(help.contains("Behavior:"), "{id} --help: {help}");
+    }
+
+    for chain in [
+        &["json-string-encode", "--then", "json-string-decode"][..],
+        &["utf16le-encode", "--then", "utf16le-decode"][..],
+        &["utf16be-encode", "--then", "utf16be-decode"][..],
+        &["zlib-compress", "--then", "zlib-decompress"][..],
+    ] {
+        let output = run(chain, "A😀".as_bytes());
+        assert_eq!(output.status.code(), Some(0), "{chain:?}");
+        assert_eq!(output.stdout, "A😀".as_bytes(), "{chain:?}");
+        assert!(output.stderr.is_empty(), "{chain:?}");
+    }
+
+    let output = run(&["trim", "--then", "normalize-ip"], b" not an ip ");
+    assert_eq!(output.status.code(), Some(4));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        output.stderr,
+        b"step 2 (normalize-ip) failed: invalid IP address\n"
+    );
 }
 
 #[test]
@@ -273,7 +351,7 @@ fn hex_cli_handles_binary_input_whitespace_chains_and_atomic_errors() {
 }
 
 #[test]
-fn list_exposes_the_exact_twenty_four_public_transform_ids_in_order() {
+fn list_exposes_the_exact_thirty_six_public_transform_ids_in_order() {
     let output = run(&["--list"], b"");
     assert_eq!(output.status.code(), Some(0));
     let list = std::str::from_utf8(&output.stdout).unwrap();

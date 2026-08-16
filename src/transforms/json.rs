@@ -337,7 +337,6 @@ pub fn minify(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
     transform(input, output_limit, Mode::Minify, false)
 }
 
-#[allow(dead_code)]
 pub(super) fn string_encode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
     let text = std::str::from_utf8(input).map_err(|_| TransformError::InvalidUtf8Input)?;
     let mut output = LimitedOutput::new(output_limit);
@@ -347,7 +346,6 @@ pub(super) fn string_encode(input: &[u8], output_limit: usize) -> Result<Vec<u8>
     Ok(output.bytes)
 }
 
-#[allow(dead_code)]
 pub(super) fn string_decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
     std::str::from_utf8(input).map_err(|_| TransformError::InvalidUtf8Input)?;
     validate(input)?;

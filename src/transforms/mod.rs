@@ -6,16 +6,13 @@ mod hash;
 mod hex;
 mod html;
 mod ioc;
-#[allow(dead_code)] // Registered by the later transform-expansion task.
 mod ip;
 mod json;
 mod jwt;
 mod lines;
 mod rot13;
-#[allow(dead_code)] // Registered by the later transform-expansion task.
 mod text;
 mod url;
-#[allow(dead_code)] // Registered by the later transform-expansion task.
 mod utf16;
 
 use crate::error::TransformError;
@@ -225,6 +222,102 @@ static TRANSFORMS: &[TransformDefinition] = &[
         accepts_binary: false,
         apply: lines::remove_duplicates,
     },
+    TransformDefinition {
+        id: "trim",
+        display_name: "Trim",
+        description: "Trim Unicode whitespace from both ends of UTF-8 text",
+        behavior: "removes Unicode whitespace only at both ends and preserves interior text",
+        accepts_binary: false,
+        apply: text::trim,
+    },
+    TransformDefinition {
+        id: "lowercase",
+        display_name: "Lowercase",
+        description: "Convert UTF-8 text with Unicode default lowercase mapping",
+        behavior: "uses locale-independent Unicode lowercase mapping without normalization",
+        accepts_binary: false,
+        apply: text::lowercase,
+    },
+    TransformDefinition {
+        id: "uppercase",
+        display_name: "Uppercase",
+        description: "Convert UTF-8 text with Unicode default uppercase mapping",
+        behavior: "uses locale-independent Unicode uppercase mapping without normalization",
+        accepts_binary: false,
+        apply: text::uppercase,
+    },
+    TransformDefinition {
+        id: "json-string-encode",
+        display_name: "JSON String Encode",
+        description: "Encode UTF-8 text as one complete JSON string literal",
+        behavior: "emits a quoted RFC 8259 string, escapes required characters, and adds no newline",
+        accepts_binary: false,
+        apply: json::string_encode,
+    },
+    TransformDefinition {
+        id: "json-string-decode",
+        display_name: "JSON String Decode",
+        description: "Decode exactly one JSON string literal into UTF-8 text",
+        behavior: "allows surrounding JSON whitespace and rejects BOM, non-strings, invalid escapes, and trailing data",
+        accepts_binary: false,
+        apply: json::string_decode,
+    },
+    TransformDefinition {
+        id: "utf16le-encode",
+        display_name: "UTF-16LE Encode",
+        description: "Encode UTF-8 text as little-endian UTF-16",
+        behavior: "writes little-endian UTF-16 code units without adding a BOM",
+        accepts_binary: false,
+        apply: utf16::encode_le,
+    },
+    TransformDefinition {
+        id: "utf16le-decode",
+        display_name: "UTF-16LE Decode",
+        description: "Decode little-endian UTF-16 into UTF-8 text",
+        behavior: "requires even bytes and valid surrogate pairs and preserves U+FEFF as text",
+        accepts_binary: true,
+        apply: utf16::decode_le,
+    },
+    TransformDefinition {
+        id: "utf16be-encode",
+        display_name: "UTF-16BE Encode",
+        description: "Encode UTF-8 text as big-endian UTF-16",
+        behavior: "writes big-endian UTF-16 code units without adding a BOM",
+        accepts_binary: false,
+        apply: utf16::encode_be,
+    },
+    TransformDefinition {
+        id: "utf16be-decode",
+        display_name: "UTF-16BE Decode",
+        description: "Decode big-endian UTF-16 into UTF-8 text",
+        behavior: "requires even bytes and valid surrogate pairs and preserves U+FEFF as text",
+        accepts_binary: true,
+        apply: utf16::decode_be,
+    },
+    TransformDefinition {
+        id: "zlib-compress",
+        display_name: "Zlib Compress",
+        description: "Compress bytes as one deterministic zlib stream",
+        behavior: "level 6 RFC 1950 with no preset dictionary and deterministic output",
+        accepts_binary: true,
+        apply: compression::zlib_compress,
+    },
+    TransformDefinition {
+        id: "zlib-decompress",
+        display_name: "Zlib Decompress",
+        description: "Decompress and validate exactly one zlib stream",
+        behavior: "rejects invalid headers, Adler-32, truncation, preset dictionaries, and trailing data",
+        accepts_binary: true,
+        apply: compression::zlib_decompress,
+    },
+    TransformDefinition {
+        id: "normalize-ip",
+        display_name: "Normalize IP",
+        description: "Normalize one IPv4 or IPv6 address",
+        behavior: "requires a bare address and emits canonical dotted decimal or RFC 5952 text",
+        accepts_binary: false,
+        apply: ip::normalize,
+    },
 ];
 
 pub fn transforms() -> &'static [TransformDefinition] {
@@ -299,6 +392,18 @@ mod tests {
                 ("gzip-decompress", "Gzip Decompress", true),
                 ("sort-lines", "Sort Lines", false),
                 ("remove-duplicate-lines", "Remove Duplicate Lines", false,),
+                ("trim", "Trim", false),
+                ("lowercase", "Lowercase", false),
+                ("uppercase", "Uppercase", false),
+                ("json-string-encode", "JSON String Encode", false),
+                ("json-string-decode", "JSON String Decode", false),
+                ("utf16le-encode", "UTF-16LE Encode", false),
+                ("utf16le-decode", "UTF-16LE Decode", true),
+                ("utf16be-encode", "UTF-16BE Encode", false),
+                ("utf16be-decode", "UTF-16BE Decode", true),
+                ("zlib-compress", "Zlib Compress", true),
+                ("zlib-decompress", "Zlib Decompress", true),
+                ("normalize-ip", "Normalize IP", false),
             ]
         );
         assert_eq!(unique.len(), metadata.len());

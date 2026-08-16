@@ -2,7 +2,7 @@
   <h1>toc</h1>
   <p><strong>TUI Object Converter</strong></p>
   <p>텍스트와 바이트를 여러가지 포맷으로 변환하는 TUI·CLI 도구입니다.</p>
-  <p><code>TUI</code> · <code>CLI</code> · <code>Local-only</code> · <code>24 transforms</code></p>
+  <p><code>TUI</code> · <code>CLI</code> · <code>Local-only</code> · <code>36 transforms</code></p>
 </div>
 
 ## 30초 만에 시작
@@ -89,6 +89,11 @@ $ printf '%s' '%7B%22name%22%3A%22toc%22%7D' \
   "name": "toc"
 }
 
+# JSON 문자열 Decode → 양끝 공백 제거 → 소문자
+$ printf '%s' '"  TOC  "' \
+  | toc json-string-decode --then trim --then lowercase
+toc
+
 # 파일의 JSON 정리
 $ toc format-json --input input.json
 
@@ -104,13 +109,16 @@ $ toc gzip-compress --input input.txt > output.gz
 
 | 기능군 | 변환 ID |
 |---|---|
-| 인코딩 | `base64-encode`<br>`base64-decode`<br>`base64url-encode`<br>`base64url-decode`<br>`base32-encode`<br>`base32-decode`<br>`url-encode`<br>`url-decode`<br>`hex-encode`<br>`hex-decode`<br>`html-encode`<br>`html-decode` |
-| 데이터·텍스트 | `format-json`<br>`minify-json`<br>`rot13`<br>`sort-lines`<br>`remove-duplicate-lines` |
-| 보안 분석 | `url-defang`<br>`url-refang`<br>`jwt-decode` |
-| 해시·압축 | `sha256`<br>`sha512`<br>`gzip-compress`<br>`gzip-decompress` |
+| 인코딩 | `base64-encode`<br>`base64-decode`<br>`base64url-encode`<br>`base64url-decode`<br>`base32-encode`<br>`base32-decode`<br>`url-encode`<br>`url-decode`<br>`hex-encode`<br>`hex-decode`<br>`html-encode`<br>`html-decode`<br>`json-string-encode`<br>`json-string-decode`<br>`utf16le-encode`<br>`utf16le-decode`<br>`utf16be-encode`<br>`utf16be-decode` |
+| 문자열·데이터 | `trim`<br>`lowercase`<br>`uppercase`<br>`format-json`<br>`minify-json`<br>`rot13`<br>`sort-lines`<br>`remove-duplicate-lines` |
+| 보안 분석 | `url-defang`<br>`url-refang`<br>`jwt-decode`<br>`normalize-ip` |
+| 해시·압축 | `sha256`<br>`sha512`<br>`gzip-compress`<br>`gzip-decompress`<br>`zlib-compress`<br>`zlib-decompress` |
 
 - Base64URL 인코딩은 패딩을 붙이지 않으며 `url-decode`는 `+`를 그대로 둡니다.
-- `jwt-decode`는 서명을 검증하지 않습니다. Gzip 압축은 같은 입력에 항상 같은 결과를 만듭니다.
+- `json-string-decode`는 JSON 문자열 하나만 받습니다. UTF-16 인코더는 BOM을 추가하지 않으며 디코더는 U+FEFF를 일반 문자로 보존합니다.
+- `jwt-decode`는 서명을 검증하지 않습니다. Gzip과 zlib 압축은 같은 입력에 항상 같은 결과를 만듭니다.
+- `zlib-decompress`는 사전 없는 RFC 1950 스트림 하나만 받고 절단·후행 데이터를 거부합니다.
+- `normalize-ip`는 주소 하나만 받으며 공백·CIDR·포트·대괄호·영역 식별자를 거부합니다.
 
 ## 한도
 
