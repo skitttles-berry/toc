@@ -60,6 +60,9 @@ TUI는 화면 상에서 입력 원문을 유지한 채 변환 단계를 만들�
 |  | <kbd>F1</kbd> | 도움말 |
 |  | <kbd>Ctrl</kbd> + <kbd>q</kbd> | 정상 종료 |
 |  | <kbd>Esc</kbd> | 창·확대 닫기 또는 실행 취소 |
+| Input | <kbd>Cmd</kbd> + <kbd>←</kbd> / <kbd>→</kbd><br><kbd>Home</kbd> / <kbd>End</kbd><br><kbd>Ctrl</kbd> + <kbd>A</kbd> / <kbd>E</kbd> | 현재 논리 줄의 처음·끝으로 이동 |
+|  | <kbd>Option</kbd> + <kbd>←</kbd> / <kbd>→</kbd><br><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> | 이전·다음 단어 경계로 이동 |
+|  | 위 이동 키 + <kbd>Shift</kbd> | 이동 구간 선택 |
 | Pipeline | <kbd>↑</kbd><br><kbd>↓</kbd> | 단계 선택 |
 |  | <kbd>Shift</kbd> + <kbd>↑</kbd><br><kbd>Shift</kbd> + <kbd>↓</kbd> | 단계 이동 |
 |  | <kbd>Space</kbd> | 단계 활성화 전환 |
@@ -72,6 +75,10 @@ TUI는 화면 상에서 입력 원문을 유지한 채 변환 단계를 만들�
 |  | <kbd>Shift</kbd> + <kbd>Enter</kbd> | Raw Copy |
 |  | <kbd>v</kbd> | View 전환 |
 |  | <kbd>z</kbd> | Output 확대 |
+
+일부 터미널은 Command·Option 조합을 탭 전환 같은 자체 단축키로 먼저 처리합니다. 이 경우
+<kbd>Home</kbd>·<kbd>End</kbd>, <kbd>Ctrl</kbd> + <kbd>A</kbd>·<kbd>E</kbd>,
+<kbd>Ctrl</kbd> + <kbd>←</kbd>·<kbd>→</kbd>를 사용하세요.
 
 `Shift+Enter`를 구분하지 못하는 터미널에서는 Raw Copy가 제한될 수 있습니다.
 

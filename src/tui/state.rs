@@ -36,6 +36,31 @@ pub(super) fn debounce_for(input_bytes: usize) -> Duration {
     }
 }
 
+fn normalize_input_navigation_key(mut key: KeyEvent) -> KeyEvent {
+    let selection = key.modifiers & KeyModifiers::SHIFT;
+    let mut navigation = key.modifiers;
+    navigation.remove(KeyModifiers::SHIFT);
+
+    match (key.code, navigation) {
+        (KeyCode::Left, KeyModifiers::SUPER) => {
+            key.code = KeyCode::Home;
+            key.modifiers = selection;
+        }
+        (KeyCode::Right, KeyModifiers::SUPER) => {
+            key.code = KeyCode::End;
+            key.modifiers = selection;
+        }
+        (KeyCode::Left | KeyCode::Right, modifier)
+            if modifier == KeyModifiers::ALT || modifier == KeyModifiers::META =>
+        {
+            key.modifiers = KeyModifiers::CONTROL | selection;
+        }
+        _ => {}
+    }
+
+    key
+}
+
 fn confirmation_choice(key: &KeyEvent) -> Option<bool> {
     match (key.code, key.modifiers) {
         (KeyCode::Enter, KeyModifiers::NONE) | (KeyCode::Char('y' | 'ㅛ'), KeyModifiers::NONE) => {
@@ -1018,6 +1043,7 @@ impl App {
     }
 
     fn handle_input_key(&mut self, key: KeyEvent, now: Instant) {
+        let key = normalize_input_navigation_key(key);
         if let KeyCode::Char(character) = key.code
             && crate::error::is_dangerous_control(character)
         {
@@ -1520,7 +1546,9 @@ mod tests {
         pipeline::{ExecutionOutcome, ExecutionReport, ExecutionTarget, StepStatus, execute},
         tui::views::{EffectiveView, effective_view},
     };
-    use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use crossterm::event::{
+        KeyCode, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use ratatui::layout::Rect;
 
     fn now() -> Instant {
@@ -3723,8 +3751,13 @@ mod tests {
         app.output.traces = vec![trace.clone()];
         app.status = Some("keep".to_string());
 
-        key(&mut app, KeyCode::Left, KeyModifiers::NONE, start);
-        key(&mut app, KeyCode::Left, KeyModifiers::SHIFT, start);
+        key(&mut app, KeyCode::Left, KeyModifiers::SUPER, start);
+        key(
+            &mut app,
+            KeyCode::Right,
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+            start,
+        );
 
         assert_eq!(app.input_text(), "text");
         assert!(app.textarea.selection_range().is_some());
@@ -3745,6 +3778,154 @@ mod tests {
         );
         assert_eq!(app.output.traces, [trace]);
         assert!(app.status.is_none());
+    }
+
+    #[test]
+    fn input_navigation_normalizer_maps_only_exact_aliases() {
+        let cases = [
+            (
+                KeyCode::Left,
+                KeyModifiers::SUPER,
+                KeyCode::Home,
+                KeyModifiers::NONE,
+            ),
+            (
+                KeyCode::Right,
+                KeyModifiers::SUPER | KeyModifiers::SHIFT,
+                KeyCode::End,
+                KeyModifiers::SHIFT,
+            ),
+            (
+                KeyCode::Left,
+                KeyModifiers::ALT,
+                KeyCode::Left,
+                KeyModifiers::CONTROL,
+            ),
+            (
+                KeyCode::Right,
+                KeyModifiers::ALT | KeyModifiers::SHIFT,
+                KeyCode::Right,
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            (
+                KeyCode::Left,
+                KeyModifiers::META,
+                KeyCode::Left,
+                KeyModifiers::CONTROL,
+            ),
+            (
+                KeyCode::Right,
+                KeyModifiers::META | KeyModifiers::SHIFT,
+                KeyCode::Right,
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+        ];
+
+        for (code, modifiers, expected_code, expected_modifiers) in cases {
+            let input = KeyEvent::new_with_kind_and_state(
+                code,
+                modifiers,
+                KeyEventKind::Repeat,
+                KeyEventState::KEYPAD,
+            );
+
+            assert_eq!(
+                normalize_input_navigation_key(input),
+                KeyEvent::new_with_kind_and_state(
+                    expected_code,
+                    expected_modifiers,
+                    KeyEventKind::Repeat,
+                    KeyEventState::KEYPAD,
+                )
+            );
+        }
+
+        for modifiers in [
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+            KeyModifiers::SUPER | KeyModifiers::ALT,
+        ] {
+            let input = KeyEvent::new(KeyCode::Left, modifiers);
+            assert_eq!(normalize_input_navigation_key(input), input);
+        }
+
+        for input in [
+            KeyEvent::new(KeyCode::Up, KeyModifiers::SUPER),
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+        ] {
+            assert_eq!(normalize_input_navigation_key(input), input);
+        }
+    }
+
+    #[test]
+    fn input_navigation_aliases_follow_logical_line_and_word_boundaries() {
+        let start = now();
+        let mut lines = App::new(start, true);
+        assert!(lines.insert_paste("first\n둘째 줄\nlast", start));
+
+        key(&mut lines, KeyCode::Up, KeyModifiers::NONE, start);
+        assert_eq!(lines.textarea.cursor(), (1, 2));
+        key(&mut lines, KeyCode::Left, KeyModifiers::SUPER, start);
+        assert_eq!(lines.textarea.cursor(), (1, 0));
+        key(
+            &mut lines,
+            KeyCode::Right,
+            KeyModifiers::SUPER | KeyModifiers::SHIFT,
+            start,
+        );
+        assert_eq!(lines.textarea.cursor(), (1, 4));
+        assert_eq!(lines.textarea.selection_range(), Some(((1, 0), (1, 4))));
+        key(&mut lines, KeyCode::Home, KeyModifiers::NONE, start);
+        assert_eq!(lines.textarea.cursor(), (1, 0));
+        assert!(lines.textarea.selection_range().is_none());
+        key(&mut lines, KeyCode::End, KeyModifiers::NONE, start);
+        assert_eq!(lines.textarea.cursor(), (1, 4));
+        key(&mut lines, KeyCode::Char('a'), KeyModifiers::CONTROL, start);
+        assert_eq!(lines.textarea.cursor(), (1, 0));
+        key(&mut lines, KeyCode::Char('e'), KeyModifiers::CONTROL, start);
+        assert_eq!(lines.textarea.cursor(), (1, 4));
+
+        let mut words = App::new(start, true);
+        assert!(words.insert_paste("alpha, 한글 beta", start));
+        key(&mut words, KeyCode::Left, KeyModifiers::ALT, start);
+        assert_eq!(words.textarea.cursor(), (0, 10));
+        key(&mut words, KeyCode::Left, KeyModifiers::META, start);
+        assert_eq!(words.textarea.cursor(), (0, 7));
+        key(&mut words, KeyCode::Left, KeyModifiers::CONTROL, start);
+        assert_eq!(words.textarea.cursor(), (0, 5));
+        key(
+            &mut words,
+            KeyCode::Right,
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+            start,
+        );
+        assert_eq!(words.textarea.cursor(), (0, 7));
+        assert_eq!(words.textarea.selection_range(), Some(((0, 5), (0, 7))));
+        key(&mut words, KeyCode::Right, KeyModifiers::META, start);
+        assert_eq!(words.textarea.cursor(), (0, 10));
+        assert!(words.textarea.selection_range().is_none());
+        key(&mut words, KeyCode::Right, KeyModifiers::CONTROL, start);
+        assert_eq!(words.textarea.cursor(), (0, 14));
+    }
+
+    #[test]
+    fn input_navigation_aliases_do_not_apply_outside_input() {
+        let start = now();
+        let mut app = App::new(start, true);
+        assert!(app.insert_paste("alpha beta", start));
+        let cursor = app.textarea.cursor();
+
+        for pane in [Pane::Output, Pane::Pipeline] {
+            app.focus = pane;
+            key(&mut app, KeyCode::Left, KeyModifiers::SUPER, start);
+            key(&mut app, KeyCode::Right, KeyModifiers::ALT, start);
+            assert_eq!(app.textarea.cursor(), cursor);
+        }
+
+        app.focus = Pane::Input;
+        app.open_help();
+        key(&mut app, KeyCode::Left, KeyModifiers::ALT, start);
+        assert_eq!(app.textarea.cursor(), cursor);
+        assert!(matches!(app.modal, Some(Modal::Help)));
     }
 
     #[test]
