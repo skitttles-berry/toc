@@ -36,7 +36,6 @@ Thumbs.db
 /.github/instructions/
 /.github/prompts/
 /docs/prd/
-/docs/superpowers/
 /docs/test-reports/
 
 # Environment variables and local secrets
