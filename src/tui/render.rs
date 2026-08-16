@@ -1171,7 +1171,7 @@ fn render_help(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseRegion
     let (title, body) = match app.focus {
         Pane::Input => (
             "Input Help",
-            "Text editing: tui-textarea defaults\nCmd+←/→ · Home/End · Ctrl+A/E  Line start/end\nOption+←/→ · Ctrl+←/→  Previous/next word\nShift + movement  Select while moving\nTab / Shift+Tab  Next / previous pane\nCtrl+p  Add transform\nF1  Context help\nCtrl+q  Quit\nCtrl+c  Force quit\nEsc  Close zoom or cancel request\nMouse Click  Focus only".to_string(),
+            "Text editing: tui-textarea defaults\nCmd+Backspace · Ctrl+Backspace  Delete to line start\nCmd+←/→ · Home/End · Ctrl+A/E  Line start/end\nOption+←/→ · Ctrl+←/→  Previous/next word\nShift + movement  Select while moving\nTab / Shift+Tab  Next / previous pane\nCtrl+p  Add transform\nF1  Context help\nCtrl+q  Quit\nCtrl+c  Force quit\nEsc  Close zoom or cancel request\nMouse Click  Focus only".to_string(),
         ),
         Pane::Pipeline => (
             "Pipeline Help",
@@ -2270,6 +2270,8 @@ mod tests {
                 Pane::Input,
                 &[
                     "Input Help",
+                    "Cmd+Backspace",
+                    "Ctrl+Backspace",
                     "Cmd+←/→",
                     "Home/End",
                     "Ctrl+A/E",

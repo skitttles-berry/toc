@@ -36,12 +36,19 @@ pub(super) fn debounce_for(input_bytes: usize) -> Duration {
     }
 }
 
-fn normalize_input_navigation_key(mut key: KeyEvent) -> KeyEvent {
+fn normalize_input_key(mut key: KeyEvent) -> KeyEvent {
     let selection = key.modifiers & KeyModifiers::SHIFT;
-    let mut navigation = key.modifiers;
-    navigation.remove(KeyModifiers::SHIFT);
+    let mut base_modifiers = key.modifiers;
+    base_modifiers.remove(KeyModifiers::SHIFT);
 
-    match (key.code, navigation) {
+    match (key.code, base_modifiers) {
+        (KeyCode::Backspace, modifier)
+            if selection.is_empty()
+                && (modifier == KeyModifiers::SUPER || modifier == KeyModifiers::CONTROL) =>
+        {
+            key.code = KeyCode::Char('j');
+            key.modifiers = KeyModifiers::CONTROL;
+        }
         (KeyCode::Left, KeyModifiers::SUPER) => {
             key.code = KeyCode::Home;
             key.modifiers = selection;
@@ -1043,7 +1050,7 @@ impl App {
     }
 
     fn handle_input_key(&mut self, key: KeyEvent, now: Instant) {
-        let key = normalize_input_navigation_key(key);
+        let key = normalize_input_key(key);
         if let KeyCode::Char(character) = key.code
             && crate::error::is_dangerous_control(character)
         {
@@ -3781,7 +3788,7 @@ mod tests {
     }
 
     #[test]
-    fn input_navigation_normalizer_maps_only_exact_aliases() {
+    fn input_key_normalizer_maps_only_exact_aliases() {
         let cases = [
             (
                 KeyCode::Left,
@@ -3819,6 +3826,18 @@ mod tests {
                 KeyCode::Right,
                 KeyModifiers::CONTROL | KeyModifiers::SHIFT,
             ),
+            (
+                KeyCode::Backspace,
+                KeyModifiers::SUPER,
+                KeyCode::Char('j'),
+                KeyModifiers::CONTROL,
+            ),
+            (
+                KeyCode::Backspace,
+                KeyModifiers::CONTROL,
+                KeyCode::Char('j'),
+                KeyModifiers::CONTROL,
+            ),
         ];
 
         for (code, modifiers, expected_code, expected_modifiers) in cases {
@@ -3830,7 +3849,7 @@ mod tests {
             );
 
             assert_eq!(
-                normalize_input_navigation_key(input),
+                normalize_input_key(input),
                 KeyEvent::new_with_kind_and_state(
                     expected_code,
                     expected_modifiers,
@@ -3840,19 +3859,32 @@ mod tests {
             );
         }
 
-        for modifiers in [
-            KeyModifiers::CONTROL | KeyModifiers::ALT,
-            KeyModifiers::SUPER | KeyModifiers::ALT,
+        for (code, modifiers) in [
+            (KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            (KeyCode::Left, KeyModifiers::SUPER | KeyModifiers::ALT),
+            (
+                KeyCode::Backspace,
+                KeyModifiers::SUPER | KeyModifiers::SHIFT,
+            ),
+            (
+                KeyCode::Backspace,
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            (KeyCode::Backspace, KeyModifiers::SUPER | KeyModifiers::ALT),
+            (
+                KeyCode::Backspace,
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
         ] {
-            let input = KeyEvent::new(KeyCode::Left, modifiers);
-            assert_eq!(normalize_input_navigation_key(input), input);
+            let input = KeyEvent::new(code, modifiers);
+            assert_eq!(normalize_input_key(input), input);
         }
 
         for input in [
             KeyEvent::new(KeyCode::Up, KeyModifiers::SUPER),
             KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
         ] {
-            assert_eq!(normalize_input_navigation_key(input), input);
+            assert_eq!(normalize_input_key(input), input);
         }
     }
 
@@ -3908,24 +3940,152 @@ mod tests {
     }
 
     #[test]
-    fn input_navigation_aliases_do_not_apply_outside_input() {
+    fn input_line_head_delete_aliases_handle_unicode_and_invalidate_preview() {
+        let start = now();
+
+        for modifiers in [KeyModifiers::SUPER, KeyModifiers::CONTROL] {
+            let mut app = App::new(start, true);
+            assert!(app.insert_paste("first\n한😀tail\nlast", start));
+            key(&mut app, KeyCode::Up, KeyModifiers::NONE, start);
+            assert_eq!(app.textarea.cursor(), (1, 2));
+
+            app.output.status = OutputStatus::Ready;
+            app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
+            app.output.active_artifact = Some(Artifact::new(b"active".to_vec()));
+            let expected_request_id = app.request_id + 1;
+
+            let effects = key(&mut app, KeyCode::Backspace, modifiers, start);
+
+            assert_eq!(app.input_text(), "first\ntail\nlast");
+            assert_eq!(app.textarea.cursor(), (1, 0));
+            assert_eq!(app.request_id, expected_request_id);
+            assert!(matches!(
+                effects.as_slice(),
+                [Effect::Cancel(request_id)] if *request_id == expected_request_id
+            ));
+            assert!(app.output.final_artifact.is_none());
+            assert_eq!(
+                app.output.active_artifact.as_ref().unwrap().bytes(),
+                b"active"
+            );
+
+            key(&mut app, KeyCode::Char('u'), KeyModifiers::CONTROL, start);
+            assert_eq!(app.input_text(), "first\n한😀tail\nlast");
+            assert_eq!(app.textarea.cursor(), (1, 2));
+        }
+    }
+
+    #[test]
+    fn input_line_head_delete_prefers_selection_and_undoes_once() {
         let start = now();
         let mut app = App::new(start, true);
         assert!(app.insert_paste("alpha beta", start));
+        for _ in 0..2 {
+            key(&mut app, KeyCode::Left, KeyModifiers::SHIFT, start);
+        }
+        assert_eq!(app.textarea.selection_range(), Some(((0, 8), (0, 10))));
+
+        key(&mut app, KeyCode::Backspace, KeyModifiers::SUPER, start);
+
+        assert_eq!(app.input_text(), "alpha be");
+        assert!(app.textarea.selection_range().is_none());
+
+        key(&mut app, KeyCode::Char('u'), KeyModifiers::CONTROL, start);
+        assert_eq!(app.input_text(), "alpha beta");
+    }
+
+    #[test]
+    fn input_line_head_delete_joins_lines_and_is_noop_at_document_start() {
+        let start = now();
+        let mut lines = App::new(start, true);
+        assert!(lines.insert_paste("first\nsecond", start));
+        key(&mut lines, KeyCode::Home, KeyModifiers::NONE, start);
+        assert_eq!(lines.textarea.cursor(), (1, 0));
+
+        key(&mut lines, KeyCode::Backspace, KeyModifiers::CONTROL, start);
+        assert_eq!(lines.input_text(), "firstsecond");
+        assert_eq!(lines.textarea.cursor(), (0, 5));
+
+        let mut document_start = App::new(start, true);
+        assert!(document_start.insert_paste("first", start));
+        key(
+            &mut document_start,
+            KeyCode::Home,
+            KeyModifiers::NONE,
+            start,
+        );
+        document_start.take_dirty();
+        let request_id = document_start.request_id;
+
+        key(
+            &mut document_start,
+            KeyCode::Backspace,
+            KeyModifiers::SUPER,
+            start,
+        );
+
+        assert_eq!(document_start.input_text(), "first");
+        assert_eq!(document_start.request_id, request_id);
+        assert!(!document_start.take_dirty());
+    }
+
+    #[test]
+    fn input_backspace_defaults_remain_character_and_word_based() {
+        let start = now();
+        let mut app = App::new(start, true);
+        assert!(app.insert_paste("one two", start));
+
+        key(&mut app, KeyCode::Backspace, KeyModifiers::NONE, start);
+        assert_eq!(app.input_text(), "one tw");
+
+        key(&mut app, KeyCode::Backspace, KeyModifiers::ALT, start);
+        assert_eq!(app.input_text(), "one ");
+    }
+
+    #[test]
+    fn input_key_aliases_do_not_apply_outside_input() {
+        let start = now();
+        let mut app = App::new(start, true);
+        assert!(app.insert_paste("alpha beta", start));
+        let input = app.input_text();
         let cursor = app.textarea.cursor();
 
         for pane in [Pane::Output, Pane::Pipeline] {
             app.focus = pane;
-            key(&mut app, KeyCode::Left, KeyModifiers::SUPER, start);
-            key(&mut app, KeyCode::Right, KeyModifiers::ALT, start);
+            for (code, modifiers) in [
+                (KeyCode::Left, KeyModifiers::SUPER),
+                (KeyCode::Right, KeyModifiers::ALT),
+                (KeyCode::Backspace, KeyModifiers::SUPER),
+                (KeyCode::Backspace, KeyModifiers::CONTROL),
+            ] {
+                key(&mut app, code, modifiers, start);
+            }
+            assert_eq!(app.input_text(), input);
             assert_eq!(app.textarea.cursor(), cursor);
         }
 
         app.focus = Pane::Input;
         app.open_help();
         key(&mut app, KeyCode::Left, KeyModifiers::ALT, start);
+        key(&mut app, KeyCode::Backspace, KeyModifiers::SUPER, start);
+        key(&mut app, KeyCode::Backspace, KeyModifiers::CONTROL, start);
+        assert_eq!(app.input_text(), input);
         assert_eq!(app.textarea.cursor(), cursor);
         assert!(matches!(app.modal, Some(Modal::Help)));
+
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE, start);
+        app.open_picker();
+        key(&mut app, KeyCode::Backspace, KeyModifiers::SUPER, start);
+        key(&mut app, KeyCode::Backspace, KeyModifiers::CONTROL, start);
+        assert_eq!(app.input_text(), input);
+        assert_eq!(app.textarea.cursor(), cursor);
+        assert!(matches!(
+            app.modal,
+            Some(Modal::TransformPicker {
+                ref query,
+                selected: 0,
+            }) if query.is_empty()
+        ));
     }
 
     #[test]
