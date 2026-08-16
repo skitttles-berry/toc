@@ -403,6 +403,9 @@ pub(super) fn render_transform_error_summary(error: &crate::error::TransformErro
 
     match error {
         TransformError::InvalidUtf8Input => "input is not valid UTF-8".to_string(),
+        TransformError::InvalidUtf16 { position } => {
+            format!("invalid UTF-16 at byte {position}")
+        }
         TransformError::InvalidBase64 {
             position: Some(position),
         } => {
@@ -466,6 +469,16 @@ pub(super) fn render_pipeline_error_summary(error: &crate::error::PipelineError)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summarizes_utf16_errors_without_input_content() {
+        assert_eq!(
+            render_transform_error_summary(&crate::error::TransformError::InvalidUtf16 {
+                position: 4,
+            }),
+            "invalid UTF-16 at byte 4"
+        );
+    }
 
     #[test]
     fn summarizes_base32_errors_without_input_content() {

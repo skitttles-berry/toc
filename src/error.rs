@@ -1,6 +1,9 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransformError {
     InvalidUtf8Input,
+    InvalidUtf16 {
+        position: usize,
+    },
     InvalidBase64 {
         position: Option<usize>,
     },
@@ -153,6 +156,9 @@ pub(crate) fn invalid_utf8_output(bytes: &[u8]) -> TransformError {
 fn render_transform_error(error: &TransformError) -> String {
     match error {
         TransformError::InvalidUtf8Input => "input is not valid UTF-8".to_string(),
+        TransformError::InvalidUtf16 { position } => {
+            format!("invalid UTF-16 at byte {position}")
+        }
         TransformError::InvalidBase64 {
             position: Some(position),
         } => {
@@ -356,6 +362,18 @@ mod tests {
                 },
             }),
             "step 2 (format-json) failed: duplicate JSON object key at line 1, column 4"
+        );
+    }
+
+    #[test]
+    fn renders_utf16_errors_without_input_content() {
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 1,
+                transform_id: "utf16le-decode",
+                source: TransformError::InvalidUtf16 { position: 4 },
+            }),
+            "step 1 (utf16le-decode) failed: invalid UTF-16 at byte 4"
         );
     }
 

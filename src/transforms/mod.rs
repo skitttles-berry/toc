@@ -13,6 +13,8 @@ mod rot13;
 #[allow(dead_code)] // Registered by the later transform-expansion task.
 mod text;
 mod url;
+#[allow(dead_code)] // Registered by the later transform-expansion task.
+mod utf16;
 
 use crate::error::TransformError;
 
