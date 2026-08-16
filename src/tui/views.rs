@@ -433,6 +433,7 @@ pub(super) fn render_transform_error_summary(error: &crate::error::TransformErro
                 JsonErrorKind::DuplicateKey => "duplicate JSON object key",
                 JsonErrorKind::Bom => "UTF-8 BOM is not allowed",
                 JsonErrorKind::DepthExceeded => "JSON depth exceeds 128",
+                JsonErrorKind::ExpectedString => "expected a JSON string",
             };
             format!("{reason} at line {line}, column {column}")
         }
@@ -497,6 +498,18 @@ mod tests {
                 limit: 1_000_000,
             }),
             "input exceeds 1000000 logical lines"
+        );
+    }
+
+    #[test]
+    fn summarizes_expected_json_string_errors_without_input_content() {
+        assert_eq!(
+            render_transform_error_summary(&crate::error::TransformError::InvalidJson {
+                line: 1,
+                column: 3,
+                kind: crate::error::JsonErrorKind::ExpectedString,
+            }),
+            "expected a JSON string at line 1, column 3"
         );
     }
 

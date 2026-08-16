@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt};
+use std::{collections::HashSet, fmt, io};
 
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 
@@ -194,6 +194,18 @@ impl LimitedOutput {
     }
 }
 
+impl io::Write for LimitedOutput {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.extend(bytes)
+            .map(|()| bytes.len())
+            .map_err(|_| io::Error::other("output limit"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Mode {
     Pretty,
@@ -325,6 +337,34 @@ pub fn minify(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformErr
     transform(input, output_limit, Mode::Minify, false)
 }
 
+#[allow(dead_code)]
+pub(super) fn string_encode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
+    let text = std::str::from_utf8(input).map_err(|_| TransformError::InvalidUtf8Input)?;
+    let mut output = LimitedOutput::new(output_limit);
+    serde_json::to_writer(&mut output, text).map_err(|_| TransformError::OutputTooLarge {
+        limit: output_limit,
+    })?;
+    Ok(output.bytes)
+}
+
+#[allow(dead_code)]
+pub(super) fn string_decode(input: &[u8], output_limit: usize) -> Result<Vec<u8>, TransformError> {
+    std::str::from_utf8(input).map_err(|_| TransformError::InvalidUtf8Input)?;
+    validate(input)?;
+    let output =
+        serde_json::from_slice::<String>(input).map_err(|error| TransformError::InvalidJson {
+            line: error.line(),
+            column: error.column(),
+            kind: JsonErrorKind::ExpectedString,
+        })?;
+    if output.len() > output_limit {
+        return Err(TransformError::OutputTooLarge {
+            limit: output_limit,
+        });
+    }
+    Ok(output.into_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,5 +491,78 @@ mod tests {
         let output = format(b"{\r\n\"a\":1\r\n}", 128).unwrap();
         assert_eq!(output, b"{\n  \"a\": 1\n}");
         assert!(!output.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn encodes_a_complete_json_string_literal() {
+        let input = "\"\\\0\n한";
+        assert_eq!(
+            string_encode(input.as_bytes(), 64).unwrap(),
+            r#""\"\\\u0000\n한""#.as_bytes()
+        );
+        assert_eq!(string_encode(b"\"", 4).unwrap(), br#""\"""#);
+    }
+
+    #[test]
+    fn decodes_one_string_with_json_whitespace_and_surrogate_pairs() {
+        assert_eq!(
+            string_decode(" \t\"\\uD83D\\uDE00 한\"\r\n".as_bytes(), 8).unwrap(),
+            "😀 한".as_bytes()
+        );
+    }
+
+    #[test]
+    fn rejects_non_strings_bom_trailing_data_and_invalid_strings() {
+        for input in [b"{}".as_slice(), b"[]", b"0", b"true", b"null"] {
+            assert!(matches!(
+                string_decode(input, 8),
+                Err(TransformError::InvalidJson {
+                    kind: JsonErrorKind::ExpectedString,
+                    ..
+                })
+            ));
+        }
+
+        for input in [
+            br#""x" 0"#.as_slice(),
+            br#""\q""#.as_slice(),
+            br#""\uD800""#.as_slice(),
+        ] {
+            assert!(matches!(
+                string_decode(input, 8),
+                Err(TransformError::InvalidJson {
+                    kind: JsonErrorKind::Syntax,
+                    ..
+                })
+            ));
+        }
+
+        assert!(matches!(
+            string_decode(b"\xef\xbb\xbf\"x\"", 8),
+            Err(TransformError::InvalidJson {
+                kind: JsonErrorKind::Bom,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn json_string_transforms_enforce_utf8_and_byte_limits() {
+        assert_eq!(
+            string_encode(&[0xff], 8).unwrap_err(),
+            TransformError::InvalidUtf8Input
+        );
+        assert_eq!(
+            string_decode(&[0xff], 8).unwrap_err(),
+            TransformError::InvalidUtf8Input
+        );
+        assert_eq!(
+            string_encode(b"\"", 3).unwrap_err(),
+            TransformError::OutputTooLarge { limit: 3 }
+        );
+        assert_eq!(
+            string_decode("\"é\"".as_bytes(), 1).unwrap_err(),
+            TransformError::OutputTooLarge { limit: 1 }
+        );
     }
 }

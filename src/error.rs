@@ -87,6 +87,7 @@ pub enum JsonErrorKind {
     DuplicateKey,
     Bom,
     DepthExceeded,
+    ExpectedString,
 }
 
 pub fn is_dangerous_control(character: char) -> bool {
@@ -191,6 +192,7 @@ fn render_transform_error(error: &TransformError) -> String {
                 JsonErrorKind::DuplicateKey => "duplicate JSON object key",
                 JsonErrorKind::Bom => "UTF-8 BOM is not allowed",
                 JsonErrorKind::DepthExceeded => "JSON depth exceeds 128",
+                JsonErrorKind::ExpectedString => "expected a JSON string",
             };
             format!("{reason} at line {line}, column {column}")
         }
@@ -354,6 +356,22 @@ mod tests {
                 },
             }),
             "step 2 (format-json) failed: duplicate JSON object key at line 1, column 4"
+        );
+    }
+
+    #[test]
+    fn renders_expected_json_string_errors_without_input_content() {
+        assert_eq!(
+            render_pipeline_error(&PipelineError::Step {
+                step: 2,
+                transform_id: "json-string-decode",
+                source: TransformError::InvalidJson {
+                    line: 1,
+                    column: 3,
+                    kind: JsonErrorKind::ExpectedString,
+                },
+            }),
+            "step 2 (json-string-decode) failed: expected a JSON string at line 1, column 3"
         );
     }
 
