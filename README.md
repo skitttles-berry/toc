@@ -7,13 +7,22 @@
 
 ## 30초 만에 시작
 
-저장소 루트에서 설치한 뒤 TUI를 열거나 CLI 명령을 실행하세요.
-
+### 설치
 ```bash
+git clone https://github.com/skitttles-berry/toc.git
+cd toc
 cargo install --locked --path .
+```
+
+### TUI
+```bash
+toc tui
+```
+
+### CLI
+```bash
 printf '%s' 'hello' | toc base64-encode
 printf '%s' '%7B%22name%22%3A%22toc%22%7D' | toc url-decode --then format-json
-toc tui
 ```
 
 ## TUI 사용법
@@ -22,7 +31,7 @@ TUI는 화면 상에서 입력 원문을 유지한 채 변환 단계를 만들�
 
 ### 실행 화면
 
-[![toc TUI 실행 녹화](https://asciinema.org/a/tqmZAslTwfglLSfj.svg)](https://asciinema.org/a/tqmZAslTwfglLSfj)
+![toc TUI 실행 녹화](docs/asciinema/toc-tui.gif)
 
 ### 4단계로 시작
 
@@ -95,10 +104,10 @@ $ toc gzip-compress --input input.txt > output.gz
 
 | 기능군 | 변환 ID |
 |---|---|
-| 인코딩 | `base64-encode`,<br>`base64-decode`,<br>`base64url-encode`,<br>`base64url-decode`,<br>`base32-encode`,<br>`base32-decode`,<br>`url-encode`,<br>`url-decode`,<br>`hex-encode`,<br>`hex-decode`,<br>`html-encode`,<br>`html-decode` |
-| 데이터·텍스트 | `format-json`,<br>`minify-json`,<br>`rot13`,<br>`sort-lines`,<br>`remove-duplicate-lines` |
-| 보안 분석 | `url-defang`,<br>`url-refang`,<br>`jwt-decode` |
-| 해시·압축 | `sha256`,<br>`sha512`,<br>`gzip-compress`,<br>`gzip-decompress` |
+| 인코딩 | `base64-encode`<br>`base64-decode`<br>`base64url-encode`<br>`base64url-decode`<br>`base32-encode`<br>`base32-decode`<br>`url-encode`<br>`url-decode`<br>`hex-encode`<br>`hex-decode`<br>`html-encode`<br>`html-decode` |
+| 데이터·텍스트 | `format-json`<br>`minify-json`<br>`rot13`<br>`sort-lines`<br>`remove-duplicate-lines` |
+| 보안 분석 | `url-defang`<br>`url-refang`<br>`jwt-decode` |
+| 해시·압축 | `sha256`<br>`sha512`<br>`gzip-compress`<br>`gzip-decompress` |
 
 - Base64URL 인코딩은 패딩을 붙이지 않으며 `url-decode`는 `+`를 그대로 둡니다.
 - `jwt-decode`는 서명을 검증하지 않습니다. Gzip 압축은 같은 입력에 항상 같은 결과를 만듭니다.
@@ -110,7 +119,7 @@ $ toc gzip-compress --input input.txt > output.gz
 | CLI | 64 MiB | 256 MiB |
 | TUI | 1 MiB | 64 MiB |
 
-한 Pipeline에는 변환을 최대 32단계까지 연결할 수 있습니다.
+- 한 Pipeline에는 변환을 최대 32단계까지 연결할 수 있습니다.
 
 ## 라이선스
 
