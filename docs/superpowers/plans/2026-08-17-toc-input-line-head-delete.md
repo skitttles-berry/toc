@@ -124,7 +124,7 @@ fn input_line_head_delete_aliases_handle_unicode_and_invalidate_preview() {
         let mut app = App::new(start, true);
         assert!(app.insert_paste("first\n한😀tail\nlast", start));
         key(&mut app, KeyCode::Up, KeyModifiers::NONE, start);
-        assert_eq!(app.textarea.cursor(), (1, 4));
+        assert_eq!(app.textarea.cursor(), (1, 2));
 
         app.output.status = OutputStatus::Ready;
         app.output.final_artifact = Some(Artifact::new(b"final".to_vec()));
@@ -133,7 +133,7 @@ fn input_line_head_delete_aliases_handle_unicode_and_invalidate_preview() {
 
         let effects = key(&mut app, KeyCode::Backspace, modifiers, start);
 
-        assert_eq!(app.input_text(), "first\nil\nlast");
+        assert_eq!(app.input_text(), "first\ntail\nlast");
         assert_eq!(app.textarea.cursor(), (1, 0));
         assert_eq!(app.request_id, expected_request_id);
         assert!(matches!(
@@ -153,7 +153,7 @@ fn input_line_head_delete_aliases_handle_unicode_and_invalidate_preview() {
             start,
         );
         assert_eq!(app.input_text(), "first\n한😀tail\nlast");
-        assert_eq!(app.textarea.cursor(), (1, 4));
+        assert_eq!(app.textarea.cursor(), (1, 2));
     }
 }
 
