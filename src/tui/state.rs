@@ -15,7 +15,7 @@ use crate::{
 
 use super::{
     clipboard::{ClipboardPayload, CopyJob, CopyKind, CopyMode, PreparedCopy},
-    output::{Lifecycle, LifecycleChange, Navigation, Output, ViewMode},
+    output::{Lifecycle, LifecycleChange, Navigation, Output},
     worker::{PreviewJob, PreviewResult},
 };
 
@@ -382,8 +382,7 @@ impl App {
     }
 
     pub(super) fn can_copy(&self) -> bool {
-        let summary = self.output.summary();
-        summary.ready_bytes.is_some() && summary.requested_view != ViewMode::Trace
+        self.output.summary().copyable
     }
 
     pub(super) fn open_picker(&mut self) {

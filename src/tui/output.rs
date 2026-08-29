@@ -155,7 +155,7 @@ pub(super) struct Summary<'a> {
     pub(super) requested_view: ViewMode,
     pub(super) effective_view: EffectiveView,
     pub(super) status: &'a Status,
-    pub(super) ready_bytes: Option<&'a [u8]>,
+    pub(super) copyable: bool,
     pub(super) artifact: Option<&'a Artifact>,
     pub(super) traces: &'a [StepTrace],
 }
@@ -326,18 +326,22 @@ impl Output {
                 matches!(self.status, Status::Failed(_)),
             ),
             status: &self.status,
-            ready_bytes: matches!(self.status, Status::Ready)
-                .then(|| artifact.map(Artifact::bytes))
-                .flatten(),
+            copyable: self.is_copyable(),
             artifact,
             traces: &self.traces,
         }
     }
 
     pub(super) fn copy_artifact(&self) -> Option<Artifact> {
-        matches!(self.status, Status::Ready)
+        self.is_copyable()
             .then(|| self.active_artifact.clone())
             .flatten()
+    }
+
+    fn is_copyable(&self) -> bool {
+        matches!(self.status, Status::Ready)
+            && self.view != ViewMode::Trace
+            && self.active_artifact.is_some()
     }
 
     pub(super) fn navigate(&mut self, navigation: Navigation) -> bool {
@@ -1458,6 +1462,21 @@ mod tests {
             output.update(Lifecycle::RestoreFinal),
             LifecycleChange::FinalUnavailable
         );
+    }
+
+    #[test]
+    fn trace_view_blocks_copy_at_output_interface() {
+        let mut output = ready_output(b"final".to_vec());
+
+        assert!(output.copy_artifact().is_some());
+        assert!(output.navigate(Navigation::NextView));
+        assert!(output.copy_artifact().is_some());
+        assert!(output.navigate(Navigation::NextView));
+        assert!(output.copy_artifact().is_some());
+        assert!(output.navigate(Navigation::NextView));
+        assert!(output.copy_artifact().is_none());
+        assert!(output.navigate(Navigation::NextView));
+        assert!(output.copy_artifact().is_some());
     }
 
     #[test]
