@@ -1,4 +1,5 @@
 use std::{
+    ops::Range,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -139,6 +140,15 @@ pub(super) struct Viewport {
     pub(super) columns: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Navigation {
+    NextView,
+    Line(i8),
+    Page(i8),
+    Home,
+    End,
+}
+
 #[allow(dead_code)]
 pub(super) struct Summary<'a> {
     pub(super) source: Source,
@@ -150,17 +160,44 @@ pub(super) struct Summary<'a> {
     pub(super) traces: &'a [StepTrace],
 }
 
+pub(super) struct Presentation<'a> {
+    pub(super) summary: Summary<'a>,
+    pub(super) body: Body<'a>,
+}
+
+pub(super) enum Body<'a> {
+    Empty,
+    Cancelled,
+    Failure {
+        error: &'a PipelineError,
+        switch_to_trace: bool,
+    },
+    Text(String),
+    Hex(Vec<HexRow<'a>>),
+    Trace(TraceWindow<'a>),
+    TextUnavailable,
+}
+
+pub(super) struct TraceWindow<'a> {
+    pub(super) traces: &'a [StepTrace],
+    pub(super) visible: Range<usize>,
+    pub(super) failure: Option<usize>,
+    pub(super) detail_height: usize,
+    pub(super) byte_budget: usize,
+}
+
 pub(super) struct Output {
-    pub(super) source: Source,
-    pub(super) view: ViewMode,
-    pub(super) status: Status,
-    pub(super) final_artifact: Option<Artifact>,
-    pub(super) final_traces: Vec<StepTrace>,
-    pub(super) active_artifact: Option<Artifact>,
-    pub(super) traces: Vec<StepTrace>,
-    pub(super) byte_offset: usize,
-    pub(super) row_offset: usize,
-    pub(super) viewport: Option<Viewport>,
+    source: Source,
+    view: ViewMode,
+    status: Status,
+    final_artifact: Option<Artifact>,
+    final_traces: Vec<StepTrace>,
+    active_artifact: Option<Artifact>,
+    traces: Vec<StepTrace>,
+    byte_offset: usize,
+    row_offset: usize,
+    viewport: Option<Viewport>,
+    viewport_visible: bool,
 }
 
 impl Output {
@@ -176,6 +213,7 @@ impl Output {
             byte_offset: 0,
             row_offset: 0,
             viewport: None,
+            viewport_visible: true,
         }
     }
 
@@ -301,20 +339,280 @@ impl Output {
             .then(|| self.active_artifact.clone())
             .flatten()
     }
+
+    pub(super) fn navigate(&mut self, navigation: Navigation) -> bool {
+        let viewport = self.viewport.unwrap_or(Viewport {
+            rows: 10,
+            columns: 78,
+        });
+        if !self.viewport_visible || viewport.rows == 0 || viewport.columns == 0 {
+            return false;
+        }
+
+        if navigation == Navigation::NextView {
+            self.view = match self.view {
+                ViewMode::Smart => ViewMode::Text,
+                ViewMode::Text => ViewMode::Hex,
+                ViewMode::Hex => ViewMode::Trace,
+                ViewMode::Trace => ViewMode::Smart,
+            };
+            self.byte_offset = 0;
+            self.row_offset = 0;
+            self.viewport = None;
+            return true;
+        }
+
+        let view = effective_view(
+            self.view,
+            self.active_artifact.as_ref(),
+            matches!(self.status, Status::Failed(_)),
+        );
+        let page_rows = match view {
+            EffectiveView::Hex => {
+                hex_visible_row_capacity(viewport.rows.saturating_sub(1), viewport.columns)
+            }
+            EffectiveView::Trace => {
+                trace_visible_row_capacity(&self.traces, viewport.rows, viewport.columns)
+            }
+            EffectiveView::Text | EffectiveView::Unavailable => viewport.rows,
+        };
+        let maximum = match view {
+            EffectiveView::Text => self.active_artifact.as_ref().map_or(0, last_text_offset),
+            EffectiveView::Unavailable => 0,
+            EffectiveView::Hex => self.active_artifact.as_ref().map_or(0, |artifact| {
+                artifact
+                    .bytes()
+                    .len()
+                    .div_ceil(hex_bytes_per_row(viewport.columns))
+                    .saturating_sub(page_rows.max(1))
+            }),
+            EffectiveView::Trace => self.traces.len().saturating_sub(page_rows.max(1)),
+        };
+
+        let (bytes, next) = match navigation {
+            Navigation::NextView => unreachable!(),
+            Navigation::Line(direction) if view == EffectiveView::Text => {
+                let Some(artifact) = self.active_artifact.as_ref() else {
+                    return false;
+                };
+                let mut next = self.byte_offset;
+                for _ in 0..usize::from(direction.unsigned_abs()) {
+                    let moved = if direction < 0 {
+                        previous_text_offset(artifact, next)
+                    } else {
+                        next_text_offset(artifact, next)
+                    }
+                    .min(maximum);
+                    if moved == next {
+                        break;
+                    }
+                    next = moved;
+                }
+                (true, next)
+            }
+            Navigation::Line(direction) => (
+                false,
+                if direction < 0 {
+                    self.row_offset
+                        .saturating_sub(usize::from(direction.unsigned_abs()))
+                } else {
+                    self.row_offset
+                        .saturating_add(usize::from(direction.unsigned_abs()))
+                        .min(maximum)
+                },
+            ),
+            Navigation::Page(direction) if view == EffectiveView::Text => {
+                let Some(artifact) = self.active_artifact.as_ref() else {
+                    return false;
+                };
+                let next = if direction < 0 {
+                    previous_text_page_offset(
+                        artifact,
+                        self.byte_offset,
+                        viewport.rows,
+                        viewport.columns,
+                    )
+                } else if direction > 0 {
+                    next_text_page_offset(
+                        artifact,
+                        self.byte_offset,
+                        viewport.rows,
+                        viewport.columns,
+                    )
+                } else {
+                    self.byte_offset
+                };
+                (true, next)
+            }
+            Navigation::Page(direction) => (
+                false,
+                if direction < 0 {
+                    self.row_offset.saturating_sub(page_rows)
+                } else if direction > 0 {
+                    self.row_offset.saturating_add(page_rows).min(maximum)
+                } else {
+                    self.row_offset
+                },
+            ),
+            Navigation::Home => (view == EffectiveView::Text, 0),
+            Navigation::End if view == EffectiveView::Text => {
+                let Some(artifact) = self.active_artifact.as_ref() else {
+                    return false;
+                };
+                (
+                    true,
+                    last_text_page_offset(artifact, viewport.rows, viewport.columns),
+                )
+            }
+            Navigation::End => (false, maximum),
+        };
+        let offset = if bytes {
+            &mut self.byte_offset
+        } else {
+            &mut self.row_offset
+        };
+        if *offset == next {
+            return false;
+        }
+        *offset = next;
+        true
+    }
+
+    pub(super) fn present(&mut self, viewport: Viewport) -> Presentation<'_> {
+        let view = effective_view(
+            self.view,
+            self.active_artifact.as_ref(),
+            matches!(self.status, Status::Failed(_)),
+        );
+        let old_viewport = self.viewport.unwrap_or(Viewport {
+            rows: 10,
+            columns: 78,
+        });
+        let visible = viewport.rows > 0 && viewport.columns > 0;
+        if visible {
+            match view {
+                EffectiveView::Hex => {
+                    let visible_byte = self
+                        .row_offset
+                        .saturating_mul(hex_bytes_per_row(old_viewport.columns));
+                    let bytes_per_row = hex_bytes_per_row(viewport.columns);
+                    let maximum = self.active_artifact.as_ref().map_or(0, |artifact| {
+                        artifact
+                            .bytes()
+                            .len()
+                            .div_ceil(bytes_per_row)
+                            .saturating_sub(
+                                hex_visible_row_capacity(
+                                    viewport.rows.saturating_sub(1),
+                                    viewport.columns,
+                                )
+                                .max(1),
+                            )
+                    });
+                    self.row_offset = (visible_byte / bytes_per_row).min(maximum);
+                }
+                EffectiveView::Trace => {
+                    let start = trace_start_row(&self.traces, self.row_offset, old_viewport.rows);
+                    let maximum = self.traces.len().saturating_sub(
+                        trace_visible_row_capacity(&self.traces, viewport.rows, viewport.columns)
+                            .max(1),
+                    );
+                    self.row_offset = start.min(maximum);
+                }
+                EffectiveView::Text | EffectiveView::Unavailable => {}
+            }
+            self.viewport = Some(viewport);
+        }
+        self.viewport_visible = visible;
+
+        let body = if !visible {
+            Body::Empty
+        } else {
+            match &self.status {
+                Status::Idle => Body::Empty,
+                Status::Cancelled if self.traces.is_empty() => Body::Cancelled,
+                Status::Failed(error) if matches!(self.view, ViewMode::Text | ViewMode::Hex) => {
+                    Body::Failure {
+                        error,
+                        switch_to_trace: true,
+                    }
+                }
+                status => match effective_view(
+                    self.view,
+                    self.active_artifact.as_ref(),
+                    matches!(status, Status::Failed(_)),
+                ) {
+                    EffectiveView::Text => Body::Text(
+                        self.active_artifact
+                            .as_ref()
+                            .map(|artifact| {
+                                render_text_window(
+                                    artifact,
+                                    self.byte_offset,
+                                    viewport.rows,
+                                    viewport.columns,
+                                )
+                                .text
+                            })
+                            .unwrap_or_default(),
+                    ),
+                    EffectiveView::Hex => Body::Hex(self.active_artifact.as_ref().map_or_else(
+                        Vec::new,
+                        |artifact| {
+                            visible_hex_rows(
+                                artifact,
+                                self.row_offset,
+                                viewport.rows.saturating_sub(1),
+                                viewport.columns,
+                            )
+                        },
+                    )),
+                    EffectiveView::Trace if self.traces.is_empty() => Body::Trace(TraceWindow {
+                        traces: &self.traces,
+                        visible: 0..0,
+                        failure: None,
+                        detail_height: 0,
+                        byte_budget: VISIBLE_TEXT_BYTE_BUDGET,
+                    }),
+                    EffectiveView::Trace => {
+                        let start = trace_start_row(&self.traces, self.row_offset, viewport.rows)
+                            .min(self.traces.len());
+                        let end = start
+                            .saturating_add(trace_visible_row_capacity(
+                                &self.traces,
+                                viewport.rows,
+                                viewport.columns,
+                            ))
+                            .min(self.traces.len());
+                        Body::Trace(TraceWindow {
+                            traces: &self.traces,
+                            visible: start..end,
+                            failure: self.traces.iter().position(|trace| {
+                                trace.status == crate::pipeline::StepStatus::Failed
+                            }),
+                            detail_height: trace_failure_detail_height(&self.traces, viewport.rows),
+                            byte_budget: VISIBLE_TEXT_BYTE_BUDGET,
+                        })
+                    }
+                    EffectiveView::Unavailable => Body::TextUnavailable,
+                },
+            }
+        };
+        Presentation {
+            summary: self.summary(),
+            body,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct TextWindow {
-    pub text: String,
-    pub next_offset: usize,
-    pub inspected_bytes: usize,
+struct TextWindow {
+    text: String,
+    next_offset: usize,
+    inspected_bytes: usize,
 }
 
-pub(super) fn effective_view(
-    mode: ViewMode,
-    artifact: Option<&Artifact>,
-    failed: bool,
-) -> EffectiveView {
+fn effective_view(mode: ViewMode, artifact: Option<&Artifact>, failed: bool) -> EffectiveView {
     match mode {
         ViewMode::Smart if failed => EffectiveView::Trace,
         ViewMode::Smart => match artifact {
@@ -369,7 +667,7 @@ fn is_dangerous_text_control(character: char) -> bool {
     character == '\r' || crate::error::is_dangerous_control(character)
 }
 
-pub(super) fn render_text_window(
+fn render_text_window(
     artifact: &Artifact,
     offset: usize,
     rows: usize,
@@ -469,11 +767,11 @@ pub(super) fn render_text_window(
     }
 }
 
-pub(super) fn next_text_offset(artifact: &Artifact, offset: usize) -> usize {
+fn next_text_offset(artifact: &Artifact, offset: usize) -> usize {
     render_text_window(artifact, offset, 1, 1).next_offset
 }
 
-pub(super) fn previous_text_offset(artifact: &Artifact, offset: usize) -> usize {
+fn previous_text_offset(artifact: &Artifact, offset: usize) -> usize {
     if !artifact.is_utf8() {
         return 0;
     }
@@ -486,16 +784,11 @@ pub(super) fn previous_text_offset(artifact: &Artifact, offset: usize) -> usize 
         .map_or(start, |(relative, _)| start + relative)
 }
 
-pub(super) fn last_text_offset(artifact: &Artifact) -> usize {
+fn last_text_offset(artifact: &Artifact) -> usize {
     previous_text_offset(artifact, artifact.bytes().len())
 }
 
-pub(super) fn next_text_page_offset(
-    artifact: &Artifact,
-    offset: usize,
-    rows: usize,
-    columns: usize,
-) -> usize {
+fn next_text_page_offset(artifact: &Artifact, offset: usize, rows: usize, columns: usize) -> usize {
     if rows == 0 || columns == 0 {
         return offset.min(artifact.bytes().len());
     }
@@ -507,7 +800,7 @@ pub(super) fn next_text_page_offset(
     }
 }
 
-pub(super) fn previous_text_page_offset(
+fn previous_text_page_offset(
     artifact: &Artifact,
     offset: usize,
     rows: usize,
@@ -539,7 +832,7 @@ pub(super) fn previous_text_page_offset(
     search_start
 }
 
-pub(super) fn last_text_page_offset(artifact: &Artifact, rows: usize, columns: usize) -> usize {
+fn last_text_page_offset(artifact: &Artifact, rows: usize, columns: usize) -> usize {
     previous_text_page_offset(artifact, artifact.bytes().len(), rows, columns)
 }
 
@@ -549,7 +842,7 @@ pub(super) struct HexRow<'a> {
     pub(super) bytes: &'a [u8],
 }
 
-pub(super) fn hex_bytes_per_row(columns: usize) -> usize {
+fn hex_bytes_per_row(columns: usize) -> usize {
     if columns < 60 { 8 } else { 16 }
 }
 
@@ -561,13 +854,13 @@ fn hex_row_cost(columns: usize) -> usize {
     }
 }
 
-pub(super) fn hex_visible_row_capacity(rows: usize, columns: usize) -> usize {
+fn hex_visible_row_capacity(rows: usize, columns: usize) -> usize {
     let row_cost = hex_row_cost(columns);
     let budget_rows = VISIBLE_TEXT_BYTE_BUDGET.saturating_sub(row_cost) / row_cost.max(1);
     rows.min(budget_rows)
 }
 
-pub(super) fn visible_hex_rows<'a>(
+fn visible_hex_rows<'a>(
     artifact: &'a Artifact,
     row_offset: usize,
     rows: usize,
@@ -594,10 +887,7 @@ pub(super) fn visible_hex_rows<'a>(
     visible
 }
 
-pub(super) fn trace_failure_detail_height(
-    traces: &[crate::pipeline::StepTrace],
-    area_height: usize,
-) -> usize {
+fn trace_failure_detail_height(traces: &[crate::pipeline::StepTrace], area_height: usize) -> usize {
     let has_failure_detail = traces
         .iter()
         .take(crate::MAX_STEPS)
@@ -612,7 +902,7 @@ pub(super) fn trace_failure_detail_height(
     }
 }
 
-pub(super) fn trace_visible_row_capacity(
+fn trace_visible_row_capacity(
     traces: &[crate::pipeline::StepTrace],
     area_height: usize,
     columns: usize,
@@ -630,7 +920,7 @@ pub(super) fn trace_visible_row_capacity(
     geometry_rows.min(budget_rows)
 }
 
-pub(super) fn trace_start_row(
+fn trace_start_row(
     traces: &[crate::pipeline::StepTrace],
     row_offset: usize,
     area_height: usize,
@@ -730,7 +1020,7 @@ mod tests {
     use super::*;
     use crate::pipeline::StepStatus;
 
-    fn finish(
+    fn finish_with_traces(
         output: &mut Output,
         target: crate::pipeline::ExecutionTarget,
         bytes: &[u8],
@@ -751,6 +1041,161 @@ mod tests {
             }),
             LifecycleChange::Changed
         );
+    }
+
+    fn finish(output: &mut Output, target: ExecutionTarget, bytes: &[u8]) {
+        finish_with_traces(output, target, bytes, Vec::new());
+    }
+
+    fn ready_output(bytes: Vec<u8>) -> Output {
+        let mut output = Output::new();
+        finish(&mut output, ExecutionTarget::Final, &bytes);
+        output
+    }
+
+    fn first_hex_offset(presentation: Presentation<'_>) -> usize {
+        match presentation.body {
+            Body::Hex(rows) => rows.first().map_or(0, |row| row.offset),
+            _ => panic!("expected hex presentation"),
+        }
+    }
+
+    fn first_trace_step(presentation: Presentation<'_>) -> Option<usize> {
+        match presentation.body {
+            Body::Trace(window) => window
+                .traces
+                .get(window.visible.start)
+                .map(|trace| trace.step),
+            _ => panic!("expected trace presentation"),
+        }
+    }
+
+    #[test]
+    fn hex_resize_preserves_the_first_visible_byte() {
+        let mut output = ready_output((0_u8..=127).collect());
+        output.navigate(Navigation::NextView); // Smart Text → Text
+        output.navigate(Navigation::NextView); // Text → Hex
+        output.present(Viewport {
+            rows: 5,
+            columns: 78,
+        });
+        output.navigate(Navigation::Page(1));
+
+        let before = first_hex_offset(output.present(Viewport {
+            rows: 5,
+            columns: 78,
+        }));
+        let after = first_hex_offset(output.present(Viewport {
+            rows: 5,
+            columns: 40,
+        }));
+
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn text_end_presents_the_last_full_page_without_exposing_an_offset() {
+        let mut output = ready_output(b"one\ntwo\nthree\nfour\nfive".to_vec());
+        output.present(Viewport {
+            rows: 2,
+            columns: 8,
+        });
+
+        assert!(output.navigate(Navigation::End));
+        let Presentation {
+            body: Body::Text(text),
+            ..
+        } = output.present(Viewport {
+            rows: 2,
+            columns: 8,
+        })
+        else {
+            panic!("expected text presentation");
+        };
+
+        assert_eq!(text, "four\nfive");
+    }
+
+    #[test]
+    fn hidden_hex_preserves_the_last_nonzero_geometry_until_reopened() {
+        let mut output = ready_output((0_u8..=127).collect());
+        output.navigate(Navigation::NextView);
+        output.navigate(Navigation::NextView);
+        let viewport = Viewport {
+            rows: 5,
+            columns: 78,
+        };
+        output.present(viewport);
+        assert!(output.navigate(Navigation::Page(1)));
+        let before = first_hex_offset(output.present(viewport));
+        assert_eq!(before, 64);
+
+        assert!(matches!(
+            output
+                .present(Viewport {
+                    rows: 0,
+                    columns: 0,
+                })
+                .body,
+            Body::Empty
+        ));
+        assert!(!output.navigate(Navigation::Home));
+
+        assert_eq!(first_hex_offset(output.present(viewport)), before);
+    }
+
+    #[test]
+    fn hidden_trace_preserves_the_last_nonzero_geometry_until_reopened() {
+        let mut output = Output::new();
+        let traces = (1..=10)
+            .map(|step| StepTrace {
+                step,
+                transform_id: "base64-decode",
+                input_bytes: Some(4),
+                output_bytes: (step != 2).then_some(3),
+                elapsed: None,
+                status: if step == 2 {
+                    StepStatus::Failed
+                } else {
+                    StepStatus::Succeeded
+                },
+                error: (step == 2)
+                    .then_some(crate::error::TransformError::InvalidBase64 { position: Some(1) }),
+            })
+            .collect();
+        assert_eq!(
+            output.update(Lifecycle::Finish {
+                target: ExecutionTarget::Final,
+                outcome: crate::pipeline::ExecutionOutcome::Failed(PipelineError::Step {
+                    step: 2,
+                    transform_id: "base64-decode",
+                    source: crate::error::TransformError::InvalidBase64 { position: Some(1) },
+                }),
+                traces,
+            }),
+            LifecycleChange::Changed
+        );
+        let viewport = Viewport {
+            rows: 8,
+            columns: 80,
+        };
+        output.present(viewport);
+        assert!(output.navigate(Navigation::Page(1)));
+        let before = first_trace_step(output.present(viewport));
+        assert_eq!(before, Some(5));
+
+        assert!(matches!(
+            output
+                .present(Viewport {
+                    rows: 0,
+                    columns: 0,
+                })
+                .body,
+            Body::Empty
+        ));
+        assert!(!output.navigate(Navigation::Home));
+
+        assert_eq!(first_trace_step(output.present(viewport)), before);
     }
 
     #[test]
@@ -774,13 +1219,13 @@ mod tests {
             status: StepStatus::Succeeded,
             error: None,
         }];
-        finish(
+        finish_with_traces(
             &mut output,
             crate::pipeline::ExecutionTarget::Final,
             b"final",
             final_traces.clone(),
         );
-        finish(
+        finish_with_traces(
             &mut output,
             crate::pipeline::ExecutionTarget::Step(0),
             b"step",
@@ -804,7 +1249,6 @@ mod tests {
             &mut output,
             crate::pipeline::ExecutionTarget::Final,
             b"final",
-            Vec::new(),
         );
 
         assert_eq!(

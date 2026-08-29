@@ -225,8 +225,9 @@ Expected: final/step/restore/invalidate/tick 규칙과 기존 App event 테스�
 - Modify: `src/tui/output.rs`
 - Modify: `src/tui/state.rs`
 - Modify: `src/tui/render.rs`
+- Modify: `AGENTS.md`
 
-- [ ] **Step 1: viewport·navigation·presentation 실패 테스트 작성**
+- [x] **Step 1: viewport·navigation·presentation 실패 테스트 작성**
 
 `src/tui/output.rs`에 최소 두 테스트를 interface만 사용해 먼저 작성한다.
 
@@ -276,9 +277,9 @@ Run:
 
     cargo test --locked tui::output::tests::hex_resize_preserves_the_first_visible_byte -- --exact
 
-Expected: `Viewport`, `Navigation`, `Presentation`과 `present`가 없어 compile failure.
+Expected: `Navigation`, `Presentation`과 `present`가 없어 compile failure.
 
-- [ ] **Step 2: semantic navigation과 presentation 타입 추가**
+- [x] **Step 2: semantic navigation과 presentation 타입 추가**
 
 `src/tui/output.rs`에서 Task 2가 도입한 `Viewport`를 그대로 사용하고 다음 API를 추가한다. 이 단계에서 임시 `pub(super)` 필드를 포함한 모든 Output 상태 필드를 private으로 만든다.
 
@@ -328,7 +329,7 @@ Output은 `pub(super) fn navigate(&mut self, Navigation) -> bool`와 `pub(super)
 
 0×0 viewport는 empty visible data를 반환하고 navigation은 no-op이다. 기존 `views.rs`의 Unicode, budget, Hex와 Trace helper는 private implementation으로 재사용한다.
 
-- [ ] **Step 3: App의 key mapping만 남기기**
+- [x] **Step 3: App의 key mapping만 남기기**
 
 `src/tui/state.rs`에서 `cycle_view`, `output_page_rows`, `output_max_offset`, `page_output`, `scroll_output`, `output_home_or_end`와 viewport reflow 계산을 제거한다.
 
@@ -344,7 +345,9 @@ Output은 `pub(super) fn navigate(&mut self, Navigation) -> bool`와 `pub(super)
 
 `navigate`가 `true`를 반환할 때만 `mark_dirty`를 호출한다. copy와 zoom key는 기존 App 흐름에 남긴다.
 
-- [ ] **Step 4: render를 presentation 소비자로 축소**
+Output 필드 privacy 때문에 compile되지 않는 `state.rs`·`render.rs` test fixture와 assertion도 이 task에서 lifecycle·navigation·presentation interface로 최소 교체한다. test-only setter/getter는 추가하지 않는다. Task 4는 남은 동작 그룹의 위치를 정리하고 superseded 중복 test를 삭제한다.
+
+- [x] **Step 4: render를 presentation 소비자로 축소**
 
 `src/tui/render.rs`는 Output content `Rect`에서 다음 값만 만든다.
 
@@ -356,7 +359,11 @@ Output은 `pub(super) fn navigate(&mut self, Navigation) -> bool`와 `pub(super)
 
 그 뒤 `Body`를 match해 기존 widget과 style을 그대로 사용한다. Text·Hex·Trace helper에는 App이나 Output을 넘기지 않고 presentation data와 기존 `no_color` 값만 전달한다. title, footer, pipeline과 inspector는 `Summary`를 사용한다.
 
-- [ ] **Step 5: 내부 상태 누수와 동작 회귀 확인**
+같은 구조 commit에서 `AGENTS.md` tree의 `views.rs` 항목을 다음 한 줄로 교체한다.
+
+    ├── output.rs          # Output 상태·View·탐색·표시 데이터
+
+- [x] **Step 5: 내부 상태 누수와 동작 회귀 확인**
 
 Run:
 
@@ -370,9 +377,9 @@ Run:
 
 Expected: 세 test module이 통과하고 두 `rg` 명령은 match가 없어 exit 1이다.
 
-- [ ] **Step 6: 논리 커밋**
+- [x] **Step 6: 논리 커밋**
 
-    git add src/tui/output.rs src/tui/state.rs src/tui/render.rs docs/superpowers/plans/2026-08-29-toc-output-module-deepening.md
+    git add src/tui/output.rs src/tui/state.rs src/tui/render.rs AGENTS.md docs/superpowers/plans/2026-08-29-toc-output-module-deepening.md
     git diff --cached --check
     git commit -m "refactor(tui): Output 표시와 탐색 집중"
 
@@ -406,7 +413,7 @@ failure와 traces가 필요한 테스트는 `Lifecycle::Finish` 값을 test 안�
 
 - [ ] **Step 3: render fixture의 직접 필드 조작 제거**
 
-`src/tui/render.rs` 테스트 setup은 `Lifecycle::Finish`, `Navigation`과 `present`로 상태를 만든다. `#[cfg(test)]` setter나 offset getter는 추가하지 않는다. 기존 제목, no-color, 열, 작은 화면과 failure detail의 semantic assertion은 그대로 유지한다.
+Task 3에서 interface로 바꾼 `src/tui/render.rs` fixture를 재검토하고 반복 setup을 `Lifecycle::Finish`, `Navigation`과 `present` 중심으로 통합한다. `#[cfg(test)]` setter나 offset getter는 추가하지 않는다. 기존 제목, no-color, 열, 작은 화면과 failure detail의 semantic assertion은 그대로 유지한다.
 
 - [ ] **Step 4: 중복 테스트 삭제 후 focused suite 실행**
 
@@ -433,14 +440,14 @@ Expected: 모든 focused test가 통과하고 마지막 `rg`는 match가 없다.
 
 **Files:**
 
-- Modify: `AGENTS.md`
+- Verify: `AGENTS.md`
 - Verify: `CONTEXT.md`
 - Verify: `docs/superpowers/specs/2026-08-29-toc-output-module-deepening-design.md`
 - Modify: `docs/superpowers/plans/2026-08-29-toc-output-module-deepening.md`
 
 - [ ] **Step 1: 구조 문서 최소 변경**
 
-`AGENTS.md` tree에서 다음 한 줄만 교체한다.
+Task 3에서 갱신한 `AGENTS.md` tree에 다음 한 줄이 유지되는지 확인한다.
 
     ├── output.rs          # Output 상태·View·탐색·표시 데이터
 
@@ -488,7 +495,7 @@ Expected: ccc index error 0, whitespace 오류 없음, 의도한 파일만 변�
 
 - [ ] **Step 6: 문서 논리 커밋**
 
-    git add AGENTS.md CONTEXT.md docs/superpowers/specs/2026-08-29-toc-output-module-deepening-design.md docs/superpowers/plans/2026-08-29-toc-output-module-deepening.md
+    git add CONTEXT.md docs/superpowers/specs/2026-08-29-toc-output-module-deepening-design.md docs/superpowers/plans/2026-08-29-toc-output-module-deepening.md
     git diff --cached --check
     git commit -m "docs(tui): Output 구조 문서 현행화"
 

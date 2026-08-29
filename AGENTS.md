@@ -21,7 +21,7 @@ toc/
 │       ├── state.rs       # 상태·이벤트·Effect
 │       ├── worker.rs      # Preview Worker
 │       ├── render.rs      # 레이아웃·렌더링
-│       ├── views.rs       # Text·Hex·Trace View
+│       ├── output.rs          # Output 상태·View·탐색·표시 데이터
 │       └── clipboard.rs   # 복사 준비·쓰기
 ├── tests/
 │   ├── cli.rs             # CLI 통합
