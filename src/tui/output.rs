@@ -1,10 +1,20 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use unicode_segmentation::UnicodeSegmentation as _;
 use unicode_width::UnicodeWidthStr as _;
 
+use crate::{
+    MAX_STEPS,
+    error::PipelineError,
+    pipeline::{ExecutionOutcome, ExecutionTarget, StepTrace},
+};
+
 pub(super) const VISIBLE_TEXT_BYTE_BUDGET: usize = 4 * 1024;
 pub(super) const TEXT_VIEW_UNAVAILABLE_MESSAGE: &str = "Switch to Hex view";
+pub(super) const LONG_RUNNING_AFTER: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug)]
 pub(super) struct Artifact {
@@ -44,6 +54,253 @@ pub(super) enum EffectiveView {
     Hex,
     Trace,
     Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Source {
+    Final,
+    Step(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Status {
+    Idle,
+    Debouncing {
+        deadline: Instant,
+    },
+    Running {
+        started_at: Instant,
+        target: ExecutionTarget,
+        notice_visible: bool,
+    },
+    Ready,
+    Failed(PipelineError),
+    Cancelled,
+}
+
+impl Status {
+    pub(super) fn running(started_at: Instant, target: ExecutionTarget) -> Self {
+        Self::Running {
+            started_at,
+            target,
+            notice_visible: false,
+        }
+    }
+
+    pub(super) fn running_target(&self) -> Option<ExecutionTarget> {
+        match self {
+            Self::Running { target, .. } => Some(*target),
+            _ => None,
+        }
+    }
+
+    pub(super) fn long_running_notice(&self) -> bool {
+        matches!(
+            self,
+            Self::Running {
+                notice_visible: true,
+                ..
+            }
+        )
+    }
+}
+
+pub(super) enum Lifecycle {
+    Invalidate {
+        deadline: Instant,
+    },
+    Start {
+        started_at: Instant,
+        target: ExecutionTarget,
+    },
+    Finish {
+        target: ExecutionTarget,
+        outcome: ExecutionOutcome,
+        traces: Vec<StepTrace>,
+    },
+    RestoreFinal,
+    Cancel,
+    Tick {
+        now: Instant,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LifecycleChange {
+    Unchanged,
+    Changed,
+    StartFinal,
+    FinalUnavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct Viewport {
+    pub(super) rows: usize,
+    pub(super) columns: usize,
+}
+
+#[allow(dead_code)]
+pub(super) struct Summary<'a> {
+    pub(super) source: Source,
+    pub(super) requested_view: ViewMode,
+    pub(super) effective_view: EffectiveView,
+    pub(super) status: &'a Status,
+    pub(super) ready_bytes: Option<&'a [u8]>,
+    pub(super) artifact: Option<&'a Artifact>,
+    pub(super) traces: &'a [StepTrace],
+}
+
+pub(super) struct Output {
+    pub(super) source: Source,
+    pub(super) view: ViewMode,
+    pub(super) status: Status,
+    pub(super) final_artifact: Option<Artifact>,
+    pub(super) final_traces: Vec<StepTrace>,
+    pub(super) active_artifact: Option<Artifact>,
+    pub(super) traces: Vec<StepTrace>,
+    pub(super) byte_offset: usize,
+    pub(super) row_offset: usize,
+    pub(super) viewport: Option<Viewport>,
+}
+
+impl Output {
+    pub(super) fn new() -> Self {
+        Self {
+            source: Source::Final,
+            view: ViewMode::Smart,
+            status: Status::Idle,
+            final_artifact: None,
+            final_traces: Vec::new(),
+            active_artifact: None,
+            traces: Vec::new(),
+            byte_offset: 0,
+            row_offset: 0,
+            viewport: None,
+        }
+    }
+
+    pub(super) fn update(&mut self, lifecycle: Lifecycle) -> LifecycleChange {
+        match lifecycle {
+            Lifecycle::Invalidate { deadline } => {
+                self.status = Status::Debouncing { deadline };
+                self.final_artifact = None;
+                self.final_traces.clear();
+                LifecycleChange::Changed
+            }
+            Lifecycle::Start { started_at, target } => {
+                self.status = Status::running(started_at, target);
+                LifecycleChange::Changed
+            }
+            Lifecycle::Finish {
+                target,
+                outcome,
+                mut traces,
+            } => {
+                traces.truncate(MAX_STEPS);
+                self.source = match target {
+                    ExecutionTarget::Final => Source::Final,
+                    ExecutionTarget::Step(index) => Source::Step(index),
+                };
+                self.traces = traces;
+                self.byte_offset = 0;
+                self.row_offset = 0;
+                match outcome {
+                    ExecutionOutcome::Success(bytes) => {
+                        let artifact = Artifact::new(bytes);
+                        if target == ExecutionTarget::Final {
+                            self.final_artifact = Some(artifact.clone());
+                            self.final_traces.clone_from(&self.traces);
+                        }
+                        self.active_artifact = Some(artifact);
+                        self.status = Status::Ready;
+                    }
+                    ExecutionOutcome::Failed(error) => {
+                        self.active_artifact = None;
+                        if target == ExecutionTarget::Final {
+                            self.final_artifact = None;
+                            self.final_traces.clear();
+                        }
+                        self.status = Status::Failed(error);
+                    }
+                    ExecutionOutcome::Cancelled => {
+                        self.active_artifact = None;
+                        if target == ExecutionTarget::Final {
+                            self.final_artifact = None;
+                            self.final_traces.clear();
+                        }
+                        self.status = Status::Cancelled;
+                    }
+                }
+                LifecycleChange::Changed
+            }
+            Lifecycle::RestoreFinal => {
+                let Some(artifact) = self.final_artifact.clone() else {
+                    return LifecycleChange::FinalUnavailable;
+                };
+                self.source = Source::Final;
+                self.status = Status::Ready;
+                self.active_artifact = Some(artifact);
+                self.traces.clone_from(&self.final_traces);
+                self.byte_offset = 0;
+                self.row_offset = 0;
+                LifecycleChange::Changed
+            }
+            Lifecycle::Cancel => {
+                if !matches!(
+                    self.status,
+                    Status::Debouncing { .. } | Status::Running { .. }
+                ) {
+                    return LifecycleChange::Unchanged;
+                }
+                self.status = Status::Cancelled;
+                self.active_artifact = None;
+                self.traces.clear();
+                LifecycleChange::Changed
+            }
+            Lifecycle::Tick { now } => match &mut self.status {
+                Status::Debouncing { deadline } if now >= *deadline => {
+                    self.status = Status::running(now, ExecutionTarget::Final);
+                    LifecycleChange::StartFinal
+                }
+                Status::Running {
+                    started_at,
+                    notice_visible,
+                    ..
+                } if !*notice_visible
+                    && now.saturating_duration_since(*started_at) >= LONG_RUNNING_AFTER =>
+                {
+                    *notice_visible = true;
+                    LifecycleChange::Changed
+                }
+                _ => LifecycleChange::Unchanged,
+            },
+        }
+    }
+
+    pub(super) fn summary(&self) -> Summary<'_> {
+        let artifact = self.active_artifact.as_ref();
+        Summary {
+            source: self.source,
+            requested_view: self.view,
+            effective_view: effective_view(
+                self.view,
+                artifact,
+                matches!(self.status, Status::Failed(_)),
+            ),
+            status: &self.status,
+            ready_bytes: matches!(self.status, Status::Ready)
+                .then(|| artifact.map(Artifact::bytes))
+                .flatten(),
+            artifact,
+            traces: &self.traces,
+        }
+    }
+
+    pub(super) fn copy_artifact(&self) -> Option<Artifact> {
+        matches!(self.status, Status::Ready)
+            .then(|| self.active_artifact.clone())
+            .flatten()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -471,6 +728,149 @@ pub(super) fn render_pipeline_error_summary(error: &crate::error::PipelineError)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::StepStatus;
+
+    fn finish(
+        output: &mut Output,
+        target: crate::pipeline::ExecutionTarget,
+        bytes: &[u8],
+        traces: Vec<StepTrace>,
+    ) {
+        assert_eq!(
+            output.update(Lifecycle::Start {
+                started_at: std::time::Instant::now(),
+                target,
+            }),
+            LifecycleChange::Changed
+        );
+        assert_eq!(
+            output.update(Lifecycle::Finish {
+                target,
+                outcome: crate::pipeline::ExecutionOutcome::Success(bytes.to_vec()),
+                traces,
+            }),
+            LifecycleChange::Changed
+        );
+    }
+
+    #[test]
+    fn selected_output_preserves_the_final_snapshot_for_restore() {
+        let mut output = Output::new();
+        let final_traces = vec![StepTrace {
+            step: 1,
+            transform_id: "base64-encode",
+            input_bytes: Some(3),
+            output_bytes: Some(4),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        }];
+        let step_traces = vec![StepTrace {
+            step: 2,
+            transform_id: "hex-encode",
+            input_bytes: Some(4),
+            output_bytes: Some(8),
+            elapsed: None,
+            status: StepStatus::Succeeded,
+            error: None,
+        }];
+        finish(
+            &mut output,
+            crate::pipeline::ExecutionTarget::Final,
+            b"final",
+            final_traces.clone(),
+        );
+        finish(
+            &mut output,
+            crate::pipeline::ExecutionTarget::Step(0),
+            b"step",
+            step_traces,
+        );
+
+        assert_eq!(
+            output.update(Lifecycle::RestoreFinal),
+            LifecycleChange::Changed
+        );
+        let summary = output.summary();
+        assert_eq!(summary.source, Source::Final);
+        assert_eq!(summary.artifact.unwrap().bytes(), b"final");
+        assert_eq!(summary.traces, final_traces);
+    }
+
+    #[test]
+    fn invalidation_keeps_current_output_but_blocks_copy_and_final_restore() {
+        let mut output = Output::new();
+        finish(
+            &mut output,
+            crate::pipeline::ExecutionTarget::Final,
+            b"final",
+            Vec::new(),
+        );
+
+        assert_eq!(
+            output.update(Lifecycle::Invalidate {
+                deadline: std::time::Instant::now(),
+            }),
+            LifecycleChange::Changed
+        );
+        assert_eq!(output.summary().artifact.unwrap().bytes(), b"final");
+        assert!(output.copy_artifact().is_none());
+        assert_eq!(
+            output.update(Lifecycle::RestoreFinal),
+            LifecycleChange::FinalUnavailable
+        );
+    }
+
+    #[test]
+    fn tick_requests_final_once_at_deadline() {
+        let mut output = Output::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1);
+        output.update(Lifecycle::Invalidate { deadline });
+
+        assert_eq!(
+            output.update(Lifecycle::Tick {
+                now: deadline - std::time::Duration::from_nanos(1),
+            }),
+            LifecycleChange::Unchanged
+        );
+        assert_eq!(
+            output.update(Lifecycle::Tick { now: deadline }),
+            LifecycleChange::StartFinal
+        );
+        assert_eq!(
+            output.update(Lifecycle::Tick { now: deadline }),
+            LifecycleChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn tick_shows_the_long_running_notice_once_at_threshold() {
+        let mut output = Output::new();
+        let started_at = std::time::Instant::now();
+        output.update(Lifecycle::Start {
+            started_at,
+            target: crate::pipeline::ExecutionTarget::Final,
+        });
+
+        assert_eq!(
+            output.update(Lifecycle::Tick {
+                now: started_at + LONG_RUNNING_AFTER - std::time::Duration::from_nanos(1),
+            }),
+            LifecycleChange::Unchanged
+        );
+        assert_eq!(
+            output.update(Lifecycle::Tick {
+                now: started_at + LONG_RUNNING_AFTER,
+            }),
+            LifecycleChange::Changed
+        );
+        assert_eq!(
+            output.update(Lifecycle::Tick {
+                now: started_at + LONG_RUNNING_AFTER,
+            }),
+            LifecycleChange::Unchanged
+        );
+    }
 
     #[test]
     fn summarizes_utf16_errors_without_input_content() {

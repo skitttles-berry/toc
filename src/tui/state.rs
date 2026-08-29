@@ -9,21 +9,27 @@ use tui_textarea::{TextArea, WrapMode};
 
 use crate::{
     MAX_STEPS, TUI_INPUT_LIMIT, TUI_INPUT_LINE_LIMIT, TUI_UNDO_HISTORY_LIMIT,
-    error::PipelineError,
-    pipeline::{ExecutionOutcome, ExecutionTarget, StepTrace, TransformStep},
+    pipeline::{ExecutionTarget, TransformStep},
     transforms::{TransformDefinition, transform_by_id, transforms},
 };
 
 use super::{
     clipboard::{ClipboardPayload, CopyJob, CopyKind, CopyMode, PreparedCopy},
     output::{
-        Artifact, EffectiveView, ViewMode, effective_view, hex_bytes_per_row,
-        hex_visible_row_capacity, last_text_offset, last_text_page_offset, next_text_offset,
-        next_text_page_offset, previous_text_offset, previous_text_page_offset, trace_start_row,
-        trace_visible_row_capacity,
+        EffectiveView, Lifecycle, LifecycleChange, Output, ViewMode, Viewport, effective_view,
+        hex_bytes_per_row, hex_visible_row_capacity, last_text_offset, last_text_page_offset,
+        next_text_offset, next_text_page_offset, previous_text_offset, previous_text_page_offset,
+        trace_start_row, trace_visible_row_capacity,
     },
     worker::{PreviewJob, PreviewResult},
 };
+
+pub(super) use super::output::{Source as OutputSource, Status as OutputStatus};
+
+#[cfg(test)]
+pub(super) use super::output::{Artifact, LONG_RUNNING_AFTER};
+#[cfg(test)]
+use crate::pipeline::StepTrace;
 
 #[cfg(test)]
 use super::clipboard::{checked_hex_len, clipboard_payload, format_text_for_copy, prepare_copy};
@@ -87,57 +93,7 @@ pub(super) enum Pane {
     Pipeline,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OutputSource {
-    Final,
-    Step(usize),
-}
-
-pub(super) const LONG_RUNNING_AFTER: Duration = Duration::from_secs(1);
 pub(super) const TRANSIENT_STATUS_FOR: Duration = Duration::from_secs(2);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum OutputStatus {
-    Idle,
-    Debouncing {
-        deadline: Instant,
-    },
-    Running {
-        started_at: Instant,
-        target: ExecutionTarget,
-        notice_visible: bool,
-    },
-    Ready,
-    Failed(PipelineError),
-    Cancelled,
-}
-
-impl OutputStatus {
-    pub(super) fn running(started_at: Instant, target: ExecutionTarget) -> Self {
-        Self::Running {
-            started_at,
-            target,
-            notice_visible: false,
-        }
-    }
-
-    pub(super) fn running_target(&self) -> Option<ExecutionTarget> {
-        match self {
-            Self::Running { target, .. } => Some(*target),
-            _ => None,
-        }
-    }
-
-    pub(super) fn long_running_notice(&self) -> bool {
-        matches!(
-            self,
-            Self::Running {
-                notice_visible: true,
-                ..
-            }
-        )
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CopyPhase {
@@ -145,19 +101,6 @@ pub(super) enum CopyPhase {
     Preparing { request_id: u64 },
     AwaitingConfirmation { request_id: u64 },
     Writing { request_id: u64, kind: CopyKind },
-}
-
-pub(super) struct OutputState {
-    pub(super) source: OutputSource,
-    pub(super) view: ViewMode,
-    pub(super) status: OutputStatus,
-    pub(super) final_artifact: Option<Artifact>,
-    pub(super) final_traces: Vec<StepTrace>,
-    pub(super) active_artifact: Option<Artifact>,
-    pub(super) traces: Vec<StepTrace>,
-    pub(super) byte_offset: usize,
-    pub(super) row_offset: usize,
-    viewport: Option<Rect>,
 }
 
 #[allow(dead_code)]
@@ -225,7 +168,7 @@ pub(super) struct App {
     pub(super) zoom: Option<Pane>,
     pub(super) steps: Vec<TransformStep>,
     pub(super) selected_step: usize,
-    pub(super) output: OutputState,
+    pub(super) output: Output,
     pub(super) request_id: u64,
     copy_request_id: u64,
     pub(super) copy_phase: CopyPhase,
@@ -269,18 +212,7 @@ impl App {
             zoom: None,
             steps: Vec::new(),
             selected_step: 0,
-            output: OutputState {
-                source: OutputSource::Final,
-                view: ViewMode::Smart,
-                status: OutputStatus::Idle,
-                final_artifact: None,
-                final_traces: Vec::new(),
-                active_artifact: None,
-                traces: Vec::new(),
-                byte_offset: 0,
-                row_offset: 0,
-                viewport: None,
-            },
+            output: Output::new(),
             request_id: 0,
             copy_request_id: 0,
             copy_phase: CopyPhase::Idle,
@@ -380,11 +312,9 @@ impl App {
             .request_id
             .checked_add(1)
             .expect("TUI request ID exhausted");
-        self.output.status = OutputStatus::Debouncing {
+        self.output.update(Lifecycle::Invalidate {
             deadline: now + debounce_for(self.input_len()),
-        };
-        self.output.final_artifact = None;
-        self.output.final_traces.clear();
+        });
         self.mark_dirty();
     }
 
@@ -464,9 +394,8 @@ impl App {
     }
 
     pub(super) fn can_copy(&self) -> bool {
-        matches!(self.output.status, OutputStatus::Ready)
-            && self.output.view != ViewMode::Trace
-            && self.output.active_artifact.is_some()
+        let summary = self.output.summary();
+        summary.ready_bytes.is_some() && summary.requested_view != ViewMode::Trace
     }
 
     pub(super) fn open_picker(&mut self) {
@@ -547,7 +476,7 @@ impl App {
         if !self.can_copy() || self.copy_phase != CopyPhase::Idle {
             return Vec::new();
         }
-        let Some(artifact) = self.output.active_artifact.clone() else {
+        let Some(artifact) = self.output.copy_artifact() else {
             return Vec::new();
         };
         self.copy_request_id = self
@@ -655,36 +584,22 @@ impl App {
         if self.status_deadline.is_some_and(|deadline| now >= deadline) {
             self.clear_status();
         }
-        if let OutputStatus::Debouncing { deadline } = &self.output.status {
-            if now < *deadline {
-                return Vec::new();
+        match self.output.update(Lifecycle::Tick { now }) {
+            LifecycleChange::StartFinal => {
+                self.mark_dirty();
+                vec![Effect::Submit(PreviewJob {
+                    request_id: self.request_id,
+                    input: self.input_text().into_bytes(),
+                    steps: self.steps.clone(),
+                    target: ExecutionTarget::Final,
+                })]
             }
-            self.output.status = OutputStatus::running(now, ExecutionTarget::Final);
-            self.mark_dirty();
-            return vec![Effect::Submit(PreviewJob {
-                request_id: self.request_id,
-                input: self.input_text().into_bytes(),
-                steps: self.steps.clone(),
-                target: ExecutionTarget::Final,
-            })];
+            LifecycleChange::Changed => {
+                self.mark_dirty();
+                Vec::new()
+            }
+            LifecycleChange::Unchanged | LifecycleChange::FinalUnavailable => Vec::new(),
         }
-
-        let show_notice = matches!(
-            &self.output.status,
-            OutputStatus::Running {
-                started_at,
-                notice_visible: false,
-                ..
-            } if now.saturating_duration_since(*started_at) >= LONG_RUNNING_AFTER
-        );
-        if show_notice {
-            let OutputStatus::Running { notice_visible, .. } = &mut self.output.status else {
-                unreachable!("running notice checked above")
-            };
-            *notice_visible = true;
-            self.mark_dirty();
-        }
-        Vec::new()
     }
 
     fn finish_preview(&mut self, result: PreviewResult) {
@@ -692,40 +607,11 @@ impl App {
         if report.request_id != self.request_id {
             return;
         }
-        self.output.source = match report.target {
-            ExecutionTarget::Final => OutputSource::Final,
-            ExecutionTarget::Step(index) => OutputSource::Step(index),
-        };
-        self.output.traces = report.traces.into_iter().take(MAX_STEPS).collect();
-        self.output.byte_offset = 0;
-        self.output.row_offset = 0;
-        match report.outcome {
-            ExecutionOutcome::Success(bytes) => {
-                let artifact = Artifact::new(bytes);
-                if report.target == ExecutionTarget::Final {
-                    self.output.final_artifact = Some(artifact.clone());
-                    self.output.final_traces = self.output.traces.clone();
-                }
-                self.output.active_artifact = Some(artifact);
-                self.output.status = OutputStatus::Ready;
-            }
-            ExecutionOutcome::Failed(error) => {
-                self.output.active_artifact = None;
-                if report.target == ExecutionTarget::Final {
-                    self.output.final_artifact = None;
-                    self.output.final_traces.clear();
-                }
-                self.output.status = OutputStatus::Failed(error);
-            }
-            ExecutionOutcome::Cancelled => {
-                self.output.active_artifact = None;
-                if report.target == ExecutionTarget::Final {
-                    self.output.final_artifact = None;
-                    self.output.final_traces.clear();
-                }
-                self.output.status = OutputStatus::Cancelled;
-            }
-        }
+        self.output.update(Lifecycle::Finish {
+            target: report.target,
+            outcome: report.outcome,
+            traces: report.traces,
+        });
         self.mark_dirty();
     }
 
@@ -738,7 +624,10 @@ impl App {
             .request_id
             .checked_add(1)
             .expect("TUI request ID exhausted");
-        self.output.status = OutputStatus::running(now, ExecutionTarget::Step(self.selected_step));
+        self.output.update(Lifecycle::Start {
+            started_at: now,
+            target: ExecutionTarget::Step(self.selected_step),
+        });
         self.mark_dirty();
         vec![Effect::Submit(PreviewJob {
             request_id: self.request_id,
@@ -749,38 +638,30 @@ impl App {
     }
 
     fn restore_final(&mut self, now: Instant) -> Vec<Effect> {
-        let Some(final_artifact) = self.output.final_artifact.clone() else {
-            self.set_status(Some("Final output unavailable".to_string()), now);
-            return Vec::new();
-        };
-        self.request_id = self
-            .request_id
-            .checked_add(1)
-            .expect("TUI request ID exhausted");
-        self.output.source = OutputSource::Final;
-        self.output.status = OutputStatus::Ready;
-        self.output.active_artifact = Some(final_artifact);
-        self.output.traces.clone_from(&self.output.final_traces);
-        self.output.byte_offset = 0;
-        self.output.row_offset = 0;
-        self.mark_dirty();
+        match self.output.update(Lifecycle::RestoreFinal) {
+            LifecycleChange::Changed => {
+                self.request_id = self
+                    .request_id
+                    .checked_add(1)
+                    .expect("TUI request ID exhausted");
+                self.mark_dirty();
+            }
+            LifecycleChange::FinalUnavailable => {
+                self.set_status(Some("Final output unavailable".to_string()), now);
+            }
+            LifecycleChange::Unchanged | LifecycleChange::StartFinal => unreachable!(),
+        }
         Vec::new()
     }
 
     fn cancel_active(&mut self) {
-        if !matches!(
-            self.output.status,
-            OutputStatus::Debouncing { .. } | OutputStatus::Running { .. }
-        ) {
+        if self.output.update(Lifecycle::Cancel) != LifecycleChange::Changed {
             return;
         }
         self.request_id = self
             .request_id
             .checked_add(1)
             .expect("TUI request ID exhausted");
-        self.output.status = OutputStatus::Cancelled;
-        self.output.active_artifact = None;
-        self.output.traces.clear();
         self.mark_dirty();
     }
 
@@ -1118,11 +999,11 @@ impl App {
     }
 
     pub(super) fn output_columns(&self) -> usize {
-        self.output.viewport.map_or(78, |area| area.width as usize)
+        self.output.viewport.map_or(78, |viewport| viewport.columns)
     }
 
     fn output_rows(&self) -> usize {
-        self.output.viewport.map_or(10, |area| area.height as usize)
+        self.output.viewport.map_or(10, |viewport| viewport.rows)
     }
 
     fn output_page_rows(&self, view: EffectiveView) -> usize {
@@ -1177,7 +1058,10 @@ impl App {
             }
             EffectiveView::Text | EffectiveView::Unavailable => {}
         }
-        self.output.viewport = Some(viewport);
+        self.output.viewport = Some(Viewport {
+            rows: viewport.height as usize,
+            columns: viewport.width as usize,
+        });
     }
 
     fn output_max_offset(&self) -> (bool, usize) {

@@ -96,7 +96,7 @@ Expected: test 이름의 module 경로만 바뀌고 동작은 동일하다.
 - Modify: `src/tui/output.rs`
 - Modify: `src/tui/state.rs`
 
-- [ ] **Step 1: 새 lifecycle interface의 실패 테스트 작성**
+- [x] **Step 1: 새 lifecycle interface의 실패 테스트 작성**
 
 `src/tui/output.rs` 테스트에 interface 호출만 사용하는 helper와 다음 네 회귀 테스트를 먼저 추가한다.
 
@@ -131,7 +131,7 @@ Run:
 
 Expected: `Output`, `Lifecycle`과 `LifecycleChange`가 아직 없어 compile failure.
 
-- [ ] **Step 2: 최소 lifecycle 타입과 read-only summary 구현**
+- [x] **Step 2: 최소 lifecycle 타입과 read-only summary 구현**
 
 `src/tui/output.rs`에 기존 `OutputSource`, `OutputStatus`, `OutputState`를 이동해 아래 책임만 노출한다.
 
@@ -174,11 +174,19 @@ Expected: `Output`, `Lifecycle`과 `LifecycleChange`가 아직 없어 compile fa
         FinalUnavailable,
     }
 
-Output에는 기존 source, requested View, status, final/current artifact와 traces, byte/row offset, viewport를 이동하며 모든 필드를 private으로 둔다. 노출하는 method signature는 `Output::new() -> Self`, `update(&mut self, Lifecycle) -> LifecycleChange`, `summary(&self) -> Summary<'_>`, `copy_artifact(&self) -> Option<Artifact>`뿐이다.
+Output에는 기존 source, requested View, status, final/current artifact와 traces, byte/row offset, viewport를 이동한다. 이 중 Task 3의 render migration 전까지 읽히는 기존 필드는 Task 2 commit을 buildable하게 유지하기 위해 임시 `pub(super)`로 두되 새 직접 접근은 추가하지 않는다. viewport는 Ratatui `Rect` 대신 아래 `Viewport`로 저장한다.
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(super) struct Viewport {
+        pub(super) rows: usize,
+        pub(super) columns: usize,
+    }
+
+`src/tui/state.rs`의 lifecycle 쓰기는 모두 interface로 교체한다. Task 3에서 render·navigation 직접 접근을 제거하는 즉시 모든 Output 필드를 private으로 만든다. Task 2가 노출하는 새 method signature는 `Output::new() -> Self`, `update(&mut self, Lifecycle) -> LifecycleChange`, `summary(&self) -> Summary<'_>`, `copy_artifact(&self) -> Option<Artifact>`뿐이다.
 
 `Summary<'_>`는 source, requested/effective View, status reference, ready bytes, current artifact와 traces를 읽기 전용으로 제공한다. `Ready`만 copy artifact를 반환하고 final snapshot은 `Artifact`와 traces를 함께 저장·삭제한다.
 
-- [ ] **Step 3: App lifecycle 호출을 새 interface로 교체**
+- [x] **Step 3: App lifecycle 호출을 새 interface로 교체**
 
 `src/tui/state.rs`에서 다음 기존 흐름을 `Output::update`로 위임한다.
 
@@ -191,7 +199,7 @@ Output에는 기존 source, requested View, status, final/current artifact와 tr
 
 `LifecycleChange::StartFinal`일 때만 App이 기존 `PreviewJob`과 effect를 생성한다. request ID 비교, job 생성과 transient 안내 문구는 App에 남긴다.
 
-- [ ] **Step 4: lifecycle 테스트와 App 회귀 테스트 실행**
+- [x] **Step 4: lifecycle 테스트와 App 회귀 테스트 실행**
 
 Run:
 
@@ -202,7 +210,7 @@ Run:
 
 Expected: final/step/restore/invalidate/tick 규칙과 기존 App event 테스트가 통과한다.
 
-- [ ] **Step 5: 논리 커밋**
+- [x] **Step 5: 논리 커밋**
 
     git add src/tui/output.rs src/tui/state.rs docs/superpowers/plans/2026-08-29-toc-output-module-deepening.md
     git diff --cached --check
@@ -272,13 +280,7 @@ Expected: `Viewport`, `Navigation`, `Presentation`과 `present`가 없어 compil
 
 - [ ] **Step 2: semantic navigation과 presentation 타입 추가**
 
-`src/tui/output.rs`에 다음 API를 추가하고 모든 offset 필드는 private으로 유지한다.
-
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub(super) struct Viewport {
-        pub(super) rows: usize,
-        pub(super) columns: usize,
-    }
+`src/tui/output.rs`에서 Task 2가 도입한 `Viewport`를 그대로 사용하고 다음 API를 추가한다. 이 단계에서 임시 `pub(super)` 필드를 포함한 모든 Output 상태 필드를 private으로 만든다.
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub(super) enum Navigation {
