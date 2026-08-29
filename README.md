@@ -1,13 +1,14 @@
 <div align="center">
   <h1>toc</h1>
   <p><strong>TUI Object Converter</strong></p>
-  <p>텍스트와 바이트를 여러가지 포맷으로 변환하는 TUI·CLI 도구입니다.</p>
+  <p>A TUI and CLI tool for converting text and bytes between formats.</p>
   <p><code>TUI</code> · <code>CLI</code> · <code>Local-only</code> · <code>36 transforms</code></p>
+  <p>English · <a href="README.ko.md">한국어</a></p>
 </div>
 
-## 30초 만에 시작
+## Get started in 30 seconds
 
-### 설치
+### Install
 ```bash
 git clone https://github.com/skitttles-berry/toc.git
 cd toc
@@ -25,120 +26,120 @@ printf '%s' 'hello' | toc base64-encode
 printf '%s' '%7B%22name%22%3A%22toc%22%7D' | toc url-decode --then format-json
 ```
 
-## TUI 사용법
+## TUI usage
 
-TUI는 화면 상에서 입력 원문을 유지한 채 변환 단계를 만들고 결과를 확인할 수 있습니다. Input에 원문을 입력하고 Pipeline에 변환을 추가한 뒤 Output에서 결과를 확인하세요.
+The TUI lets you build a transform pipeline and inspect its output without modifying the original input. Enter source text in Input, add transforms to Pipeline, and review the result in Output.
 
-### 실행 화면
+### Preview
 
-![toc TUI 실행 녹화](docs/asciinema/toc-tui.gif)
+![toc TUI demo](docs/asciinema/toc-tui.gif)
 
-### 4단계로 시작
+### Get started in 4 steps
 
-| 단계 | 작업 | 방법 |
+| Step | Action | How |
 |---:|---|---|
-| 1 | 입력 | Input에 원문 작성 |
-| 2 | 추가 | <kbd>Ctrl</kbd> + <kbd>p</kbd>로 변환 선택 |
-| 3 | 실행 | <kbd>s</kbd>로 선택 단계 실행 |
-| 4 | 확인 | Output에서 결과 확인 |
+| 1 | Enter input | Write the source text in Input |
+| 2 | Add a transform | Press <kbd>Ctrl</kbd> + <kbd>p</kbd> to select a transform |
+| 3 | Run it | Press <kbd>s</kbd> to run the selected stage |
+| 4 | Review | Check the result in Output |
 
 ### Output View
 
-| View | 용도 |
+| View | Purpose |
 |---|---|
-| `SMART` | 결과 형식에 맞는 View 자동 선택 |
-| `TEXT` | UTF-8 텍스트 확인 |
-| `HEX` | 바이트를 Offset·Hex·ASCII 열로 확인 |
-| `TRACE` | Pipeline 단계별 상태와 안전한 실패 요약 확인 |
+| `SMART` | Automatically select a view for the result format |
+| `TEXT` | Display UTF-8 text |
+| `HEX` | Inspect bytes in Offset, Hex, and ASCII columns |
+| `TRACE` | Review each Pipeline stage and a safe failure summary |
 
-### 키 한눈에 보기
+### Keyboard shortcuts
 
-| 구역 | 키 | 동작 |
+| Area | Key | Action |
 |---|---|---|
-| 전역 | <kbd>Tab</kbd><br><kbd>Shift</kbd> + <kbd>Tab</kbd> | 패널 이동 |
-|  | <kbd>Ctrl</kbd> + <kbd>p</kbd> | 변환 추가 |
-|  | <kbd>F1</kbd> | 도움말 |
-|  | <kbd>Ctrl</kbd> + <kbd>q</kbd> | 정상 종료 |
-|  | <kbd>Esc</kbd> | 창·확대 닫기 또는 실행 취소 |
-| Input | <kbd>Cmd</kbd> + <kbd>←</kbd> / <kbd>→</kbd><br><kbd>Home</kbd> / <kbd>End</kbd><br><kbd>Ctrl</kbd> + <kbd>A</kbd> / <kbd>E</kbd> | 현재 논리 줄의 처음·끝으로 이동 |
-|  | <kbd>Cmd</kbd> + <kbd>Backspace</kbd> (macOS)<br><kbd>Ctrl</kbd> + <kbd>Backspace</kbd> (Windows·Linux) | 커서부터 현재 논리 줄 처음까지 삭제<br>줄 처음에서는 이전 줄과 합침 |
-|  | <kbd>Option</kbd> + <kbd>←</kbd> / <kbd>→</kbd><br><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> | 이전·다음 단어 경계로 이동 |
-|  | 위 이동 키 + <kbd>Shift</kbd> | 이동 구간 선택 |
-| Pipeline | <kbd>↑</kbd><br><kbd>↓</kbd> | 단계 선택 |
-|  | <kbd>Shift</kbd> + <kbd>↑</kbd><br><kbd>Shift</kbd> + <kbd>↓</kbd> | 단계 이동 |
-|  | <kbd>Space</kbd> | 단계 활성화 전환 |
-|  | <kbd>Backspace</kbd> | 단계 삭제 |
-|  | <kbd>Enter</kbd> | 단계 검사 |
-|  | <kbd>s</kbd> | 선택 단계 실행 |
-|  | <kbd>f</kbd> | 최종 결과 복원 |
-|  | <kbd>z</kbd> | Pipeline 확대 |
+| Global | <kbd>Tab</kbd><br><kbd>Shift</kbd> + <kbd>Tab</kbd> | Move between panels |
+|  | <kbd>Ctrl</kbd> + <kbd>p</kbd> | Add a transform |
+|  | <kbd>F1</kbd> | Open help |
+|  | <kbd>Ctrl</kbd> + <kbd>q</kbd> | Exit cleanly |
+|  | <kbd>Esc</kbd> | Close a dialog or zoomed view, or cancel execution |
+| Input | <kbd>Cmd</kbd> + <kbd>←</kbd> / <kbd>→</kbd><br><kbd>Home</kbd> / <kbd>End</kbd><br><kbd>Ctrl</kbd> + <kbd>A</kbd> / <kbd>E</kbd> | Move to the start or end of the current logical line |
+|  | <kbd>Cmd</kbd> + <kbd>Backspace</kbd> (macOS)<br><kbd>Ctrl</kbd> + <kbd>Backspace</kbd> (Windows and Linux) | Delete from the cursor to the start of the current logical line<br>Join the previous line when already at the start |
+|  | <kbd>Option</kbd> + <kbd>←</kbd> / <kbd>→</kbd><br><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> | Move to the previous or next word boundary |
+|  | The movement keys above + <kbd>Shift</kbd> | Select the traversed range |
+| Pipeline | <kbd>↑</kbd><br><kbd>↓</kbd> | Select a stage |
+|  | <kbd>Shift</kbd> + <kbd>↑</kbd><br><kbd>Shift</kbd> + <kbd>↓</kbd> | Move a stage |
+|  | <kbd>Space</kbd> | Toggle a stage |
+|  | <kbd>Backspace</kbd> | Remove a stage |
+|  | <kbd>Enter</kbd> | Inspect a stage |
+|  | <kbd>s</kbd> | Run the selected stage |
+|  | <kbd>f</kbd> | Restore the final result |
+|  | <kbd>z</kbd> | Zoom Pipeline |
 | Output | <kbd>Enter</kbd> | Pretty Copy |
 |  | <kbd>Shift</kbd> + <kbd>Enter</kbd> | Raw Copy |
-|  | <kbd>v</kbd> | View 전환 |
-|  | <kbd>z</kbd> | Output 확대 |
+|  | <kbd>v</kbd> | Switch View |
+|  | <kbd>z</kbd> | Zoom Output |
 
-일부 터미널은 Command·Option 조합을 자체 단축키로 먼저 처리하거나,
-<kbd>Ctrl</kbd> + <kbd>Backspace</kbd>를 일반 <kbd>Backspace</kbd>와 구분하지 못합니다.
-이 경우 줄 시작 삭제 별칭을 사용할 수 없습니다. 커서 이동에는 <kbd>Home</kbd>·<kbd>End</kbd>,
-<kbd>Ctrl</kbd> + <kbd>A</kbd>·<kbd>E</kbd>, <kbd>Ctrl</kbd> + <kbd>←</kbd>·<kbd>→</kbd>를
-사용하세요.
+Some terminals intercept Command or Option combinations as their own shortcuts, or cannot distinguish
+<kbd>Ctrl</kbd> + <kbd>Backspace</kbd> from a regular <kbd>Backspace</kbd>.
+In those terminals, the aliases for deleting to the start of a line are unavailable. Use <kbd>Home</kbd> or <kbd>End</kbd>,
+<kbd>Ctrl</kbd> + <kbd>A</kbd> or <kbd>E</kbd>, and <kbd>Ctrl</kbd> + <kbd>←</kbd> or <kbd>→</kbd>
+for cursor movement.
 
-`Shift+Enter`를 구분하지 못하는 터미널에서는 Raw Copy가 제한될 수 있습니다.
+Raw Copy may be limited in terminals that cannot distinguish `Shift+Enter`.
 
-## CLI 사용법
+## CLI usage
 
 ```console
-# 문자열 Base64 인코딩
+# Base64-encode a string
 $ printf '%s' 'hello' | toc base64-encode
 aGVsbG8=
 
-# URL Decode 후 JSON 정리
+# URL-decode and format JSON
 $ printf '%s' '%7B%22name%22%3A%22toc%22%7D' \
   | toc url-decode --then format-json
 {
   "name": "toc"
 }
 
-# JSON 문자열 Decode → 양끝 공백 제거 → 소문자
+# Decode a JSON string, trim it, and convert it to lowercase
 $ printf '%s' '"  TOC  "' \
   | toc json-string-decode --then trim --then lowercase
 toc
 
-# 파일의 JSON 정리
+# Format JSON from a file
 $ toc format-json --input input.json
 
-# Binary Gzip 결과 저장
+# Save binary Gzip output
 $ toc gzip-compress --input input.txt > output.gz
 ```
 
-- CLI는 표준 입력이나 `--input PATH`로 입력을 받습니다.
-- 성공 결과 끝에는 줄바꿈을 임의로 붙이지 않습니다.
-- Binary 결과는 터미널에 직접 쓰지 말고 파일로 리디렉션합니다.
+- The CLI reads from standard input or `--input PATH`.
+- It does not append a newline to successful output.
+- Redirect binary output to a file instead of writing it directly to the terminal.
 
-## 지원 변환
+## Supported transforms
 
-| 기능군 | 변환 ID |
+| Category | Transform ID |
 |---|---|
-| 인코딩 | `base64-encode`<br>`base64-decode`<br>`base64url-encode`<br>`base64url-decode`<br>`base32-encode`<br>`base32-decode`<br>`url-encode`<br>`url-decode`<br>`hex-encode`<br>`hex-decode`<br>`html-encode`<br>`html-decode`<br>`json-string-encode`<br>`json-string-decode`<br>`utf16le-encode`<br>`utf16le-decode`<br>`utf16be-encode`<br>`utf16be-decode` |
-| 문자열·데이터 | `trim`<br>`lowercase`<br>`uppercase`<br>`format-json`<br>`minify-json`<br>`rot13`<br>`sort-lines`<br>`remove-duplicate-lines` |
-| 보안 분석 | `url-defang`<br>`url-refang`<br>`jwt-decode`<br>`normalize-ip` |
-| 해시·압축 | `sha256`<br>`sha512`<br>`gzip-compress`<br>`gzip-decompress`<br>`zlib-compress`<br>`zlib-decompress` |
+| Encoding | `base64-encode`<br>`base64-decode`<br>`base64url-encode`<br>`base64url-decode`<br>`base32-encode`<br>`base32-decode`<br>`url-encode`<br>`url-decode`<br>`hex-encode`<br>`hex-decode`<br>`html-encode`<br>`html-decode`<br>`json-string-encode`<br>`json-string-decode`<br>`utf16le-encode`<br>`utf16le-decode`<br>`utf16be-encode`<br>`utf16be-decode` |
+| Text and data | `trim`<br>`lowercase`<br>`uppercase`<br>`format-json`<br>`minify-json`<br>`rot13`<br>`sort-lines`<br>`remove-duplicate-lines` |
+| Security analysis | `url-defang`<br>`url-refang`<br>`jwt-decode`<br>`normalize-ip` |
+| Hashing and compression | `sha256`<br>`sha512`<br>`gzip-compress`<br>`gzip-decompress`<br>`zlib-compress`<br>`zlib-decompress` |
 
-- Base64URL 인코딩은 패딩을 붙이지 않으며 `url-decode`는 `+`를 그대로 둡니다.
-- `json-string-decode`는 JSON 문자열 하나만 받습니다. UTF-16 인코더는 BOM을 추가하지 않으며 디코더는 U+FEFF를 일반 문자로 보존합니다.
-- `jwt-decode`는 서명을 검증하지 않습니다. Gzip과 zlib 압축은 같은 입력에 항상 같은 결과를 만듭니다.
-- `zlib-decompress`는 사전 없는 RFC 1950 스트림 하나만 받고 절단·후행 데이터를 거부합니다.
-- `normalize-ip`는 주소 하나만 받으며 공백·CIDR·포트·대괄호·영역 식별자를 거부합니다.
+- Base64URL encoding omits padding, and `url-decode` leaves `+` unchanged.
+- `json-string-decode` accepts exactly one JSON string. The UTF-16 encoders do not add a BOM, and the decoders preserve U+FEFF as a regular character.
+- `jwt-decode` does not verify signatures. Gzip and zlib compression produce deterministic output for the same input.
+- `zlib-decompress` accepts exactly one dictionary-free RFC 1950 stream and rejects truncated or trailing data.
+- `normalize-ip` accepts exactly one address and rejects whitespace, CIDR notation, ports, brackets, and zone identifiers.
 
-## 한도
+## Limits
 
-| 실행 경로 | 입력 | 단계별 출력 |
+| Execution path | Input | Output per stage |
 |---|---:|---:|
 | CLI | 64 MiB | 256 MiB |
 | TUI | 1 MiB | 64 MiB |
 
-- 한 Pipeline에는 변환을 최대 32단계까지 연결할 수 있습니다.
+- A Pipeline can contain up to 32 transforms.
 
-## 라이선스
+## License
 
 [MIT](LICENSE)
