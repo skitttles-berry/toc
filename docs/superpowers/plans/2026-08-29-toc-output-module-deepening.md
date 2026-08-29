@@ -445,7 +445,7 @@ Expected: 모든 focused test가 통과하고 마지막 `rg`는 match가 없다.
 - Verify: `docs/superpowers/specs/2026-08-29-toc-output-module-deepening-design.md`
 - Modify: `docs/superpowers/plans/2026-08-29-toc-output-module-deepening.md`
 
-- [ ] **Step 1: 구조 문서 최소 변경**
+- [x] **Step 1: 구조 문서 최소 변경**
 
 Task 3에서 갱신한 `AGENTS.md` tree에 다음 한 줄이 유지되는지 확인한다.
 
@@ -453,7 +453,7 @@ Task 3에서 갱신한 `AGENTS.md` tree에 다음 한 줄이 유지되는지 확
 
 `CONTEXT.md`의 Output 정의가 구현과 일치하는지 확인한다. 승인 설계와 구현이 다르지 않다면 spec과 CONTEXT에 설명을 더하지 않는다.
 
-- [ ] **Step 2: 사용자-visible CLI 계약 확인**
+- [x] **Step 2: 사용자-visible CLI 계약 확인**
 
 Run:
 
@@ -462,7 +462,7 @@ Run:
 
 Expected: help 문구가 기존과 같고 transform 목록은 36개다.
 
-- [ ] **Step 3: 정적 검사와 전체 Rust 검증**
+- [x] **Step 3: 정적 검사와 전체 Rust 검증**
 
 Run:
 
@@ -473,7 +473,7 @@ Run:
 
 Expected: 경고와 실패 없이 모두 exit 0.
 
-- [ ] **Step 4: Shell·PTY smoke 검증**
+- [x] **Step 4: Shell·PTY smoke 검증**
 
 Run:
 
@@ -482,7 +482,7 @@ Run:
 
 Expected: 두 shell에서 모든 smoke assertion이 통과한다.
 
-- [ ] **Step 5: 인덱스와 최종 diff 검증**
+- [x] **Step 5: 인덱스와 최종 diff 검증**
 
 Run:
 
@@ -493,13 +493,13 @@ Run:
 
 Expected: ccc index error 0, whitespace 오류 없음, 의도한 파일만 변경됨.
 
-- [ ] **Step 6: 문서 논리 커밋**
+- [x] **Step 6: 문서 논리 커밋**
 
     git add CONTEXT.md docs/superpowers/specs/2026-08-29-toc-output-module-deepening-design.md docs/superpowers/plans/2026-08-29-toc-output-module-deepening.md
     git diff --cached --check
     git commit -m "docs(tui): Output 구조 문서 현행화"
 
-- [ ] **Step 7: 최종 저장소 상태 확인**
+- [x] **Step 7: 최종 저장소 상태 확인**
 
 Run:
 
