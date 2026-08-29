@@ -504,6 +504,6 @@ Expected: ccc index error 0, whitespace 오류 없음, 의도한 파일만 변�
 Run:
 
     git status --short
-    git log -5 --oneline
+    git log --oneline main..HEAD
 
-Expected: worktree가 clean이고 이 계획의 다섯 refactor/test/docs 논리 변경이 최근 commit으로 보인다. Push는 별도 사용자 요청이 있을 때만 수행한다.
+Expected: worktree가 clean이고 이 계획의 모든 논리 변경이 보인다. Push는 별도 사용자 요청이 있을 때만 수행한다.
