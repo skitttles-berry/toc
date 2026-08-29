@@ -1020,36 +1020,23 @@ mod tests {
     use super::*;
     use crate::pipeline::StepStatus;
 
-    fn finish_with_traces(
-        output: &mut Output,
-        target: crate::pipeline::ExecutionTarget,
-        bytes: &[u8],
-        traces: Vec<StepTrace>,
-    ) {
+    fn ready_output(bytes: Vec<u8>) -> Output {
+        let mut output = Output::new();
         assert_eq!(
             output.update(Lifecycle::Start {
                 started_at: std::time::Instant::now(),
-                target,
+                target: ExecutionTarget::Final,
             }),
             LifecycleChange::Changed
         );
         assert_eq!(
             output.update(Lifecycle::Finish {
-                target,
-                outcome: crate::pipeline::ExecutionOutcome::Success(bytes.to_vec()),
-                traces,
+                target: ExecutionTarget::Final,
+                outcome: crate::pipeline::ExecutionOutcome::Success(bytes),
+                traces: Vec::new(),
             }),
             LifecycleChange::Changed
         );
-    }
-
-    fn finish(output: &mut Output, target: ExecutionTarget, bytes: &[u8]) {
-        finish_with_traces(output, target, bytes, Vec::new());
-    }
-
-    fn ready_output(bytes: Vec<u8>) -> Output {
-        let mut output = Output::new();
-        finish(&mut output, ExecutionTarget::Final, &bytes);
         output
     }
 
@@ -1094,26 +1081,66 @@ mod tests {
     }
 
     #[test]
-    fn text_end_presents_the_last_full_page_without_exposing_an_offset() {
-        let mut output = ready_output(b"one\ntwo\nthree\nfour\nfive".to_vec());
-        output.present(Viewport {
+    fn text_page_home_and_end_present_directional_full_pages() {
+        let mut output = ready_output(b"abcdef".to_vec());
+        let viewport = Viewport {
             rows: 2,
-            columns: 8,
-        });
-
-        assert!(output.navigate(Navigation::End));
-        let Presentation {
-            body: Body::Text(text),
-            ..
-        } = output.present(Viewport {
-            rows: 2,
-            columns: 8,
-        })
-        else {
-            panic!("expected text presentation");
+            columns: 2,
         };
 
-        assert_eq!(text, "four\nfive");
+        assert!(matches!(output.present(viewport).body, Body::Text(text) if text == "ab\ncd"));
+        assert!(output.navigate(Navigation::Page(1)));
+        assert!(matches!(output.present(viewport).body, Body::Text(text) if text == "ef"));
+        assert!(!output.navigate(Navigation::Page(1)));
+        assert!(output.navigate(Navigation::Page(-1)));
+        assert!(matches!(output.present(viewport).body, Body::Text(text) if text == "ab\ncd"));
+        assert!(output.navigate(Navigation::End));
+        assert!(matches!(output.present(viewport).body, Body::Text(text) if text == "cd\nef"));
+        assert!(output.navigate(Navigation::Home));
+        assert!(matches!(output.present(viewport).body, Body::Text(text) if text == "ab\ncd"));
+    }
+
+    #[test]
+    fn text_arrows_follow_utf8_grapheme_boundaries() {
+        let mut output = ready_output("界a".as_bytes().to_vec());
+        let viewport = Viewport {
+            rows: 1,
+            columns: 80,
+        };
+
+        output.present(viewport);
+        assert!(output.navigate(Navigation::Line(1)));
+        assert!(matches!(output.present(viewport).body, Body::Text(text) if text == "a"));
+        assert!(!output.navigate(Navigation::Line(1)));
+        assert!(output.navigate(Navigation::Line(-1)));
+        assert!(matches!(output.present(viewport).body, Body::Text(text) if text == "界a"));
+    }
+
+    #[test]
+    fn text_navigation_stays_bounded_for_a_long_grapheme() {
+        let mut output = ready_output(format!("a{}b", "\u{301}".repeat(3_000)).into_bytes());
+        let viewport = Viewport {
+            rows: 10,
+            columns: 78,
+        };
+
+        assert!(matches!(output.present(viewport).body, Body::Text(text) if text == "…"));
+        assert!(output.navigate(Navigation::Line(1)));
+        assert!(matches!(
+            output.present(viewport).body,
+            Body::Text(text) if !text.is_empty() && text.len() <= VISIBLE_TEXT_BYTE_BUDGET
+        ));
+        assert!(output.navigate(Navigation::Line(1)));
+        assert!(matches!(output.present(viewport).body, Body::Text(text) if text == "b"));
+        assert!(!output.navigate(Navigation::Line(1)));
+        assert!(output.navigate(Navigation::Home));
+        assert!(output.navigate(Navigation::Page(1)));
+        assert!(matches!(
+            output.present(viewport).body,
+            Body::Text(text) if !text.is_empty() && text.len() <= VISIBLE_TEXT_BYTE_BUDGET
+        ));
+        assert!(output.navigate(Navigation::Page(-1)));
+        assert!(matches!(output.present(viewport).body, Body::Text(text) if text == "…"));
     }
 
     #[test]
@@ -1199,6 +1226,175 @@ mod tests {
     }
 
     #[test]
+    fn hex_pages_and_end_present_only_full_visible_pages() {
+        let mut output = ready_output(vec![0; 80]);
+        output.navigate(Navigation::NextView);
+        output.navigate(Navigation::NextView);
+        let viewport = Viewport {
+            rows: 4,
+            columns: 78,
+        };
+        output.present(viewport);
+
+        assert!(output.navigate(Navigation::Page(1)));
+        assert_eq!(first_hex_offset(output.present(viewport)), 32);
+        assert!(output.navigate(Navigation::Page(-1)));
+        assert_eq!(first_hex_offset(output.present(viewport)), 0);
+        assert!(output.navigate(Navigation::End));
+        assert_eq!(first_hex_offset(output.present(viewport)), 32);
+        assert!(!output.navigate(Navigation::Page(1)));
+    }
+
+    #[test]
+    fn hex_resize_clamps_the_first_byte_to_the_last_full_page() {
+        let mut output = ready_output(vec![0; 80]);
+        output.navigate(Navigation::NextView);
+        output.navigate(Navigation::NextView);
+        let narrow = Viewport {
+            rows: 4,
+            columns: 59,
+        };
+        output.present(narrow);
+        assert!(output.navigate(Navigation::End));
+        assert_eq!(first_hex_offset(output.present(narrow)), 56);
+
+        assert_eq!(
+            first_hex_offset(output.present(Viewport {
+                rows: 4,
+                columns: 78,
+            })),
+            32
+        );
+    }
+
+    #[test]
+    fn trace_pages_and_end_present_expected_first_steps() {
+        let mut output = Output::new();
+        output.navigate(Navigation::NextView);
+        output.navigate(Navigation::NextView);
+        output.navigate(Navigation::NextView);
+        assert_eq!(
+            output.update(Lifecycle::Finish {
+                target: ExecutionTarget::Final,
+                outcome: crate::pipeline::ExecutionOutcome::Failed(PipelineError::Step {
+                    step: 2,
+                    transform_id: "base64-decode",
+                    source: crate::error::TransformError::InvalidBase64 { position: Some(1) },
+                }),
+                traces: (1..=10)
+                    .map(|step| StepTrace {
+                        step,
+                        transform_id: "base64-decode",
+                        input_bytes: Some(4),
+                        output_bytes: (step != 2).then_some(3),
+                        elapsed: None,
+                        status: if step == 2 {
+                            StepStatus::Failed
+                        } else {
+                            StepStatus::Succeeded
+                        },
+                        error: (step == 2).then_some(crate::error::TransformError::InvalidBase64 {
+                            position: Some(1)
+                        },),
+                    })
+                    .collect(),
+            }),
+            LifecycleChange::Changed
+        );
+        let viewport = Viewport {
+            rows: 8,
+            columns: 80,
+        };
+        output.present(viewport);
+
+        assert!(output.navigate(Navigation::Page(1)));
+        assert_eq!(first_trace_step(output.present(viewport)), Some(5));
+        assert!(output.navigate(Navigation::End));
+        assert_eq!(first_trace_step(output.present(viewport)), Some(7));
+        assert!(output.navigate(Navigation::Page(-1)));
+        assert_eq!(first_trace_step(output.present(viewport)), Some(3));
+    }
+
+    #[test]
+    fn trace_end_obeys_the_presentation_byte_budget() {
+        let mut output = Output::new();
+        output.navigate(Navigation::NextView);
+        output.navigate(Navigation::NextView);
+        output.navigate(Navigation::NextView);
+        assert_eq!(
+            output.update(Lifecycle::Finish {
+                target: ExecutionTarget::Final,
+                outcome: crate::pipeline::ExecutionOutcome::Success(Vec::new()),
+                traces: (1..=32)
+                    .map(|step| StepTrace {
+                        step,
+                        transform_id: "base64-encode",
+                        input_bytes: None,
+                        output_bytes: None,
+                        elapsed: None,
+                        status: StepStatus::Succeeded,
+                        error: None,
+                    })
+                    .collect(),
+            }),
+            LifecycleChange::Changed
+        );
+        let viewport = Viewport {
+            rows: 100,
+            columns: 200,
+        };
+        output.present(viewport);
+
+        assert!(output.navigate(Navigation::End));
+        assert_eq!(first_trace_step(output.present(viewport)), Some(13));
+    }
+
+    #[test]
+    fn small_trace_viewport_starts_at_the_first_failure() {
+        let mut output = Output::new();
+        assert_eq!(
+            output.update(Lifecycle::Finish {
+                target: ExecutionTarget::Step(0),
+                outcome: crate::pipeline::ExecutionOutcome::Failed(PipelineError::Step {
+                    step: 3,
+                    transform_id: "format-json",
+                    source: crate::error::TransformError::InvalidUtf8Input,
+                }),
+                traces: (1..=4)
+                    .map(|step| StepTrace {
+                        step,
+                        transform_id: "format-json",
+                        input_bytes: Some(4),
+                        output_bytes: (step != 3).then_some(4),
+                        elapsed: None,
+                        status: if step == 3 {
+                            StepStatus::Failed
+                        } else {
+                            StepStatus::Succeeded
+                        },
+                        error: (step == 3)
+                            .then_some(crate::error::TransformError::InvalidUtf8Input),
+                    })
+                    .collect(),
+            }),
+            LifecycleChange::Changed
+        );
+
+        let Body::Trace(window) = output
+            .present(Viewport {
+                rows: 4,
+                columns: 80,
+            })
+            .body
+        else {
+            panic!("expected trace presentation");
+        };
+        assert_eq!(window.failure, Some(2));
+        assert_eq!(window.traces[window.visible.start].step, 3);
+        assert_eq!(window.detail_height, 2);
+    }
+
+    #[test]
     fn selected_output_preserves_the_final_snapshot_for_restore() {
         let mut output = Output::new();
         let final_traces = vec![StepTrace {
@@ -1219,17 +1415,21 @@ mod tests {
             status: StepStatus::Succeeded,
             error: None,
         }];
-        finish_with_traces(
-            &mut output,
-            crate::pipeline::ExecutionTarget::Final,
-            b"final",
-            final_traces.clone(),
+        assert_eq!(
+            output.update(Lifecycle::Finish {
+                target: ExecutionTarget::Final,
+                outcome: crate::pipeline::ExecutionOutcome::Success(b"final".to_vec()),
+                traces: final_traces.clone(),
+            }),
+            LifecycleChange::Changed
         );
-        finish_with_traces(
-            &mut output,
-            crate::pipeline::ExecutionTarget::Step(0),
-            b"step",
-            step_traces,
+        assert_eq!(
+            output.update(Lifecycle::Finish {
+                target: ExecutionTarget::Step(0),
+                outcome: crate::pipeline::ExecutionOutcome::Success(b"step".to_vec()),
+                traces: step_traces,
+            }),
+            LifecycleChange::Changed
         );
 
         assert_eq!(
@@ -1244,12 +1444,7 @@ mod tests {
 
     #[test]
     fn invalidation_keeps_current_output_but_blocks_copy_and_final_restore() {
-        let mut output = Output::new();
-        finish(
-            &mut output,
-            crate::pipeline::ExecutionTarget::Final,
-            b"final",
-        );
+        let mut output = ready_output(b"final".to_vec());
 
         assert_eq!(
             output.update(Lifecycle::Invalidate {
@@ -1263,6 +1458,56 @@ mod tests {
             output.update(Lifecycle::RestoreFinal),
             LifecycleChange::FinalUnavailable
         );
+    }
+
+    #[test]
+    fn step_failure_and_cancellation_preserve_the_final_snapshot_for_restore() {
+        let mut output = ready_output(b"final".to_vec());
+        for outcome in [
+            crate::pipeline::ExecutionOutcome::Failed(PipelineError::TooManySteps { max: 32 }),
+            crate::pipeline::ExecutionOutcome::Cancelled,
+        ] {
+            assert_eq!(
+                output.update(Lifecycle::Finish {
+                    target: ExecutionTarget::Step(1),
+                    outcome,
+                    traces: Vec::new(),
+                }),
+                LifecycleChange::Changed
+            );
+            assert!(output.summary().artifact.is_none());
+            assert!(output.copy_artifact().is_none());
+            assert_eq!(
+                output.update(Lifecycle::RestoreFinal),
+                LifecycleChange::Changed
+            );
+            assert_eq!(output.copy_artifact().unwrap().bytes(), b"final");
+        }
+    }
+
+    #[test]
+    fn final_failure_and_cancellation_clear_the_snapshot_and_copy() {
+        for outcome in [
+            crate::pipeline::ExecutionOutcome::Failed(PipelineError::TooManySteps { max: 32 }),
+            crate::pipeline::ExecutionOutcome::Cancelled,
+        ] {
+            let mut output = ready_output(b"final".to_vec());
+            assert_eq!(output.copy_artifact().unwrap().bytes(), b"final");
+            assert_eq!(
+                output.update(Lifecycle::Finish {
+                    target: ExecutionTarget::Final,
+                    outcome,
+                    traces: Vec::new(),
+                }),
+                LifecycleChange::Changed
+            );
+            assert!(output.summary().artifact.is_none());
+            assert!(output.copy_artifact().is_none());
+            assert_eq!(
+                output.update(Lifecycle::RestoreFinal),
+                LifecycleChange::FinalUnavailable
+            );
+        }
     }
 
     #[test]
@@ -1389,35 +1634,100 @@ mod tests {
     }
 
     #[test]
-    fn smart_uses_trace_for_failure_text_for_utf8_and_hex_for_binary() {
-        assert_eq!(
-            effective_view(ViewMode::Smart, None, true),
-            EffectiveView::Trace
-        );
-        assert_eq!(
-            effective_view(
-                ViewMode::Smart,
-                Some(&Artifact::new(b"hello".to_vec())),
-                false
-            ),
-            EffectiveView::Text
-        );
-        assert_eq!(
-            effective_view(ViewMode::Smart, Some(&Artifact::new(vec![0xff])), false),
-            EffectiveView::Hex
-        );
-    }
+    fn manual_view_cycles_and_smart_recomputes_from_lifecycle_results() {
+        let mut output = ready_output(b"hello".to_vec());
+        assert_eq!(output.summary().requested_view, ViewMode::Smart);
+        assert!(matches!(
+            output
+                .present(Viewport {
+                    rows: 2,
+                    columns: 8
+                })
+                .body,
+            Body::Text(_)
+        ));
 
-    #[test]
-    fn pinned_text_for_binary_is_unavailable_without_changing_mode() {
+        assert!(output.navigate(Navigation::NextView));
+        assert_eq!(output.summary().requested_view, ViewMode::Text);
         assert_eq!(
-            effective_view(ViewMode::Text, Some(&Artifact::new(vec![0xff])), false),
-            EffectiveView::Unavailable
+            output.update(Lifecycle::Invalidate {
+                deadline: std::time::Instant::now(),
+            }),
+            LifecycleChange::Changed
         );
+        assert_eq!(output.summary().requested_view, ViewMode::Text);
+        assert!(matches!(
+            output
+                .present(Viewport {
+                    rows: 2,
+                    columns: 8
+                })
+                .body,
+            Body::Text(text) if text == "hello"
+        ));
+        assert!(output.navigate(Navigation::NextView));
+        assert_eq!(output.summary().requested_view, ViewMode::Hex);
+        assert!(output.navigate(Navigation::NextView));
+        assert_eq!(output.summary().requested_view, ViewMode::Trace);
+        assert!(output.navigate(Navigation::NextView));
+        assert_eq!(output.summary().requested_view, ViewMode::Smart);
+
         assert_eq!(
-            effective_view(ViewMode::Hex, Some(&Artifact::new(b"text".to_vec())), true),
-            EffectiveView::Hex
+            output.update(Lifecycle::Finish {
+                target: ExecutionTarget::Final,
+                outcome: crate::pipeline::ExecutionOutcome::Success(vec![0xff]),
+                traces: Vec::new(),
+            }),
+            LifecycleChange::Changed
         );
+        assert_eq!(output.summary().effective_view, EffectiveView::Hex);
+        assert!(matches!(
+            output
+                .present(Viewport {
+                    rows: 2,
+                    columns: 8
+                })
+                .body,
+            Body::Hex(_)
+        ));
+
+        assert!(output.navigate(Navigation::NextView));
+        assert_eq!(output.summary().requested_view, ViewMode::Text);
+        assert_eq!(output.summary().effective_view, EffectiveView::Unavailable);
+        assert!(matches!(
+            output
+                .present(Viewport {
+                    rows: 2,
+                    columns: 8
+                })
+                .body,
+            Body::TextUnavailable
+        ));
+
+        assert!(output.navigate(Navigation::NextView));
+        assert!(output.navigate(Navigation::NextView));
+        assert!(output.navigate(Navigation::NextView));
+        assert_eq!(output.summary().requested_view, ViewMode::Smart);
+        assert_eq!(
+            output.update(Lifecycle::Finish {
+                target: ExecutionTarget::Final,
+                outcome: crate::pipeline::ExecutionOutcome::Failed(PipelineError::TooManySteps {
+                    max: 32
+                },),
+                traces: Vec::new(),
+            }),
+            LifecycleChange::Changed
+        );
+        assert_eq!(output.summary().effective_view, EffectiveView::Trace);
+        assert!(matches!(
+            output
+                .present(Viewport {
+                    rows: 2,
+                    columns: 8
+                })
+                .body,
+            Body::Trace(_)
+        ));
     }
 
     #[test]

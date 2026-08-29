@@ -1188,7 +1188,7 @@ mod tests {
     use super::*;
     use crate::{
         TUI_OUTPUT_LIMIT,
-        error::{PipelineError, TransformError},
+        error::PipelineError,
         pipeline::{
             ExecutionOutcome, ExecutionReport, ExecutionTarget, StepStatus, StepTrace, execute,
         },
@@ -1275,20 +1275,6 @@ mod tests {
         }
     }
 
-    fn replace_traces(output: &mut Output, traces: Vec<StepTrace>) {
-        let target = target(output);
-        let bytes = output
-            .summary()
-            .artifact
-            .map_or_else(Vec::new, |artifact| artifact.bytes().to_vec());
-        let outcome = match output.summary().status {
-            OutputStatus::Failed(error) => ExecutionOutcome::Failed(error.clone()),
-            OutputStatus::Cancelled => ExecutionOutcome::Cancelled,
-            _ => ExecutionOutcome::Success(bytes),
-        };
-        finish_output(output, target, outcome, traces);
-    }
-
     fn select_source(output: &mut Output, source: OutputSource) {
         let target = match source {
             OutputSource::Final => ExecutionTarget::Final,
@@ -1312,34 +1298,11 @@ mod tests {
         panic!("view not reachable");
     }
 
-    fn push_trace(output: &mut Output, trace: StepTrace) {
-        let mut traces = output.summary().traces.to_vec();
-        traces.push(trace);
-        replace_traces(output, traces);
-    }
-
     fn text(output: &mut Output, viewport: Viewport) -> String {
         let Body::Text(text) = output.present(viewport).body else {
             panic!("expected text presentation");
         };
         text
-    }
-
-    fn first_hex_offset(output: &mut Output, viewport: Viewport) -> usize {
-        let Body::Hex(rows) = output.present(viewport).body else {
-            panic!("expected hex presentation");
-        };
-        rows.first().map_or(0, |row| row.offset)
-    }
-
-    fn first_trace_step(output: &mut Output, viewport: Viewport) -> Option<usize> {
-        let Body::Trace(window) = output.present(viewport).body else {
-            panic!("expected trace presentation");
-        };
-        window
-            .traces
-            .get(window.visible.start)
-            .map(|trace| trace.step)
     }
 
     fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, now: Instant) -> Vec<Effect> {
@@ -2310,40 +2273,6 @@ mod tests {
         assert!(app.modal.is_none());
     }
     #[test]
-    fn only_ready_preview_can_be_copied() {
-        let start = now();
-        let mut app = App::new(start, true);
-        assert!(app.request_copy(CopyMode::Pretty).is_empty());
-        replace_artifact(&mut app.output, Some(Artifact::new(b"stale".to_vec())));
-        transition(
-            &mut app.output,
-            OutputStatus::Debouncing {
-                deadline: start + debounce_for(0),
-            },
-        );
-        assert!(app.request_copy(CopyMode::Pretty).is_empty());
-        transition(
-            &mut app.output,
-            OutputStatus::running(start, ExecutionTarget::Final),
-        );
-        assert!(app.request_copy(CopyMode::Pretty).is_empty());
-        transition(
-            &mut app.output,
-            OutputStatus::Failed(PipelineError::TooManySteps { max: 32 }),
-        );
-        assert!(app.request_copy(CopyMode::Pretty).is_empty());
-        transition(&mut app.output, OutputStatus::Cancelled);
-        assert!(app.request_copy(CopyMode::Pretty).is_empty());
-        transition(&mut app.output, OutputStatus::Ready);
-        replace_artifact(&mut app.output, None);
-        assert!(app.request_copy(CopyMode::Pretty).is_empty());
-        replace_artifact(&mut app.output, Some(Artifact::new(b"safe".to_vec())));
-        assert!(matches!(
-            app.request_copy(CopyMode::Pretty).as_slice(),
-            [Effect::PrepareCopy(_)]
-        ));
-    }
-    #[test]
     fn confirmation_modal_keys_accept_or_cancel_explicit_actions() {
         let start = now();
         let mut app = App::new(start, true);
@@ -2967,7 +2896,7 @@ mod tests {
         );
     }
     #[test]
-    fn output_cycles_views_requests_sources_copy_and_zoom() {
+    fn output_routes_view_source_copy_and_zoom_shortcuts() {
         let start = now();
         let mut app = App::new(start, true);
         app.focus = Pane::Output;
@@ -2978,17 +2907,10 @@ mod tests {
         transition(&mut app.output, OutputStatus::Ready);
         replace_artifact(&mut app.output, Some(Artifact::new(b"final".to_vec())));
 
-        for expected in [
-            ViewMode::Text,
-            ViewMode::Hex,
-            ViewMode::Trace,
-            ViewMode::Smart,
-        ] {
-            key(&mut app, KeyCode::Char('v'), KeyModifiers::NONE, start);
-            assert_eq!(app.output.summary().requested_view, expected);
-        }
+        key(&mut app, KeyCode::Char('v'), KeyModifiers::NONE, start);
+        assert_eq!(app.output.summary().requested_view, ViewMode::Text);
         key(&mut app, KeyCode::Char('V'), KeyModifiers::SHIFT, start);
-        assert_eq!(app.output.summary().requested_view, ViewMode::Smart);
+        assert_eq!(app.output.summary().requested_view, ViewMode::Text);
 
         app.focus = Pane::Pipeline;
         assert!(matches!(
@@ -3024,241 +2946,64 @@ mod tests {
         assert!(app.zoom.is_none());
     }
     #[test]
-    fn output_scroll_keys_change_only_bounded_offsets() {
+    fn output_navigation_keys_route_to_visible_text_and_hex_positions() {
         let start = now();
         let mut app = App::new(start, true);
         app.focus = Pane::Output;
-        transition(&mut app.output, OutputStatus::Ready);
-        replace_artifact(&mut app.output, Some(Artifact::new(vec![b'x'; 40])));
-
-        select_view(&mut app.output, ViewMode::Text);
-        for code in [
-            KeyCode::Down,
-            KeyCode::Right,
-            KeyCode::PageDown,
-            KeyCode::End,
-        ] {
-            key(&mut app, code, KeyModifiers::NONE, start);
-        }
-        assert_eq!(
-            text(
-                &mut app.output,
-                Viewport {
-                    rows: 10,
-                    columns: 78,
-                }
-            ),
-            "x".repeat(40)
-        );
-        let request_id = app.request_id;
-        key(&mut app, KeyCode::Home, KeyModifiers::NONE, start);
-        assert_eq!(
-            text(
-                &mut app.output,
-                Viewport {
-                    rows: 10,
-                    columns: 78,
-                }
-            ),
-            "x".repeat(40)
-        );
-        key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
-        key(&mut app, KeyCode::Left, KeyModifiers::NONE, start);
-        assert_eq!(
-            text(
-                &mut app.output,
-                Viewport {
-                    rows: 10,
-                    columns: 78,
-                }
-            ),
-            "x".repeat(40)
-        );
-
-        select_view(&mut app.output, ViewMode::Hex);
-        app.output.present(Viewport {
-            rows: 2,
-            columns: 78,
-        });
-        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
-        assert_eq!(
-            first_hex_offset(
-                &mut app.output,
-                Viewport {
-                    rows: 2,
-                    columns: 78,
-                }
-            ),
-            32
-        );
-        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
-        assert!(
-            first_hex_offset(
-                &mut app.output,
-                Viewport {
-                    rows: 2,
-                    columns: 78,
-                }
-            ) <= 32
-        );
-
-        select_view(&mut app.output, ViewMode::Trace);
-        replace_traces(
+        finish_output(
             &mut app.output,
-            (1..=3)
-                .map(|step| StepTrace {
-                    step,
-                    transform_id: "base64-encode",
-                    input_bytes: None,
-                    output_bytes: None,
-                    elapsed: None,
-                    status: StepStatus::NotExecuted,
-                    error: None,
-                })
-                .collect(),
+            ExecutionTarget::Final,
+            ExecutionOutcome::Success(b"abcdef".to_vec()),
+            Vec::new(),
         );
-        let trace_viewport = Viewport {
+        select_view(&mut app.output, ViewMode::Text);
+        let text_viewport = Viewport {
+            rows: 2,
+            columns: 2,
+        };
+        assert_eq!(text(&mut app.output, text_viewport), "ab\ncd");
+        app.take_dirty();
+        let request_id = app.request_id;
+
+        for (code, expected) in [
+            (KeyCode::Right, "bc\nde"),
+            (KeyCode::Left, "ab\ncd"),
+            (KeyCode::Down, "bc\nde"),
+            (KeyCode::Up, "ab\ncd"),
+            (KeyCode::PageDown, "ef"),
+            (KeyCode::PageUp, "ab\ncd"),
+            (KeyCode::End, "cd\nef"),
+            (KeyCode::Home, "ab\ncd"),
+        ] {
+            assert!(key(&mut app, code, KeyModifiers::NONE, start).is_empty());
+            assert_eq!(text(&mut app.output, text_viewport), expected);
+            assert!(app.take_dirty(), "{code:?} did not mark the app dirty");
+        }
+
+        assert!(key(&mut app, KeyCode::Home, KeyModifiers::NONE, start).is_empty());
+        assert!(!app.take_dirty());
+
+        finish_output(
+            &mut app.output,
+            ExecutionTarget::Final,
+            ExecutionOutcome::Success((0_u8..80).collect()),
+            Vec::new(),
+        );
+        select_view(&mut app.output, ViewMode::Hex);
+        let hex_viewport = Viewport {
             rows: 2,
             columns: 78,
         };
-        app.output.present(trace_viewport);
-        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
-        assert_eq!(first_trace_step(&mut app.output, trace_viewport), Some(3));
-        key(&mut app, KeyCode::Up, KeyModifiers::NONE, start);
-        assert_eq!(first_trace_step(&mut app.output, trace_viewport), Some(2));
+        app.output.present(hex_viewport);
+        app.take_dirty();
+        assert!(key(&mut app, KeyCode::Right, KeyModifiers::NONE, start).is_empty());
+        let Body::Hex(rows) = app.output.present(hex_viewport).body else {
+            panic!("expected hex presentation");
+        };
+        assert_eq!(rows.first().map(|row| row.offset), Some(16));
+        assert!(app.take_dirty());
         assert_eq!(app.request_id, request_id);
         assert!(matches!(app.output.summary().status, OutputStatus::Ready));
-    }
-
-    #[test]
-    fn hex_resize_preserves_the_visible_byte_and_clamps_to_the_new_full_page() {
-        let start = now();
-        let mut app = App::new(start, true);
-        app.focus = Pane::Output;
-        transition(&mut app.output, OutputStatus::Ready);
-        select_view(&mut app.output, ViewMode::Hex);
-        replace_artifact(&mut app.output, Some(Artifact::new(vec![0; 80])));
-        app.output.present(Viewport {
-            rows: 4,
-            columns: 59,
-        });
-        app.output.navigate(Navigation::End);
-
-        let offset = first_hex_offset(
-            &mut app.output,
-            Viewport {
-                rows: 4,
-                columns: 78,
-            },
-        );
-
-        assert_eq!(offset, 32);
-    }
-
-    #[test]
-    fn hidden_output_preserves_its_last_viewport_for_hex_reflow() {
-        let start = now();
-        let mut app = App::new(start, true);
-        transition(&mut app.output, OutputStatus::Ready);
-        select_view(&mut app.output, ViewMode::Hex);
-        replace_artifact(&mut app.output, Some(Artifact::new(vec![0; 80])));
-        let viewport = Viewport {
-            rows: 4,
-            columns: 59,
-        };
-
-        app.output.present(viewport);
-        app.output.navigate(Navigation::Line(4));
-        app.mouse_regions = MouseRegions::default();
-
-        assert_eq!(first_hex_offset(&mut app.output, viewport), 32);
-    }
-
-    #[test]
-    fn hex_and_trace_pages_use_visible_data_rows_and_end_keeps_a_full_page() {
-        let start = now();
-        let mut app = App::new(start, true);
-        app.focus = Pane::Output;
-        transition(&mut app.output, OutputStatus::Ready);
-        select_view(&mut app.output, ViewMode::Hex);
-        replace_artifact(&mut app.output, Some(Artifact::new(vec![0; 80])));
-        let viewport = Viewport {
-            rows: 4,
-            columns: 78,
-        };
-        app.output.present(viewport);
-
-        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
-        assert_eq!(first_hex_offset(&mut app.output, viewport), 32);
-        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
-        assert_eq!(first_hex_offset(&mut app.output, viewport), 0);
-        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
-        assert_eq!(first_hex_offset(&mut app.output, viewport), 32);
-
-        select_view(&mut app.output, ViewMode::Trace);
-        replace_traces(
-            &mut app.output,
-            (1..=10)
-                .map(|step| StepTrace {
-                    step,
-                    transform_id: "base64-decode",
-                    input_bytes: Some(4),
-                    output_bytes: Some(3),
-                    elapsed: None,
-                    status: if step == 2 {
-                        StepStatus::Failed
-                    } else {
-                        StepStatus::Succeeded
-                    },
-                    error: (step == 2)
-                        .then_some(TransformError::InvalidBase64 { position: Some(1) }),
-                })
-                .collect(),
-        );
-        let viewport = Viewport {
-            rows: 8,
-            columns: 80,
-        };
-        app.output.present(viewport);
-
-        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
-        assert_eq!(first_trace_step(&mut app.output, viewport), Some(5));
-        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
-        assert_eq!(first_trace_step(&mut app.output, viewport), Some(7));
-        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
-        assert_eq!(first_trace_step(&mut app.output, viewport), Some(3));
-    }
-
-    #[test]
-    fn trace_end_obeys_the_render_byte_budget() {
-        let start = now();
-        let mut app = App::new(start, true);
-        app.focus = Pane::Output;
-        transition(&mut app.output, OutputStatus::Ready);
-        select_view(&mut app.output, ViewMode::Trace);
-        replace_traces(
-            &mut app.output,
-            (1..=32)
-                .map(|step| StepTrace {
-                    step,
-                    transform_id: "base64-encode",
-                    input_bytes: None,
-                    output_bytes: None,
-                    elapsed: None,
-                    status: StepStatus::Succeeded,
-                    error: None,
-                })
-                .collect(),
-        );
-        let viewport = Viewport {
-            rows: 100,
-            columns: 200,
-        };
-        app.output.present(viewport);
-
-        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
-
-        assert_eq!(first_trace_step(&mut app.output, viewport), Some(13));
     }
     #[test]
     fn trace_view_never_copies_an_underlying_artifact() {
@@ -3336,12 +3081,11 @@ mod tests {
             definition: transform_by_id("base64-encode").unwrap(),
             enabled: true,
         });
-        select_source(&mut app.output, OutputSource::Step(0));
-        transition(&mut app.output, OutputStatus::Ready);
-        replace_artifact(&mut app.output, Some(Artifact::new(b"result".to_vec())));
-        push_trace(
+        finish_output(
             &mut app.output,
-            StepTrace {
+            ExecutionTarget::Step(0),
+            ExecutionOutcome::Success(b"result".to_vec()),
+            vec![StepTrace {
                 step: 1,
                 transform_id: "base64-encode",
                 input_bytes: Some(6),
@@ -3349,7 +3093,7 @@ mod tests {
                 elapsed: None,
                 status: StepStatus::Succeeded,
                 error: None,
-            },
+            }],
         );
         app.copy_phase = CopyPhase::Writing {
             request_id: 1,
@@ -4525,47 +4269,6 @@ mod tests {
     }
 
     #[test]
-    fn manual_view_stays_pinned_and_smart_is_recomputed_from_reports() {
-        let start = now();
-        let mut app = App::new(start, true);
-        select_view(&mut app.output, ViewMode::Text);
-        app.handle_event(AppEvent::Paste("x".to_string(), start));
-        assert_eq!(app.output.summary().requested_view, ViewMode::Text);
-
-        select_view(&mut app.output, ViewMode::Smart);
-        app.handle_event(AppEvent::PreviewFinished(preview_result(
-            app.request_id,
-            ExecutionTarget::Final,
-            ExecutionOutcome::Success(vec![0xff]),
-        )));
-        assert!(matches!(
-            app.output
-                .present(Viewport {
-                    rows: 10,
-                    columns: 78,
-                })
-                .body,
-            Body::Hex(_)
-        ));
-
-        app.request_id += 1;
-        app.handle_event(AppEvent::PreviewFinished(preview_result(
-            app.request_id,
-            ExecutionTarget::Final,
-            ExecutionOutcome::Failed(PipelineError::TooManySteps { max: 32 }),
-        )));
-        assert!(matches!(
-            app.output
-                .present(Viewport {
-                    rows: 10,
-                    columns: 78,
-                })
-                .body,
-            Body::Trace(_)
-        ));
-    }
-
-    #[test]
     fn every_stale_report_is_inert() {
         let start = now();
         let outcomes = [
@@ -4671,107 +4374,6 @@ mod tests {
             app.output.summary().status,
             OutputStatus::Debouncing { .. }
         ));
-    }
-
-    #[test]
-    fn text_arrows_advance_on_utf8_boundaries_without_repeating_the_same_window() {
-        let start = now();
-        let mut app = App::new(start, true);
-        app.focus = Pane::Output;
-        select_view(&mut app.output, ViewMode::Text);
-        transition(&mut app.output, OutputStatus::Ready);
-        replace_artifact(
-            &mut app.output,
-            Some(Artifact::new("界a".as_bytes().to_vec())),
-        );
-
-        let viewport = Viewport {
-            rows: 1,
-            columns: 80,
-        };
-        app.output.present(viewport);
-        key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
-        assert_eq!(text(&mut app.output, viewport), "a");
-
-        app.take_dirty();
-        key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
-        assert!(!app.take_dirty());
-        assert_eq!(text(&mut app.output, viewport), "a");
-        key(&mut app, KeyCode::Left, KeyModifiers::NONE, start);
-        assert_eq!(text(&mut app.output, viewport), "界a");
-    }
-
-    #[test]
-    fn text_pages_use_the_last_rendered_viewport_and_end_shows_a_full_page() {
-        let start = now();
-        let mut app = App::new(start, true);
-        app.focus = Pane::Output;
-        select_view(&mut app.output, ViewMode::Text);
-        transition(&mut app.output, OutputStatus::Ready);
-        replace_artifact(&mut app.output, Some(Artifact::new(b"abcdef".to_vec())));
-        let viewport = Viewport {
-            rows: 2,
-            columns: 2,
-        };
-        assert_eq!(text(&mut app.output, viewport), "ab\ncd");
-
-        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
-        assert_eq!(text(&mut app.output, viewport), "ef");
-        app.take_dirty();
-        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
-        assert!(!app.take_dirty());
-        assert_eq!(text(&mut app.output, viewport), "ef");
-
-        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
-        assert_eq!(text(&mut app.output, viewport), "ab\ncd");
-        key(&mut app, KeyCode::End, KeyModifiers::NONE, start);
-        assert_eq!(text(&mut app.output, viewport), "cd\nef");
-        key(&mut app, KeyCode::Home, KeyModifiers::NONE, start);
-        assert_eq!(text(&mut app.output, viewport), "ab\ncd");
-    }
-
-    #[test]
-    fn text_pages_stay_bounded_and_long_graphemes_render_without_scalar_crawl() {
-        let start = now();
-        let long_text = format!("a{}b", "\u{301}".repeat(3_000));
-        let mut app = App::new(start, true);
-        app.focus = Pane::Output;
-        select_view(&mut app.output, ViewMode::Text);
-        transition(&mut app.output, OutputStatus::Ready);
-        replace_artifact(
-            &mut app.output,
-            Some(Artifact::new(long_text.as_bytes().to_vec())),
-        );
-
-        let viewport = Viewport {
-            rows: 10,
-            columns: 78,
-        };
-        assert_eq!(text(&mut app.output, viewport), "…");
-        app.take_dirty();
-        key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
-        assert!(app.take_dirty());
-        let bounded = text(&mut app.output, viewport);
-        assert!(!bounded.is_empty());
-        assert!(bounded.len() <= crate::tui::output::VISIBLE_TEXT_BYTE_BUDGET);
-        app.take_dirty();
-        key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
-        assert!(app.take_dirty());
-        assert_eq!(text(&mut app.output, viewport), "b");
-        app.take_dirty();
-        key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
-        assert!(!app.take_dirty());
-        assert_eq!(text(&mut app.output, viewport), "b");
-
-        key(&mut app, KeyCode::Home, KeyModifiers::NONE, start);
-        assert_eq!(text(&mut app.output, viewport), "…");
-        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
-        let page = text(&mut app.output, viewport);
-        assert!(!page.is_empty());
-        assert!(page.len() <= crate::tui::output::VISIBLE_TEXT_BYTE_BUDGET);
-
-        key(&mut app, KeyCode::PageUp, KeyModifiers::NONE, start);
-        assert_eq!(text(&mut app.output, viewport), "…");
     }
 
     #[test]

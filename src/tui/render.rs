@@ -2756,28 +2756,6 @@ mod tests {
     }
 
     #[test]
-    fn newline_dense_output_stays_within_the_four_kibibyte_view_budget() {
-        let mut output = Output::new();
-        finish_output(
-            &mut output,
-            ExecutionTarget::Final,
-            ExecutionOutcome::Success(vec![b'\n'; 8 * 1024]),
-            Vec::new(),
-        );
-        let Body::Text(text) = output
-            .present(Viewport {
-                rows: 10_000,
-                columns: 80,
-            })
-            .body
-        else {
-            panic!("expected text presentation");
-        };
-
-        assert!(text.len() <= VISIBLE_TEXT_BYTE_BUDGET);
-    }
-
-    #[test]
     fn trace_table_uses_display_names_columns_and_safe_first_failure_detail() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;

@@ -393,13 +393,13 @@ Expected: 세 test module이 통과하고 두 `rg` 명령은 match가 없어 exi
 - Modify: `src/tui/state.rs`
 - Modify: `src/tui/render.rs`
 
-- [ ] **Step 1: 반복 setup을 lifecycle helper 하나로 통합**
+- [x] **Step 1: 반복 setup을 lifecycle helper 하나로 통합**
 
 Output 테스트의 성공 setup은 Task 3에서 만든 `ready_output` 하나로 통합한다. 별도 builder나 fixture struct는 만들지 않는다.
 
 failure와 traces가 필요한 테스트는 `Lifecycle::Finish` 값을 test 안에 직접 적어 의미를 숨기지 않는다.
 
-- [ ] **Step 2: 상태 기반 동작 테스트를 interface 기준으로 이동**
+- [x] **Step 2: 상태 기반 동작 테스트를 interface 기준으로 이동**
 
 다음 기존 테스트 그룹을 `src/tui/output.rs`로 옮기고 직접 offset·viewport 필드 assertion을 presentation의 첫 visible item 또는 반환된 body assertion으로 바꾼다.
 
@@ -411,11 +411,11 @@ failure와 traces가 필요한 테스트는 `Lifecycle::Finish` 값을 test 안�
 
 기존 bounded Unicode와 allocation budget 테스트는 helper implementation 회귀 가치가 있으므로 유지한다.
 
-- [ ] **Step 3: render fixture의 직접 필드 조작 제거**
+- [x] **Step 3: render fixture의 직접 필드 조작 제거**
 
 Task 3에서 interface로 바꾼 `src/tui/render.rs` fixture를 재검토하고 반복 setup을 `Lifecycle::Finish`, `Navigation`과 `present` 중심으로 통합한다. `#[cfg(test)]` setter나 offset getter는 추가하지 않는다. 기존 제목, no-color, 열, 작은 화면과 failure detail의 semantic assertion은 그대로 유지한다.
 
-- [ ] **Step 4: 중복 테스트 삭제 후 focused suite 실행**
+- [x] **Step 4: 중복 테스트 삭제 후 focused suite 실행**
 
 Run:
 
@@ -428,7 +428,7 @@ Run:
 
 Expected: 모든 focused test가 통과하고 마지막 `rg`는 match가 없다.
 
-- [ ] **Step 5: 논리 커밋**
+- [x] **Step 5: 논리 커밋**
 
     git add src/tui/output.rs src/tui/state.rs src/tui/render.rs docs/superpowers/plans/2026-08-29-toc-output-module-deepening.md
     git diff --cached --check
