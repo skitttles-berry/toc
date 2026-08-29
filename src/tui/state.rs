@@ -16,7 +16,7 @@ use crate::{
 
 use super::{
     clipboard::{ClipboardPayload, CopyJob, CopyKind, CopyMode, PreparedCopy},
-    views::{
+    output::{
         Artifact, EffectiveView, ViewMode, effective_view, hex_bytes_per_row,
         hex_visible_row_capacity, last_text_offset, last_text_page_offset, next_text_offset,
         next_text_page_offset, previous_text_offset, previous_text_page_offset, trace_start_row,
@@ -1551,7 +1551,7 @@ mod tests {
         TUI_OUTPUT_LIMIT,
         error::{PipelineError, TransformError},
         pipeline::{ExecutionOutcome, ExecutionReport, ExecutionTarget, StepStatus, execute},
-        tui::views::{EffectiveView, effective_view},
+        tui::output::{EffectiveView, effective_view},
     };
     use crossterm::event::{
         KeyCode, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -4695,7 +4695,7 @@ mod tests {
         key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
         assert_eq!(app.output.byte_offset, "界".len());
         assert!("界a".is_char_boundary(app.output.byte_offset));
-        let first = crate::tui::views::render_text_window(
+        let first = crate::tui::output::render_text_window(
             app.output.active_artifact.as_ref().unwrap(),
             app.output.byte_offset,
             1,
@@ -4705,7 +4705,7 @@ mod tests {
 
         key(&mut app, KeyCode::Right, KeyModifiers::NONE, start);
         assert_eq!(app.output.byte_offset, "界".len());
-        let second = crate::tui::views::render_text_window(
+        let second = crate::tui::output::render_text_window(
             app.output.active_artifact.as_ref().unwrap(),
             app.output.byte_offset,
             1,
@@ -4758,7 +4758,7 @@ mod tests {
             assert!(app.output.byte_offset > before);
             assert!(app.output.byte_offset > before.saturating_add(1));
             assert!(text.is_char_boundary(app.output.byte_offset));
-            let window = crate::tui::views::render_text_window(
+            let window = crate::tui::output::render_text_window(
                 app.output.active_artifact.as_ref().unwrap(),
                 app.output.byte_offset,
                 1,
@@ -4772,7 +4772,7 @@ mod tests {
         assert_eq!(app.output.byte_offset, maximum);
 
         app.output.byte_offset = 0;
-        let expected_page = crate::tui::views::render_text_window(
+        let expected_page = crate::tui::output::render_text_window(
             app.output.active_artifact.as_ref().unwrap(),
             0,
             app.output_rows(),
@@ -4782,7 +4782,7 @@ mod tests {
         key(&mut app, KeyCode::PageDown, KeyModifiers::NONE, start);
         assert_eq!(app.output.byte_offset, expected_page);
         assert!(text.is_char_boundary(app.output.byte_offset));
-        let page = crate::tui::views::render_text_window(
+        let page = crate::tui::output::render_text_window(
             app.output.active_artifact.as_ref().unwrap(),
             app.output.byte_offset,
             app.output_rows(),

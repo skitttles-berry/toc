@@ -20,13 +20,13 @@ use crate::{
 
 use super::{
     CYAN, GREEN, RED, YELLOW,
-    state::{App, CopyPhase, Modal, MouseRegions, OutputSource, OutputStatus, Pane},
-    views::{
+    output::{
         EffectiveView, TEXT_VIEW_UNAVAILABLE_MESSAGE, VISIBLE_TEXT_BYTE_BUDGET, ViewMode,
         effective_view, render_pipeline_error_summary, render_text_window,
         render_transform_error_summary, trace_failure_detail_height, trace_start_row, trace_status,
         trace_visible_row_capacity, visible_hex_rows,
     },
+    state::{App, CopyPhase, Modal, MouseRegions, OutputSource, OutputStatus, Pane},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,7 +195,7 @@ fn render_hex_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
             )
         });
     let header_style = muted_style();
-    let offset = |row: &super::views::HexRow<'_>| {
+    let offset = |row: &super::output::HexRow<'_>| {
         Cell::from(format!("{:08X}", row.offset)).style(hex_style(app, CYAN))
     };
     let table = match columns {
@@ -1355,11 +1355,11 @@ pub(super) fn draw_if_dirty<B: Backend>(
 mod tests {
     use super::super::{
         clipboard::{ClipboardPayload, CopyKind},
+        output::{Artifact, ViewMode},
         state::{
             AppEvent, CopyPhase, Effect, LONG_RUNNING_AFTER, Modal, OutputSource, OutputStatus,
             Pane, debounce_for,
         },
-        views::{Artifact, ViewMode},
         worker::PreviewResult,
     };
     use super::*;

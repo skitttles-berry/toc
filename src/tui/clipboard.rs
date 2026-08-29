@@ -2,7 +2,7 @@ use std::{sync::mpsc, thread};
 
 use crate::{TUI_OUTPUT_LIMIT, error::TransformError, transforms::transform_by_id};
 
-use super::views::Artifact;
+use super::output::Artifact;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CopyMode {
