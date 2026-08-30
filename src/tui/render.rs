@@ -20,13 +20,12 @@ use crate::{
 
 use super::{
     CYAN, GREEN, RED, YELLOW,
-    state::{App, CopyPhase, Modal, MouseRegions, OutputSource, OutputStatus, Pane},
-    views::{
-        EffectiveView, TEXT_VIEW_UNAVAILABLE_MESSAGE, VISIBLE_TEXT_BYTE_BUDGET, ViewMode,
-        effective_view, render_pipeline_error_summary, render_text_window,
-        render_transform_error_summary, trace_failure_detail_height, trace_start_row, trace_status,
-        trace_visible_row_capacity, visible_hex_rows,
+    output::{
+        Body, HexRow, Presentation, Source, Status, Summary, TEXT_VIEW_UNAVAILABLE_MESSAGE,
+        TraceWindow, ViewMode, Viewport, render_pipeline_error_summary,
+        render_transform_error_summary, trace_status,
     },
+    state::{App, CopyPhase, Modal, MouseRegions, Pane},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,21 +95,21 @@ fn stacked_pane_heights(height: u16) -> [u16; 3] {
     [pipeline, input, output]
 }
 
-fn output_title(app: &App, available_width: u16) -> String {
-    let view = match app.output.view {
+fn output_title(summary: &Summary<'_>, available_width: u16) -> String {
+    let view = match summary.requested_view {
         ViewMode::Smart => "SMART",
         ViewMode::Text => "TEXT",
         ViewMode::Hex => "HEX",
         ViewMode::Trace => "TRACE",
     };
-    let base = match app.output.source {
-        OutputSource::Final => format!("» OUTPUT [{view}]"),
-        OutputSource::Step(index) => format!("» OUTPUT / STEP {:02} [{view}]", index + 1),
+    let base = match summary.source {
+        Source::Final => format!("» OUTPUT [{view}]"),
+        Source::Step(index) => format!("» OUTPUT / STEP {:02} [{view}]", index + 1),
     };
-    if !matches!(app.output.status, OutputStatus::Ready) {
+    if !matches!(summary.status, Status::Ready) {
         return base;
     }
-    let Some(artifact) = app.output.active_artifact.as_ref() else {
+    let Some(artifact) = summary.artifact else {
         return base;
     };
     let with_size = format!("{base} [{} B]", artifact.bytes().len());
@@ -133,15 +132,15 @@ fn render_input(
     frame.render_widget(&app.textarea, area);
 }
 
-fn hex_style(app: &App, color: Color) -> Style {
-    if app.no_color {
+fn hex_style(no_color: bool, color: Color) -> Style {
+    if no_color {
         Style::default()
     } else {
         Style::default().fg(color)
     }
 }
 
-fn hex_bytes_cell(app: &App, bytes: &[u8], start: usize) -> Cell<'static> {
+fn hex_bytes_cell(no_color: bool, bytes: &[u8], start: usize) -> Cell<'static> {
     let mut spans = Vec::with_capacity(15);
     for index in 0..8 {
         if index > 0 {
@@ -151,7 +150,7 @@ fn hex_bytes_cell(app: &App, bytes: &[u8], start: usize) -> Cell<'static> {
             Some(byte) => spans.push(Span::styled(
                 format!("{byte:02X}"),
                 hex_style(
-                    app,
+                    no_color,
                     if (0x20..=0x7e).contains(byte) {
                         Color::Reset
                     } else {
@@ -165,13 +164,13 @@ fn hex_bytes_cell(app: &App, bytes: &[u8], start: usize) -> Cell<'static> {
     Cell::from(Line::from(spans))
 }
 
-fn hex_ascii_cell(app: &App, bytes: &[u8]) -> Cell<'static> {
+fn hex_ascii_cell(no_color: bool, bytes: &[u8]) -> Cell<'static> {
     let mut spans = Vec::with_capacity(16);
     for index in 0..16 {
         match bytes.get(index) {
             Some(byte) if (0x20..=0x7e).contains(byte) => spans.push(Span::styled(
                 char::from(*byte).to_string(),
-                hex_style(app, GREEN),
+                hex_style(no_color, GREEN),
             )),
             Some(_) => spans.push(Span::styled(".", muted_style())),
             None => spans.push(Span::styled(" ", muted_style())),
@@ -180,32 +179,20 @@ fn hex_ascii_cell(app: &App, bytes: &[u8]) -> Cell<'static> {
     Cell::from(Line::from(spans))
 }
 
-fn render_hex_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn render_hex_table(frame: &mut Frame<'_>, rows: &[HexRow<'_>], no_color: bool, area: Rect) {
     let columns = area.width as usize;
-    let rows = app
-        .output
-        .active_artifact
-        .as_ref()
-        .map_or_else(Vec::new, |artifact| {
-            visible_hex_rows(
-                artifact,
-                app.output.row_offset,
-                area.height.saturating_sub(1) as usize,
-                columns,
-            )
-        });
     let header_style = muted_style();
-    let offset = |row: &super::views::HexRow<'_>| {
-        Cell::from(format!("{:08X}", row.offset)).style(hex_style(app, CYAN))
+    let offset = |row: &HexRow<'_>| {
+        Cell::from(format!("{:08X}", row.offset)).style(hex_style(no_color, CYAN))
     };
     let table = match columns {
         78.. => Table::new(
             rows.iter().map(|row| {
                 Row::new(vec![
                     offset(row),
-                    hex_bytes_cell(app, row.bytes, 0),
-                    hex_bytes_cell(app, row.bytes, 8),
-                    hex_ascii_cell(app, row.bytes),
+                    hex_bytes_cell(no_color, row.bytes, 0),
+                    hex_bytes_cell(no_color, row.bytes, 8),
+                    hex_ascii_cell(no_color, row.bytes),
                 ])
             }),
             [
@@ -226,8 +213,8 @@ fn render_hex_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
             rows.iter().map(|row| {
                 Row::new(vec![
                     offset(row),
-                    hex_bytes_cell(app, row.bytes, 0),
-                    hex_bytes_cell(app, row.bytes, 8),
+                    hex_bytes_cell(no_color, row.bytes, 0),
+                    hex_bytes_cell(no_color, row.bytes, 8),
                 ])
             }),
             [
@@ -244,7 +231,7 @@ fn render_hex_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .column_spacing(2),
         _ => Table::new(
             rows.iter()
-                .map(|row| Row::new(vec![offset(row), hex_bytes_cell(app, row.bytes, 0)])),
+                .map(|row| Row::new(vec![offset(row), hex_bytes_cell(no_color, row.bytes, 0)])),
             [Constraint::Length(8), Constraint::Length(23)],
         )
         .header(Row::new(vec![
@@ -256,22 +243,22 @@ fn render_hex_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(table, area);
 }
 
-fn trace_status_style(app: &App, status: StepStatus) -> Style {
+fn trace_status_style(no_color: bool, status: StepStatus) -> Style {
     let color = match status {
         StepStatus::Succeeded => GREEN,
         StepStatus::Failed => RED,
         StepStatus::Cancelled => YELLOW,
         StepStatus::Disabled | StepStatus::NotExecuted => return muted_style(),
     };
-    if app.no_color {
+    if no_color {
         Style::default()
     } else {
         Style::default().fg(color)
     }
 }
 
-fn failure_style(app: &App) -> Style {
-    if app.no_color {
+fn failure_style(no_color: bool) -> Style {
+    if no_color {
         Style::default()
     } else {
         Style::default().fg(RED)
@@ -307,22 +294,22 @@ fn trace_cell(text: &str, width: usize, row_budget: &mut usize) -> Cell<'static>
 }
 
 fn trace_status_cell(
-    app: &App,
+    no_color: bool,
     status: StepStatus,
     width: usize,
     row_budget: &mut usize,
 ) -> Cell<'static> {
-    trace_cell(trace_status(status), width, row_budget).style(trace_status_style(app, status))
+    trace_cell(trace_status(status), width, row_budget).style(trace_status_style(no_color, status))
 }
 
-fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn render_trace_table(frame: &mut Frame<'_>, window: &TraceWindow<'_>, no_color: bool, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
     let columns = area.width as usize;
     let wide = columns >= 70;
-    let traces = &app.output.traces[..app.output.traces.len().min(32)];
+    let traces = window.traces;
     let fixed_columns = if wide { 47 } else { 29 };
     let maximum_operation = columns.saturating_sub(fixed_columns).max(1);
     let operation_width = traces
@@ -345,11 +332,8 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
         )
     };
     let header_cost = headers.iter().map(|header| header.len()).sum::<usize>();
-    let failure_index = traces
-        .iter()
-        .position(|trace| trace.status == StepStatus::Failed);
-    let failure = failure_index.and_then(|index| traces.get(index));
-    let detail_height = trace_failure_detail_height(traces, area.height as usize) as u16;
+    let failure = window.failure.and_then(|index| traces.get(index));
+    let detail_height = window.detail_height as u16;
     let (table_area, detail_area) = if detail_height == 0 {
         (area, None)
     } else if area.height >= 5 {
@@ -361,7 +345,7 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
         (areas[0], Some(areas[1]))
     };
 
-    let mut remaining_budget = VISIBLE_TEXT_BYTE_BUDGET.saturating_sub(header_cost);
+    let mut remaining_budget = window.byte_budget.saturating_sub(header_cost);
     let detail = failure.zip(detail_area).and_then(|(trace, detail_area)| {
         let error = trace.error.as_ref()?;
         let detail_width = detail_area.width.saturating_sub(1) as usize;
@@ -391,14 +375,10 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Some((detail_area, title, Some(summary)))
     });
 
-    let start =
-        trace_start_row(traces, app.output.row_offset, area.height as usize).min(traces.len());
-    let visible_rows = trace_visible_row_capacity(traces, area.height as usize, columns);
-    let take = visible_rows.min(traces.len().saturating_sub(start));
     let rows = traces
         .iter()
-        .skip(start)
-        .take(take)
+        .skip(window.visible.start)
+        .take(window.visible.end.saturating_sub(window.visible.start))
         .map(|trace| {
             let mut row_budget = columns;
             let operation = operation_name(trace.transform_id, widths[1]);
@@ -430,7 +410,7 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
                         widths[4],
                         &mut row_budget,
                     ),
-                    trace_status_cell(app, trace.status, widths[5], &mut row_budget),
+                    trace_status_cell(no_color, trace.status, widths[5], &mut row_budget),
                 ]);
             } else {
                 let input = trace
@@ -441,12 +421,12 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     .map_or_else(|| "—".to_string(), |bytes| bytes.to_string());
                 cells.extend([
                     trace_cell(&format!("{input}→{output} B"), widths[2], &mut row_budget),
-                    trace_status_cell(app, trace.status, widths[3], &mut row_budget),
+                    trace_status_cell(no_color, trace.status, widths[3], &mut row_budget),
                 ]);
             }
             let row = Row::new(cells);
             if trace.status == StepStatus::Failed {
-                row.style(failure_style(app))
+                row.style(failure_style(no_color))
             } else {
                 row
             }
@@ -470,7 +450,7 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
     );
 
     if let Some((detail_area, title, summary)) = detail {
-        let mut lines = vec![Line::styled(title, failure_style(app))];
+        let mut lines = vec![Line::styled(title, failure_style(no_color))];
         if let Some(summary) = summary {
             lines.push(Line::raw(summary));
         }
@@ -478,7 +458,7 @@ fn render_trace_table(frame: &mut Frame<'_>, app: &App, area: Rect) {
             Paragraph::new(lines).block(
                 Block::default()
                     .borders(Borders::LEFT)
-                    .border_style(failure_style(app)),
+                    .border_style(failure_style(no_color)),
             ),
             detail_area,
         );
@@ -492,69 +472,61 @@ fn render_output(
     mouse_regions: &mut MouseRegions,
 ) {
     let inner = pane_block(app, "", app.focus == Pane::Output).inner(area);
-    app.reflow_output_viewport(inner);
-    let title = output_title(app, area.width);
+    let title = output_title(&app.output.summary(), area.width);
     let block = pane_block(app, &title, app.focus == Pane::Output);
     mouse_regions.output = Some(area);
     mouse_regions.output_content = Some(inner);
     frame.render_widget(block, area);
 
-    let rows = inner.height as usize;
-    let columns = inner.width as usize;
-    let text = match &app.output.status {
-        OutputStatus::Idle => String::new(),
-        OutputStatus::Cancelled if app.output.traces.is_empty() => "Cancelled".to_string(),
-        OutputStatus::Failed(error)
-            if matches!(app.output.view, ViewMode::Text | ViewMode::Hex) =>
-        {
-            format!(
-                "{}\nSwitch to Trace view",
-                crate::error::escape_external(
-                    &render_pipeline_error_summary(error),
-                    columns.saturating_mul(rows).min(512),
-                )
-            )
-        }
-        status => match effective_view(
-            app.output.view,
-            app.output.active_artifact.as_ref(),
-            matches!(status, OutputStatus::Failed(_)),
-        ) {
-            EffectiveView::Text => app
-                .output
-                .active_artifact
-                .as_ref()
-                .map(|artifact| {
-                    render_text_window(artifact, app.output.byte_offset, rows, columns).text
-                })
-                .unwrap_or_default(),
-            EffectiveView::Hex => {
-                render_hex_table(frame, app, inner);
-                return;
-            }
-            EffectiveView::Trace => {
-                render_trace_table(frame, app, inner);
-                if app.output.traces.is_empty()
-                    && let OutputStatus::Failed(error) = status
-                {
-                    let error_area = Rect::new(
-                        inner.x,
-                        inner.y.saturating_add(1),
-                        inner.width,
-                        inner.height.saturating_sub(1),
-                    );
-                    let error = crate::error::escape_external(
-                        &render_pipeline_error_summary(error),
-                        columns.saturating_mul(rows).min(512),
-                    );
-                    frame.render_widget(Paragraph::new(error), error_area);
-                }
-                return;
-            }
-            EffectiveView::Unavailable => TEXT_VIEW_UNAVAILABLE_MESSAGE.to_string(),
-        },
+    let viewport = Viewport {
+        rows: inner.height as usize,
+        columns: inner.width as usize,
     };
-    frame.render_widget(Paragraph::new(text).style(Style::default()), inner);
+    let Presentation { summary, body } = app.output.present(viewport);
+    match body {
+        Body::Empty => frame.render_widget(Paragraph::new(""), inner),
+        Body::Cancelled => frame.render_widget(Paragraph::new("Cancelled"), inner),
+        Body::Failure {
+            error,
+            switch_to_trace,
+        } => {
+            let error = crate::error::escape_external(
+                &render_pipeline_error_summary(error),
+                viewport.columns.saturating_mul(viewport.rows).min(512),
+            );
+            let text = if switch_to_trace {
+                format!("{error}\nSwitch to Trace view")
+            } else {
+                error
+            };
+            frame.render_widget(Paragraph::new(text), inner);
+        }
+        Body::Text(text) => {
+            frame.render_widget(Paragraph::new(text).style(Style::default()), inner)
+        }
+        Body::Hex(rows) => render_hex_table(frame, &rows, app.no_color, inner),
+        Body::Trace(window) => {
+            render_trace_table(frame, &window, app.no_color, inner);
+            if window.traces.is_empty()
+                && let Status::Failed(error) = summary.status
+            {
+                let error_area = Rect::new(
+                    inner.x,
+                    inner.y.saturating_add(1),
+                    inner.width,
+                    inner.height.saturating_sub(1),
+                );
+                let error = crate::error::escape_external(
+                    &render_pipeline_error_summary(error),
+                    viewport.columns.saturating_mul(viewport.rows).min(512),
+                );
+                frame.render_widget(Paragraph::new(error), error_area);
+            }
+        }
+        Body::TextUnavailable => {
+            frame.render_widget(Paragraph::new(TEXT_VIEW_UNAVAILABLE_MESSAGE), inner)
+        }
+    }
 }
 
 fn render_pipeline(
@@ -564,6 +536,7 @@ fn render_pipeline(
     show_sizes: bool,
     mouse_regions: &mut MouseRegions,
 ) {
+    let output = app.output.summary();
     let block = pane_block(app, "$ PIPELINE", app.focus == Pane::Pipeline);
     let inner = block.inner(area);
     mouse_regions.pipeline = Some(area);
@@ -586,14 +559,10 @@ fn render_pipeline(
             let selected = index == app.selected_step;
             let prefix = if selected { ">" } else { " " };
             let enabled = if step.enabled { "ON" } else { "OFF" };
-            let trace = app
-                .output
-                .traces
-                .iter()
-                .find(|trace| trace.step == index + 1);
+            let trace = output.traces.iter().find(|trace| trace.step == index + 1);
             let status = if !step.enabled {
                 StepStatus::Disabled
-            } else if app.output.status.running_target() == Some(ExecutionTarget::Step(index)) {
+            } else if output.status.running_target() == Some(ExecutionTarget::Step(index)) {
                 let text = format!("{prefix} [{enabled}]  › {}", step.definition.display_name);
                 return ListItem::new(Span::styled(
                     text,
@@ -829,14 +798,15 @@ fn dock_line(
 }
 
 fn footer_status_line(app: &App, width: usize) -> Option<Line<'static>> {
-    match &app.output.status {
-        OutputStatus::Failed(error) => Some(Line::raw(crate::error::escape_external(
+    let output = app.output.summary();
+    match output.status {
+        Status::Failed(error) => Some(Line::raw(crate::error::escape_external(
             &render_pipeline_error_summary(error),
             width,
         ))),
-        OutputStatus::Cancelled => Some(Line::raw("Cancelled")),
+        Status::Cancelled => Some(Line::raw("Cancelled")),
         status if status.long_running_notice() => Some(Line::raw(
-            if app.output.active_artifact.is_some() || !app.output.traces.is_empty() {
+            if output.artifact.is_some() || !output.traces.is_empty() {
                 "Still processing · Previous result shown · Esc Cancel"
             } else {
                 "Still processing · Esc Cancel"
@@ -1101,14 +1071,14 @@ fn render_inspector(frame: &mut Frame<'_>, app: &App, mouse_regions: &mut MouseR
         return;
     };
     let area = centered(frame.area(), 78, 13);
-    let trace = app
-        .output
+    let output = app.output.summary();
+    let trace = output
         .traces
         .iter()
         .find(|trace| trace.step == app.selected_step + 1);
     let status = if !step.enabled {
         "OFF"
-    } else if app.output.status.running_target() == Some(ExecutionTarget::Step(app.selected_step)) {
+    } else if output.status.running_target() == Some(ExecutionTarget::Step(app.selected_step)) {
         "RUNNING"
     } else if let Some(trace) = trace {
         trace_status(trace.status)
@@ -1355,11 +1325,11 @@ pub(super) fn draw_if_dirty<B: Backend>(
 mod tests {
     use super::super::{
         clipboard::{ClipboardPayload, CopyKind},
-        state::{
-            AppEvent, CopyPhase, Effect, LONG_RUNNING_AFTER, Modal, OutputSource, OutputStatus,
-            Pane, debounce_for,
+        output::{
+            Artifact, LONG_RUNNING_AFTER, Lifecycle, Navigation, Output, Source as OutputSource,
+            Status as OutputStatus, VISIBLE_TEXT_BYTE_BUDGET, ViewMode,
         },
-        views::{Artifact, ViewMode},
+        state::{AppEvent, CopyPhase, Effect, Modal, Pane, debounce_for},
         worker::PreviewResult,
     };
     use super::*;
@@ -1382,6 +1352,131 @@ mod tests {
 
     fn now() -> Instant {
         Instant::now()
+    }
+
+    fn target(output: &Output) -> ExecutionTarget {
+        match output.summary().source {
+            OutputSource::Final => ExecutionTarget::Final,
+            OutputSource::Step(index) => ExecutionTarget::Step(index),
+        }
+    }
+
+    fn finish_output(
+        output: &mut Output,
+        target: ExecutionTarget,
+        outcome: ExecutionOutcome,
+        traces: Vec<StepTrace>,
+    ) {
+        output.update(Lifecycle::Start {
+            started_at: now(),
+            target,
+        });
+        output.update(Lifecycle::Finish {
+            target,
+            outcome,
+            traces,
+        });
+    }
+
+    fn transition(output: &mut Output, status: OutputStatus) {
+        let target = target(output);
+        let traces = output.summary().traces.to_vec();
+        match status {
+            OutputStatus::Idle => *output = Output::new(),
+            OutputStatus::Debouncing { deadline } => {
+                output.update(Lifecycle::Invalidate { deadline });
+            }
+            OutputStatus::Running {
+                started_at,
+                target,
+                notice_visible: _,
+            } => {
+                output.update(Lifecycle::Start { started_at, target });
+            }
+            OutputStatus::Ready => {
+                let bytes = output
+                    .summary()
+                    .artifact
+                    .map_or_else(Vec::new, |artifact| artifact.bytes().to_vec());
+                finish_output(output, target, ExecutionOutcome::Success(bytes), traces);
+            }
+            OutputStatus::Failed(error) => {
+                finish_output(output, target, ExecutionOutcome::Failed(error), traces);
+            }
+            OutputStatus::Cancelled => {
+                finish_output(output, target, ExecutionOutcome::Cancelled, traces);
+            }
+        }
+    }
+
+    fn replace_artifact(output: &mut Output, artifact: Option<Artifact>) {
+        let target = target(output);
+        let traces = output.summary().traces.to_vec();
+        match artifact {
+            Some(artifact) => finish_output(
+                output,
+                target,
+                ExecutionOutcome::Success(artifact.bytes().to_vec()),
+                traces,
+            ),
+            None => *output = Output::new(),
+        }
+    }
+
+    fn replace_traces(output: &mut Output, traces: Vec<StepTrace>) {
+        let target = target(output);
+        let bytes = output
+            .summary()
+            .artifact
+            .map_or_else(Vec::new, |artifact| artifact.bytes().to_vec());
+        let outcome = match output.summary().status {
+            OutputStatus::Failed(error) => ExecutionOutcome::Failed(error.clone()),
+            OutputStatus::Cancelled => ExecutionOutcome::Cancelled,
+            _ => ExecutionOutcome::Success(bytes),
+        };
+        finish_output(output, target, outcome, traces);
+    }
+
+    fn select_source(output: &mut Output, source: OutputSource) {
+        let target = match source {
+            OutputSource::Final => ExecutionTarget::Final,
+            OutputSource::Step(index) => ExecutionTarget::Step(index),
+        };
+        let bytes = output
+            .summary()
+            .artifact
+            .map_or_else(Vec::new, |artifact| artifact.bytes().to_vec());
+        let traces = output.summary().traces.to_vec();
+        finish_output(output, target, ExecutionOutcome::Success(bytes), traces);
+    }
+
+    fn select_view(output: &mut Output, view: ViewMode) {
+        for _ in 0..4 {
+            if output.summary().requested_view == view {
+                return;
+            }
+            assert!(output.navigate(Navigation::NextView));
+        }
+        panic!("view not reachable");
+    }
+
+    fn push_trace(output: &mut Output, trace: StepTrace) {
+        let mut traces = output.summary().traces.to_vec();
+        traces.push(trace);
+        replace_traces(output, traces);
+    }
+
+    fn render_trace_fixture(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+        select_view(&mut app.output, ViewMode::Trace);
+        let no_color = app.no_color;
+        let presentation = app.output.present(Viewport {
+            rows: area.height as usize,
+            columns: area.width as usize,
+        });
+        let Body::Trace(window) = presentation.body else {
+            panic!("expected trace presentation");
+        };
+        render_trace_table(frame, &window, no_color, area);
     }
 
     fn rendered_lines(width: u16, height: u16, focus: Pane) -> Vec<String> {
@@ -1501,9 +1596,15 @@ mod tests {
         let start = now();
         let mut app = App::new(start, true);
         app.focus = Pane::Output;
-        app.output.source = OutputSource::Step(0);
-        app.output.active_artifact = Some(Artifact::new(b"previous result".to_vec()));
-        app.output.status = OutputStatus::running(start, ExecutionTarget::Final);
+        select_source(&mut app.output, OutputSource::Step(0));
+        replace_artifact(
+            &mut app.output,
+            Some(Artifact::new(b"previous result".to_vec())),
+        );
+        transition(
+            &mut app.output,
+            OutputStatus::running(start, ExecutionTarget::Final),
+        );
 
         let pending = rendered_app(80, 20, &mut app);
         assert!(pending.contains("previous result"));
@@ -1547,7 +1648,10 @@ mod tests {
                 .contains("Writing clipboard…")
         );
 
-        app.output.status = OutputStatus::running(start, ExecutionTarget::Final);
+        transition(
+            &mut app.output,
+            OutputStatus::running(start, ExecutionTarget::Final),
+        );
         app.handle_event(AppEvent::Tick(start + LONG_RUNNING_AFTER));
         let running = rendered_app(80, 16, &mut app);
         assert!(
@@ -1565,7 +1669,7 @@ mod tests {
                 .contains("Writing clipboard")
         );
 
-        app.output.status = OutputStatus::Cancelled;
+        transition(&mut app.output, OutputStatus::Cancelled);
         let cancelled = rendered_app(80, 16, &mut app);
         assert!(cancelled.lines().nth(14).unwrap().contains("Cancelled"));
     }
@@ -2053,29 +2157,32 @@ mod tests {
     fn output_titles_name_source_and_configured_view_for_text_hex_and_trace() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
-        app.output.status = OutputStatus::Ready;
-        app.output.active_artifact = Some(Artifact::new(b"valid text".to_vec()));
+        transition(&mut app.output, OutputStatus::Ready);
+        replace_artifact(&mut app.output, Some(Artifact::new(b"valid text".to_vec())));
         let text = rendered_app(89, 20, &mut app);
         assert!(text.contains("» OUTPUT [SMART]"));
         assert!(text.contains("valid text"));
 
-        app.output.source = OutputSource::Step(1);
-        app.output.active_artifact = Some(Artifact::new(vec![0, 0xff]));
+        select_source(&mut app.output, OutputSource::Step(1));
+        replace_artifact(&mut app.output, Some(Artifact::new(vec![0, 0xff])));
         let hex = rendered_app(89, 20, &mut app);
         assert!(hex.contains("» OUTPUT / STEP 02 [SMART]"));
         assert!(hex.contains("OFFSET"));
         assert!(hex.contains("ASCII"));
 
-        app.output.view = ViewMode::Trace;
-        app.output.traces = vec![StepTrace {
-            step: 2,
-            transform_id: "hex-decode",
-            input_bytes: Some(4),
-            output_bytes: Some(2),
-            elapsed: Some(Duration::from_millis(1)),
-            status: StepStatus::Succeeded,
-            error: None,
-        }];
+        select_view(&mut app.output, ViewMode::Trace);
+        replace_traces(
+            &mut app.output,
+            vec![StepTrace {
+                step: 2,
+                transform_id: "hex-decode",
+                input_bytes: Some(4),
+                output_bytes: Some(2),
+                elapsed: Some(Duration::from_millis(1)),
+                status: StepStatus::Succeeded,
+                error: None,
+            }],
+        );
         let trace = rendered_app(89, 20, &mut app);
         assert!(trace.contains("» OUTPUT / STEP 02 [TRACE]"));
         for expected in [
@@ -2097,8 +2204,8 @@ mod tests {
     fn app_bar_omits_focus_and_output_title_shows_only_useful_source_and_size() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
-        app.output.status = OutputStatus::Ready;
-        app.output.active_artifact = Some(Artifact::new(b"valid text".to_vec()));
+        transition(&mut app.output, OutputStatus::Ready);
+        replace_artifact(&mut app.output, Some(Artifact::new(b"valid text".to_vec())));
 
         let final_screen = rendered_app(120, 20, &mut app);
         assert!(final_screen.lines().next().unwrap().starts_with(">_ TOC"));
@@ -2106,11 +2213,14 @@ mod tests {
         assert!(final_screen.contains("» OUTPUT [SMART] [10 B]"));
         assert!(!final_screen.contains("/ FINAL"));
 
-        app.output.source = OutputSource::Step(1);
+        select_source(&mut app.output, OutputSource::Step(1));
         let step_screen = rendered_app(120, 20, &mut app);
         assert!(step_screen.contains("» OUTPUT / STEP 02 [SMART] [10 B]"));
 
-        app.output.status = OutputStatus::Debouncing { deadline: now() };
+        transition(
+            &mut app.output,
+            OutputStatus::Debouncing { deadline: now() },
+        );
         let pending = rendered_app(120, 20, &mut app);
         assert!(pending.contains("» OUTPUT / STEP 02 [SMART]"));
         assert!(!pending.contains("BYTE"));
@@ -2120,44 +2230,59 @@ mod tests {
     #[test]
     fn output_title_brackets_the_view_and_keeps_only_total_size() {
         let mut app = App::new(now(), true);
-        app.output.status = OutputStatus::Ready;
-        app.output.active_artifact = Some(Artifact::new(vec![b'x'; 100]));
+        transition(&mut app.output, OutputStatus::Ready);
+        replace_artifact(&mut app.output, Some(Artifact::new(vec![b'x'; 100])));
 
-        app.output.view = ViewMode::Text;
-        app.output.byte_offset = 12;
-        assert_eq!(output_title(&app, 120), "» OUTPUT [TEXT] [100 B]");
-
-        app.output.view = ViewMode::Hex;
-        app.output.row_offset = 2;
-        assert_eq!(output_title(&app, 120), "» OUTPUT [HEX] [100 B]");
-
-        app.output.view = ViewMode::Trace;
-        app.output.source = OutputSource::Step(1);
+        select_view(&mut app.output, ViewMode::Text);
         assert_eq!(
-            output_title(&app, 120),
+            output_title(&app.output.summary(), 120),
+            "» OUTPUT [TEXT] [100 B]"
+        );
+
+        select_view(&mut app.output, ViewMode::Hex);
+        assert_eq!(
+            output_title(&app.output.summary(), 120),
+            "» OUTPUT [HEX] [100 B]"
+        );
+
+        select_view(&mut app.output, ViewMode::Trace);
+        select_source(&mut app.output, OutputSource::Step(1));
+        assert_eq!(
+            output_title(&app.output.summary(), 120),
             "» OUTPUT / STEP 02 [TRACE] [100 B]"
         );
 
-        app.output.source = OutputSource::Final;
-        assert_eq!(output_title(&app, 20), "» OUTPUT [TRACE]");
+        select_source(&mut app.output, OutputSource::Final);
+        assert_eq!(output_title(&app.output.summary(), 20), "» OUTPUT [TRACE]");
 
-        app.output.status = OutputStatus::running(now(), ExecutionTarget::Final);
-        assert_eq!(output_title(&app, 120), "» OUTPUT [TRACE]");
+        transition(
+            &mut app.output,
+            OutputStatus::running(now(), ExecutionTarget::Final),
+        );
+        assert_eq!(output_title(&app.output.summary(), 120), "» OUTPUT [TRACE]");
     }
 
     #[test]
-    fn resized_hex_title_keeps_corrected_row_offset_without_a_counter() {
+    fn resized_hex_title_keeps_corrected_scroll_without_a_counter() {
         let mut app = App::new(now(), true);
-        app.output.status = OutputStatus::Ready;
-        app.output.view = ViewMode::Hex;
-        app.output.active_artifact = Some(Artifact::new(vec![0xff; 80]));
-        app.output.row_offset = 7;
-        app.reflow_output_viewport(Rect::new(0, 0, 59, 4));
+        transition(&mut app.output, OutputStatus::Ready);
+        select_view(&mut app.output, ViewMode::Hex);
+        replace_artifact(&mut app.output, Some(Artifact::new(vec![0xff; 80])));
+        app.output.present(Viewport {
+            rows: 4,
+            columns: 59,
+        });
+        app.output.navigate(Navigation::End);
 
-        app.reflow_output_viewport(Rect::new(0, 0, 78, 4));
+        app.output.present(Viewport {
+            rows: 4,
+            columns: 78,
+        });
 
-        assert_eq!(app.output.row_offset, 2);
-        assert_eq!(output_title(&app, 120), "» OUTPUT [HEX] [80 B]");
+        assert_eq!(
+            output_title(&app.output.summary(), 120),
+            "» OUTPUT [HEX] [80 B]"
+        );
     }
 
     #[test]
@@ -2173,8 +2298,11 @@ mod tests {
 
         let mut output_app = App::new(now(), true);
         output_app.focus = Pane::Output;
-        output_app.output.status = OutputStatus::Ready;
-        output_app.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+        transition(&mut output_app.output, OutputStatus::Ready);
+        replace_artifact(
+            &mut output_app.output,
+            Some(Artifact::new(b"copyable".to_vec())),
+        );
         let output = rendered_app(120, 20, &mut output_app);
         assert!(!output.contains("[ p ] Step"));
         assert!(!output.contains("[ f ] Final"));
@@ -2222,18 +2350,21 @@ mod tests {
             definition: transform_by_id("base64-decode").unwrap(),
             enabled: true,
         });
-        app.output.traces.push(StepTrace {
-            step: 1,
-            transform_id: "base64-decode",
-            input_bytes: Some(4),
-            output_bytes: None,
-            elapsed: Some(Duration::from_micros(6)),
-            status: StepStatus::Failed,
-            error: Some(TransformError::InvalidUtf8Output {
-                preview_hex: "736563726574".to_string(),
-                total_bytes: 6,
-            }),
-        });
+        push_trace(
+            &mut app.output,
+            StepTrace {
+                step: 1,
+                transform_id: "base64-decode",
+                input_bytes: Some(4),
+                output_bytes: None,
+                elapsed: Some(Duration::from_micros(6)),
+                status: StepStatus::Failed,
+                error: Some(TransformError::InvalidUtf8Output {
+                    preview_hex: "736563726574".to_string(),
+                    total_bytes: 6,
+                }),
+            },
+        );
 
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
         let screen = rendered_app(80, 20, &mut app);
@@ -2255,9 +2386,12 @@ mod tests {
         assert!(!screen.contains("secret"));
         assert!(!screen.contains("Option"));
 
-        app.output.status = OutputStatus::running(start, ExecutionTarget::Step(0));
-        app.output.source = OutputSource::Step(0);
-        app.output.traces.clear();
+        select_source(&mut app.output, OutputSource::Step(0));
+        replace_traces(&mut app.output, Vec::new());
+        transition(
+            &mut app.output,
+            OutputStatus::running(start, ExecutionTarget::Step(0)),
+        );
         let running = rendered_app(80, 20, &mut app);
         assert!(running.contains("Status: RUNNING"));
     }
@@ -2391,15 +2525,18 @@ mod tests {
             definition: transform_by_id("base64-decode").unwrap(),
             enabled: true,
         });
-        app.output.traces.push(StepTrace {
-            step: 1,
-            transform_id: "base64-decode",
-            input_bytes: Some(4),
-            output_bytes: None,
-            elapsed: None,
-            status: StepStatus::Failed,
-            error: Some(TransformError::InvalidBase64 { position: Some(2) }),
-        });
+        push_trace(
+            &mut app.output,
+            StepTrace {
+                step: 1,
+                transform_id: "base64-decode",
+                input_bytes: Some(4),
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::Failed,
+                error: Some(TransformError::InvalidBase64 { position: Some(2) }),
+            },
+        );
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
 
         let screen = rendered_app(40, 10, &mut app);
@@ -2461,19 +2598,21 @@ mod tests {
 
         let mut trace = App::new(start, true);
         trace.focus = Pane::Output;
-        trace.output.view = ViewMode::Trace;
-        trace.output.status = OutputStatus::Ready;
-        trace.output.active_artifact = Some(Artifact::new(b"hidden".to_vec()));
+        select_view(&mut trace.output, ViewMode::Trace);
+        transition(&mut trace.output, OutputStatus::Ready);
+        replace_artifact(&mut trace.output, Some(Artifact::new(b"hidden".to_vec())));
         apps.push(trace);
 
         let mut failed = App::new(start, true);
         failed.focus = Pane::Output;
-        failed.output.status = OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
+        transition(
+            &mut failed.output,
+            OutputStatus::Failed(PipelineError::TooManySteps { max: 32 }),
+        );
         apps.push(failed);
 
         let mut missing = App::new(start, true);
         missing.focus = Pane::Output;
-        missing.output.status = OutputStatus::Ready;
         apps.push(missing);
 
         for mut app in apps {
@@ -2486,8 +2625,8 @@ mod tests {
 
         let mut copyable = App::new(start, true);
         copyable.focus = Pane::Output;
-        copyable.output.status = OutputStatus::Ready;
-        copyable.output.active_artifact = Some(Artifact::new(b"ready".to_vec()));
+        transition(&mut copyable.output, OutputStatus::Ready);
+        replace_artifact(&mut copyable.output, Some(Artifact::new(b"ready".to_vec())));
         key(&mut copyable, KeyCode::F(1), KeyModifiers::NONE, start);
         let screen = rendered_app(80, 20, &mut copyable);
         assert!(screen.contains("Enter  Pretty copy"));
@@ -2500,8 +2639,10 @@ mod tests {
     fn smart_failure_shows_trace_while_pinned_views_show_safe_guidance() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
-        app.output.status = OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
-        app.output.active_artifact = Some(Artifact::new(b"stale secret".to_vec()));
+        transition(
+            &mut app.output,
+            OutputStatus::Failed(PipelineError::TooManySteps { max: 32 }),
+        );
 
         let smart = rendered_app(89, 20, &mut app);
         assert!(smart.contains("» OUTPUT [SMART]"));
@@ -2512,12 +2653,12 @@ mod tests {
         assert!(!smart.contains("stale secret"));
 
         for mode in [ViewMode::Text, ViewMode::Hex] {
-            app.output.view = mode;
+            select_view(&mut app.output, mode);
             let pinned = rendered_app(89, 20, &mut app);
             assert!(pinned.contains("chain exceeds 32 steps"));
             assert!(pinned.contains("Switch to Trace view"));
             assert!(!pinned.contains("stale secret"));
-            assert_eq!(app.output.view, mode);
+            assert_eq!(app.output.summary().requested_view, mode);
         }
     }
 
@@ -2526,7 +2667,10 @@ mod tests {
         for (width, height) in [(120, 16), (90, 13), (40, 10)] {
             let mut failed = App::new(now(), true);
             failed.status = Some("stale clipboard status".to_string());
-            failed.output.status = OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
+            transition(
+                &mut failed.output,
+                OutputStatus::Failed(PipelineError::TooManySteps { max: 32 }),
+            );
             let failed_screen = rendered_app(width, height, &mut failed);
             let failed_context = failed_screen.lines().rev().nth(1).unwrap();
             assert!(failed_context.contains("chain exceeds 32 steps"));
@@ -2534,7 +2678,7 @@ mod tests {
 
             let mut cancelled = App::new(now(), true);
             cancelled.status = Some("stale general status".to_string());
-            cancelled.output.status = OutputStatus::Cancelled;
+            transition(&mut cancelled.output, OutputStatus::Cancelled);
             let cancelled_screen = rendered_app(width, height, &mut cancelled);
             let cancelled_context = cancelled_screen.lines().rev().nth(1).unwrap();
             assert!(cancelled_context.contains("Cancelled"));
@@ -2547,15 +2691,18 @@ mod tests {
         for view in [ViewMode::Smart, ViewMode::Text, ViewMode::Hex] {
             let mut app = App::new(now(), true);
             app.focus = Pane::Output;
-            app.output.view = view;
-            app.output.status = OutputStatus::Failed(PipelineError::Step {
-                step: 1,
-                transform_id: "hex-decode",
-                source: TransformError::InvalidUtf8Output {
-                    preview_hex: "736563726574".to_string(),
-                    total_bytes: 6,
-                },
-            });
+            select_view(&mut app.output, view);
+            transition(
+                &mut app.output,
+                OutputStatus::Failed(PipelineError::Step {
+                    step: 1,
+                    transform_id: "hex-decode",
+                    source: TransformError::InvalidUtf8Output {
+                        preview_hex: "736563726574".to_string(),
+                        total_bytes: 6,
+                    },
+                }),
+            );
 
             let screen = rendered_app(89, 20, &mut app);
 
@@ -2569,14 +2716,17 @@ mod tests {
     fn invalid_utf8_failure_context_never_exposes_the_hex_preview() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Input;
-        app.output.status = OutputStatus::Failed(PipelineError::Step {
-            step: 1,
-            transform_id: "hex-decode",
-            source: TransformError::InvalidUtf8Output {
-                preview_hex: "736563726574".to_string(),
-                total_bytes: 6,
-            },
-        });
+        transition(
+            &mut app.output,
+            OutputStatus::Failed(PipelineError::Step {
+                step: 1,
+                transform_id: "hex-decode",
+                source: TransformError::InvalidUtf8Output {
+                    preview_hex: "736563726574".to_string(),
+                    total_bytes: 6,
+                },
+            }),
+        );
 
         let screen = rendered_app(120, 10, &mut app);
         let context = screen.lines().rev().nth(1).unwrap();
@@ -2590,26 +2740,19 @@ mod tests {
     fn pinned_text_over_binary_guides_to_hex_without_partial_bytes() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
-        app.output.status = OutputStatus::Ready;
-        app.output.view = ViewMode::Text;
-        app.output.active_artifact = Some(Artifact::new(vec![0xff, b's', b'e', b'c']));
+        transition(&mut app.output, OutputStatus::Ready);
+        select_view(&mut app.output, ViewMode::Text);
+        replace_artifact(
+            &mut app.output,
+            Some(Artifact::new(vec![0xff, b's', b'e', b'c'])),
+        );
 
         let screen = rendered_app(120, 20, &mut app);
 
         assert!(screen.contains("» OUTPUT [TEXT]"));
         assert!(screen.contains("Switch to Hex view"));
         assert!(!screen.contains("sec"));
-        assert_eq!(app.output.view, ViewMode::Text);
-    }
-
-    #[test]
-    fn newline_dense_output_stays_within_the_four_kibibyte_view_budget() {
-        let artifact = Artifact::new(vec![b'\n'; 8 * 1024]);
-
-        let window = render_text_window(&artifact, 0, 10_000, 80);
-
-        assert!(window.text.len() <= 4 * 1024);
-        assert!(window.inspected_bytes <= 4 * 1024);
+        assert_eq!(app.output.summary().requested_view, ViewMode::Text);
     }
 
     #[test]
@@ -2617,38 +2760,42 @@ mod tests {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
         app.zoom = Some(Pane::Output);
-        app.output.status = OutputStatus::Failed(PipelineError::Step {
-            step: 2,
-            transform_id: "format-json",
-            source: TransformError::InvalidUtf8Output {
-                preview_hex: "736563726574".to_string(),
-                total_bytes: 6,
-            },
-        });
-        app.output.view = ViewMode::Trace;
-        app.output.traces = vec![
-            StepTrace {
-                step: 1,
-                transform_id: "base64-decode",
-                input_bytes: Some(24),
-                output_bytes: Some(17),
-                elapsed: Some(Duration::from_micros(80)),
-                status: StepStatus::Succeeded,
-                error: None,
-            },
-            StepTrace {
+        select_view(&mut app.output, ViewMode::Trace);
+        finish_output(
+            &mut app.output,
+            ExecutionTarget::Final,
+            ExecutionOutcome::Failed(PipelineError::Step {
                 step: 2,
                 transform_id: "format-json",
-                input_bytes: Some(17),
-                output_bytes: None,
-                elapsed: None,
-                status: StepStatus::Failed,
-                error: Some(TransformError::InvalidUtf8Output {
+                source: TransformError::InvalidUtf8Output {
                     preview_hex: "736563726574".to_string(),
                     total_bytes: 6,
-                }),
-            },
-        ];
+                },
+            }),
+            vec![
+                StepTrace {
+                    step: 1,
+                    transform_id: "base64-decode",
+                    input_bytes: Some(24),
+                    output_bytes: Some(17),
+                    elapsed: Some(Duration::from_micros(80)),
+                    status: StepStatus::Succeeded,
+                    error: None,
+                },
+                StepTrace {
+                    step: 2,
+                    transform_id: "format-json",
+                    input_bytes: Some(17),
+                    output_bytes: None,
+                    elapsed: None,
+                    status: StepStatus::Failed,
+                    error: Some(TransformError::InvalidUtf8Output {
+                        preview_hex: "736563726574".to_string(),
+                        total_bytes: 6,
+                    }),
+                },
+            ],
+        );
 
         let wide = rendered_app(120, 12, &mut app);
         for expected in [
@@ -2680,21 +2827,24 @@ mod tests {
     fn trace_operation_width_follows_the_longest_registered_name() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
-        app.output.view = ViewMode::Trace;
-        app.output.status = OutputStatus::Ready;
-        app.output.traces = ["url-encode", "remove-duplicate-lines"]
-            .into_iter()
-            .enumerate()
-            .map(|(index, transform_id)| StepTrace {
-                step: index + 1,
-                transform_id,
-                input_bytes: Some(3),
-                output_bytes: Some(4),
-                elapsed: None,
-                status: StepStatus::Succeeded,
-                error: None,
-            })
-            .collect();
+        select_view(&mut app.output, ViewMode::Trace);
+        transition(&mut app.output, OutputStatus::Ready);
+        replace_traces(
+            &mut app.output,
+            ["url-encode", "remove-duplicate-lines"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, transform_id)| StepTrace {
+                    step: index + 1,
+                    transform_id,
+                    input_bytes: Some(3),
+                    output_bytes: Some(4),
+                    elapsed: None,
+                    status: StepStatus::Succeeded,
+                    error: None,
+                })
+                .collect(),
+        );
 
         let screen = rendered_app(120, 20, &mut app);
         assert!(screen.contains("Remove Duplicate Lines"));
@@ -2734,11 +2884,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut colored = App::new(now(), false);
-        colored.output.traces = traces.clone();
+        replace_traces(&mut colored.output, traces.clone());
         let backend = TestBackend::new(80, 6);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_trace_table(frame, &colored, frame.area()))
+            .draw(|frame| render_trace_fixture(frame, &mut colored, frame.area()))
             .unwrap();
         let buffer = terminal.backend().buffer();
         for (status, label, color) in statuses {
@@ -2772,11 +2922,11 @@ mod tests {
         }
 
         let mut no_color = App::new(now(), true);
-        no_color.output.traces = traces;
+        replace_traces(&mut no_color.output, traces);
         let backend = TestBackend::new(80, 6);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_trace_table(frame, &no_color, frame.area()))
+            .draw(|frame| render_trace_fixture(frame, &mut no_color, frame.area()))
             .unwrap();
         let buffer = terminal.backend().buffer();
         let screen = buffer
@@ -2798,42 +2948,45 @@ mod tests {
     #[test]
     fn short_trace_prioritizes_failure_and_uses_remaining_detail_space() {
         let mut app = App::new(now(), true);
-        app.output.traces = vec![
-            StepTrace {
-                step: 1,
-                transform_id: "base64-decode",
-                input_bytes: Some(24),
-                output_bytes: Some(17),
-                elapsed: None,
-                status: StepStatus::Succeeded,
-                error: None,
-            },
-            StepTrace {
-                step: 2,
-                transform_id: "url-decode",
-                input_bytes: Some(17),
-                output_bytes: Some(17),
-                elapsed: None,
-                status: StepStatus::Succeeded,
-                error: None,
-            },
-            StepTrace {
-                step: 3,
-                transform_id: "format-json",
-                input_bytes: Some(17),
-                output_bytes: None,
-                elapsed: None,
-                status: StepStatus::Failed,
-                error: Some(TransformError::InvalidUtf8Output {
-                    preview_hex: "736563726574".to_string(),
-                    total_bytes: 6,
-                }),
-            },
-        ];
+        replace_traces(
+            &mut app.output,
+            vec![
+                StepTrace {
+                    step: 1,
+                    transform_id: "base64-decode",
+                    input_bytes: Some(24),
+                    output_bytes: Some(17),
+                    elapsed: None,
+                    status: StepStatus::Succeeded,
+                    error: None,
+                },
+                StepTrace {
+                    step: 2,
+                    transform_id: "url-decode",
+                    input_bytes: Some(17),
+                    output_bytes: Some(17),
+                    elapsed: None,
+                    status: StepStatus::Succeeded,
+                    error: None,
+                },
+                StepTrace {
+                    step: 3,
+                    transform_id: "format-json",
+                    input_bytes: Some(17),
+                    output_bytes: None,
+                    elapsed: None,
+                    status: StepStatus::Failed,
+                    error: Some(TransformError::InvalidUtf8Output {
+                        preview_hex: "736563726574".to_string(),
+                        total_bytes: 6,
+                    }),
+                },
+            ],
+        );
         let backend = TestBackend::new(69, 4);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_trace_table(frame, &app, frame.area()))
+            .draw(|frame| render_trace_fixture(frame, &mut app, frame.area()))
             .unwrap();
         let screen = terminal
             .backend()
@@ -2853,7 +3006,7 @@ mod tests {
         let backend = TestBackend::new(69, 3);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_trace_table(frame, &app, frame.area()))
+            .draw(|frame| render_trace_fixture(frame, &mut app, frame.area()))
             .unwrap();
         let shortest = terminal
             .backend()
@@ -2877,27 +3030,31 @@ mod tests {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
         app.zoom = Some(Pane::Output);
-        app.output.status = OutputStatus::Failed(PipelineError::Step {
-            step: 1,
-            transform_id: "format-json",
-            source: TransformError::InvalidUtf8Output {
-                preview_hex: "736563726574".to_string(),
-                total_bytes: 6,
-            },
-        });
-        app.output.view = ViewMode::Trace;
-        app.output.traces.push(StepTrace {
-            step: 1,
-            transform_id: "format-json",
-            input_bytes: Some(6),
-            output_bytes: None,
-            elapsed: None,
-            status: StepStatus::Failed,
-            error: Some(TransformError::InvalidUtf8Output {
-                preview_hex: "736563726574".to_string(),
-                total_bytes: 6,
+        select_view(&mut app.output, ViewMode::Trace);
+        finish_output(
+            &mut app.output,
+            ExecutionTarget::Final,
+            ExecutionOutcome::Failed(PipelineError::Step {
+                step: 1,
+                transform_id: "format-json",
+                source: TransformError::InvalidUtf8Output {
+                    preview_hex: "736563726574".to_string(),
+                    total_bytes: 6,
+                },
             }),
-        });
+            vec![StepTrace {
+                step: 1,
+                transform_id: "format-json",
+                input_bytes: Some(6),
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::Failed,
+                error: Some(TransformError::InvalidUtf8Output {
+                    preview_hex: "736563726574".to_string(),
+                    total_bytes: 6,
+                }),
+            }],
+        );
 
         let screen = rendered_app(120, 12, &mut app);
 
@@ -2911,28 +3068,31 @@ mod tests {
     fn composed_hex_and_trace_views_reserve_header_space_inside_the_budget() {
         const OPERATION: &str = "very-long-transform-operation-name-used-to-fill-the-bounded-trace-view-without-rendering-any-input-or-output-body";
         let mut app = App::new(now(), true);
-        app.output.traces = (1..=32)
-            .map(|step| StepTrace {
-                step,
-                transform_id: OPERATION,
-                input_bytes: Some(step),
-                output_bytes: Some(step),
-                elapsed: Some(Duration::from_micros(1)),
-                status: if step == 32 {
-                    StepStatus::Failed
-                } else {
-                    StepStatus::Succeeded
-                },
-                error: (step == 32).then_some(TransformError::InvalidUtf8Output {
-                    preview_hex: "736563726574".to_string(),
-                    total_bytes: 6,
-                }),
-            })
-            .collect::<Vec<_>>();
+        replace_traces(
+            &mut app.output,
+            (1..=32)
+                .map(|step| StepTrace {
+                    step,
+                    transform_id: OPERATION,
+                    input_bytes: Some(step),
+                    output_bytes: Some(step),
+                    elapsed: Some(Duration::from_micros(1)),
+                    status: if step == 32 {
+                        StepStatus::Failed
+                    } else {
+                        StepStatus::Succeeded
+                    },
+                    error: (step == 32).then_some(TransformError::InvalidUtf8Output {
+                        preview_hex: "736563726574".to_string(),
+                        total_bytes: 6,
+                    }),
+                })
+                .collect::<Vec<_>>(),
+        );
         let backend = TestBackend::new(1_000, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_trace_table(frame, &app, frame.area()))
+            .draw(|frame| render_trace_fixture(frame, &mut app, frame.area()))
             .unwrap();
         let screen = terminal
             .backend()
@@ -2968,9 +3128,9 @@ mod tests {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
         app.zoom = Some(Pane::Output);
-        app.output.status = OutputStatus::Ready;
-        app.output.view = ViewMode::Hex;
-        app.output.active_artifact = Some(Artifact::new((0..32).collect()));
+        transition(&mut app.output, OutputStatus::Ready);
+        select_view(&mut app.output, ViewMode::Hex);
+        replace_artifact(&mut app.output, Some(Artifact::new((0..32).collect())));
 
         let full = rendered_app(80, 10, &mut app);
         assert!(full.contains("00 01 02 03 04 05 06 07"));
@@ -2993,9 +3153,9 @@ mod tests {
         let mut app = App::new(now(), false);
         app.focus = Pane::Output;
         app.zoom = Some(Pane::Output);
-        app.output.status = OutputStatus::Ready;
-        app.output.view = ViewMode::Hex;
-        app.output.active_artifact = Some(Artifact::new(vec![0x00, b'A']));
+        transition(&mut app.output, OutputStatus::Ready);
+        select_view(&mut app.output, ViewMode::Hex);
+        replace_artifact(&mut app.output, Some(Artifact::new(vec![0x00, b'A'])));
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -3063,9 +3223,9 @@ mod tests {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
         app.zoom = Some(Pane::Output);
-        app.output.status = OutputStatus::Ready;
-        app.output.view = ViewMode::Hex;
-        app.output.active_artifact = Some(Artifact::new(vec![0x00, b'A']));
+        transition(&mut app.output, OutputStatus::Ready);
+        select_view(&mut app.output, ViewMode::Hex);
+        replace_artifact(&mut app.output, Some(Artifact::new(vec![0x00, b'A'])));
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
         assert!(
@@ -3082,12 +3242,15 @@ mod tests {
     fn output_controls_are_rendered_only_as_inert_escape_text() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
-        app.output.status = OutputStatus::Ready;
-        app.output.active_artifact = Some(Artifact::new(
-            "ansi:\u{1b}[2J osc:\u{1b}]52;c;secret\u{7} nul:\0 c1:\u{85}"
-                .as_bytes()
-                .to_vec(),
-        ));
+        transition(&mut app.output, OutputStatus::Ready);
+        replace_artifact(
+            &mut app.output,
+            Some(Artifact::new(
+                "ansi:\u{1b}[2J osc:\u{1b}]52;c;secret\u{7} nul:\0 c1:\u{85}"
+                    .as_bytes()
+                    .to_vec(),
+            )),
+        );
 
         let screen = rendered_app(89, 20, &mut app);
 
@@ -3161,7 +3324,7 @@ mod tests {
                 enabled: index != 2,
             })
             .collect();
-        app.output.traces = traces_for_all_five_states();
+        replace_traces(&mut app.output, traces_for_all_five_states());
 
         let screen = rendered_app(80, 20, &mut app);
 
@@ -3197,8 +3360,11 @@ mod tests {
             definition: transform_by_id("url-encode").unwrap(),
             enabled: true,
         });
-        app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::running(now(), ExecutionTarget::Step(0));
+        select_source(&mut app.output, OutputSource::Step(0));
+        transition(
+            &mut app.output,
+            OutputStatus::running(now(), ExecutionTarget::Step(0)),
+        );
 
         let screen = rendered_app(80, 16, &mut app);
         assert!(screen.contains("[ON]  › URL Encode"));
@@ -3217,26 +3383,29 @@ mod tests {
                 enabled: index == 0,
             })
             .collect();
-        app.output.traces = vec![
-            StepTrace {
-                step: 1,
-                transform_id: "base64-encode",
-                input_bytes: Some(1),
-                output_bytes: None,
-                elapsed: None,
-                status: StepStatus::Failed,
-                error: Some(TransformError::InvalidBase64 { position: None }),
-            },
-            StepTrace {
-                step: 2,
-                transform_id: "hex-encode",
-                input_bytes: None,
-                output_bytes: None,
-                elapsed: None,
-                status: StepStatus::NotExecuted,
-                error: None,
-            },
-        ];
+        replace_traces(
+            &mut app.output,
+            vec![
+                StepTrace {
+                    step: 1,
+                    transform_id: "base64-encode",
+                    input_bytes: Some(1),
+                    output_bytes: None,
+                    elapsed: None,
+                    status: StepStatus::Failed,
+                    error: Some(TransformError::InvalidBase64 { position: None }),
+                },
+                StepTrace {
+                    step: 2,
+                    transform_id: "hex-encode",
+                    input_bytes: None,
+                    output_bytes: None,
+                    elapsed: None,
+                    status: StepStatus::NotExecuted,
+                    error: None,
+                },
+            ],
+        );
 
         let screen = rendered_app(89, 20, &mut app);
         let not_run = screen
@@ -3254,15 +3423,18 @@ mod tests {
             definition: transform_by_id("hex-encode").unwrap(),
             enabled: false,
         });
-        app.output.traces.push(StepTrace {
-            step: 1,
-            transform_id: "hex-encode",
-            input_bytes: None,
-            output_bytes: None,
-            elapsed: None,
-            status: StepStatus::NotExecuted,
-            error: None,
-        });
+        push_trace(
+            &mut app.output,
+            StepTrace {
+                step: 1,
+                transform_id: "hex-encode",
+                input_bytes: None,
+                output_bytes: None,
+                elapsed: None,
+                status: StepStatus::NotExecuted,
+                error: None,
+            },
+        );
         app.modal = Some(Modal::StepInspector);
 
         let screen = rendered_app(80, 20, &mut app);
@@ -3334,7 +3506,7 @@ mod tests {
         }));
         app.focus = Pane::Pipeline;
         key(&mut app, KeyCode::Char('f'), KeyModifiers::NONE, start);
-        app.output.view = ViewMode::Trace;
+        select_view(&mut app.output, ViewMode::Trace);
         app.focus = Pane::Pipeline;
 
         let screen = rendered_app(120, 20, &mut app);
@@ -3343,13 +3515,10 @@ mod tests {
             .find(|line| line.contains("Hex Encode"))
             .unwrap();
 
-        assert_eq!(app.output.source, OutputSource::Final);
-        assert_eq!(app.output.status, OutputStatus::Ready);
-        assert_eq!(
-            app.output.active_artifact.as_ref().unwrap().bytes(),
-            b"final"
-        );
-        assert_eq!(app.output.traces, final_traces);
+        assert_eq!(app.output.summary().source, OutputSource::Final);
+        assert_eq!(app.output.summary().status, &OutputStatus::Ready);
+        assert_eq!(app.output.summary().artifact.unwrap().bytes(), b"final");
+        assert_eq!(app.output.summary().traces, final_traces);
         assert!(screen.contains("» OUTPUT [TRACE]"));
         for expected in ["STEP", "OPERATION", "INPUT", "OUTPUT", "TIME", "STATUS"] {
             assert!(screen.contains(expected), "missing {expected}: {screen}");
@@ -3368,21 +3537,27 @@ mod tests {
             definition: transform_by_id("url-encode").unwrap(),
             enabled: true,
         });
-        app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::running(now(), ExecutionTarget::Step(0));
+        select_source(&mut app.output, OutputSource::Step(0));
+        transition(
+            &mut app.output,
+            OutputStatus::running(now(), ExecutionTarget::Step(0)),
+        );
         let running = rendered_app(89, 20, &mut app);
         assert!(running.contains("[ON]  › URL Encode"));
 
-        app.output.status = OutputStatus::Ready;
-        app.output.traces.push(StepTrace {
-            step: 1,
-            transform_id: "url-encode",
-            input_bytes: Some(3),
-            output_bytes: Some(4),
-            elapsed: None,
-            status: StepStatus::Succeeded,
-            error: None,
-        });
+        transition(&mut app.output, OutputStatus::Ready);
+        push_trace(
+            &mut app.output,
+            StepTrace {
+                step: 1,
+                transform_id: "url-encode",
+                input_bytes: Some(3),
+                output_bytes: Some(4),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            },
+        );
         let wide = rendered_app(120, 20, &mut app);
         let medium = rendered_app(119, 20, &mut app);
         assert!(wide.contains("3B→4B"));
@@ -3408,8 +3583,11 @@ mod tests {
                 enabled: true,
             })
             .collect();
-        app.output.source = OutputSource::Final;
-        app.output.status = OutputStatus::running(now(), ExecutionTarget::Final);
+        select_source(&mut app.output, OutputSource::Final);
+        transition(
+            &mut app.output,
+            OutputStatus::running(now(), ExecutionTarget::Final),
+        );
 
         let screen = rendered_app(89, 20, &mut app);
 
@@ -3425,16 +3603,22 @@ mod tests {
             definition: transform_by_id("url-encode").unwrap(),
             enabled: true,
         });
-        app.output.traces.push(StepTrace {
-            step: 1,
-            transform_id: "url-encode",
-            input_bytes: Some(3),
-            output_bytes: Some(4),
-            elapsed: None,
-            status: StepStatus::Succeeded,
-            error: None,
-        });
-        app.output.status = OutputStatus::running(start, ExecutionTarget::Step(0));
+        push_trace(
+            &mut app.output,
+            StepTrace {
+                step: 1,
+                transform_id: "url-encode",
+                input_bytes: Some(3),
+                output_bytes: Some(4),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            },
+        );
+        transition(
+            &mut app.output,
+            OutputStatus::running(start, ExecutionTarget::Step(0)),
+        );
 
         let screen = rendered_app(80, 16, &mut app);
         let row = screen
@@ -3454,16 +3638,22 @@ mod tests {
             definition: transform_by_id("url-encode").unwrap(),
             enabled: true,
         });
-        app.output.traces.push(StepTrace {
-            step: 1,
-            transform_id: "url-encode",
-            input_bytes: Some(3),
-            output_bytes: Some(4),
-            elapsed: None,
-            status: StepStatus::Succeeded,
-            error: None,
-        });
-        app.output.status = OutputStatus::running(start, ExecutionTarget::Step(0));
+        push_trace(
+            &mut app.output,
+            StepTrace {
+                step: 1,
+                transform_id: "url-encode",
+                input_bytes: Some(3),
+                output_bytes: Some(4),
+                elapsed: None,
+                status: StepStatus::Succeeded,
+                error: None,
+            },
+        );
+        transition(
+            &mut app.output,
+            OutputStatus::running(start, ExecutionTarget::Step(0)),
+        );
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE, start);
 
         let screen = rendered_app(80, 20, &mut app);
@@ -3483,8 +3673,11 @@ mod tests {
                 enabled: true,
             })
             .collect();
-        app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::running(now(), ExecutionTarget::Step(0));
+        select_source(&mut app.output, OutputSource::Step(0));
+        transition(
+            &mut app.output,
+            OutputStatus::running(now(), ExecutionTarget::Step(0)),
+        );
 
         let screen = rendered_app(89, 20, &mut app);
         let target = screen
@@ -3508,8 +3701,11 @@ mod tests {
             definition: transform_by_id("url-encode").unwrap(),
             enabled: true,
         });
-        app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::running(now(), ExecutionTarget::Step(0));
+        select_source(&mut app.output, OutputSource::Step(0));
+        transition(
+            &mut app.output,
+            OutputStatus::running(now(), ExecutionTarget::Step(0)),
+        );
 
         let screen = rendered_app(89, 20, &mut app);
 
@@ -3570,7 +3766,10 @@ mod tests {
     #[test]
     fn failure_and_cancellation_replace_minimal_context_help() {
         let mut failed = App::new(now(), true);
-        failed.output.status = OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
+        transition(
+            &mut failed.output,
+            OutputStatus::Failed(PipelineError::TooManySteps { max: 32 }),
+        );
         let failed_screen = rendered_app(40, 10, &mut failed);
         assert!(
             failed_screen
@@ -3582,7 +3781,7 @@ mod tests {
         );
 
         let mut cancelled = App::new(now(), true);
-        cancelled.output.status = OutputStatus::Cancelled;
+        transition(&mut cancelled.output, OutputStatus::Cancelled);
         let cancelled_screen = rendered_app(40, 10, &mut cancelled);
         assert!(
             cancelled_screen
@@ -3611,8 +3810,11 @@ mod tests {
             definition: transform_by_id("url-encode").unwrap(),
             enabled: true,
         });
-        app.output.source = OutputSource::Step(0);
-        app.output.status = OutputStatus::running(now(), ExecutionTarget::Step(0));
+        select_source(&mut app.output, OutputSource::Step(0));
+        transition(
+            &mut app.output,
+            OutputStatus::running(now(), ExecutionTarget::Step(0)),
+        );
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -3659,8 +3861,8 @@ mod tests {
     fn grouped_command_dock_keeps_atomic_groups_at_wide_and_narrow_widths() {
         let mut app = App::new(now(), true);
         app.focus = Pane::Output;
-        app.output.status = OutputStatus::Ready;
-        app.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+        transition(&mut app.output, OutputStatus::Ready);
+        replace_artifact(&mut app.output, Some(Artifact::new(b"copyable".to_vec())));
 
         let wide = rendered_app(120, 20, &mut app);
         let wide_lines = wide.lines().collect::<Vec<_>>();
@@ -3691,8 +3893,11 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut colored = App::new(now(), false);
         colored.focus = Pane::Output;
-        colored.output.status = OutputStatus::Ready;
-        colored.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+        transition(&mut colored.output, OutputStatus::Ready);
+        replace_artifact(
+            &mut colored.output,
+            Some(Artifact::new(b"copyable".to_vec())),
+        );
         terminal.draw(|frame| render(frame, &mut colored)).unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -3706,8 +3911,11 @@ mod tests {
 
         let mut no_color = App::new(now(), true);
         no_color.focus = Pane::Output;
-        no_color.output.status = OutputStatus::Ready;
-        no_color.output.active_artifact = Some(Artifact::new(b"copyable".to_vec()));
+        transition(&mut no_color.output, OutputStatus::Ready);
+        replace_artifact(
+            &mut no_color.output,
+            Some(Artifact::new(b"copyable".to_vec())),
+        );
         let backend = TestBackend::new(120, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| render(frame, &mut no_color)).unwrap();
@@ -3767,7 +3975,10 @@ mod tests {
         assert!(!status_screen.contains('\u{1b}'));
         assert!(status_screen.contains("\\x0a\\x1b[2J"));
 
-        app.output.status = OutputStatus::Failed(PipelineError::TooManySteps { max: 32 });
+        transition(
+            &mut app.output,
+            OutputStatus::Failed(PipelineError::TooManySteps { max: 32 }),
+        );
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let error_screen: String = terminal
             .backend()

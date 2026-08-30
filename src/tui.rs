@@ -23,9 +23,9 @@ use ratatui::{Terminal, backend::CrosstermBackend, style::Color};
 use crate::error::AppError;
 
 mod clipboard;
+mod output;
 mod render;
 mod state;
-mod views;
 mod worker;
 
 pub(super) const CYAN: Color = Color::Cyan;
